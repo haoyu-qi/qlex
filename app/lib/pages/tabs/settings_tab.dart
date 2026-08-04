@@ -8,7 +8,6 @@ import 'package:localsend_app/gen/strings.g.dart';
 import 'package:localsend_app/model/persistence/color_mode.dart';
 import 'package:localsend_app/pages/about/about_page.dart';
 import 'package:localsend_app/pages/changelog_page.dart';
-import 'package:localsend_app/pages/donation/donation_page.dart';
 import 'package:localsend_app/pages/language_page.dart';
 import 'package:localsend_app/pages/settings/network_interfaces_page.dart';
 import 'package:localsend_app/pages/tabs/settings_tab_controller.dart';
@@ -58,11 +57,7 @@ class SettingsTab extends StatelessWidget {
                   child: CustomDropdownButton<ThemeMode>(
                     value: vm.settings.theme,
                     items: vm.themeModes.map((theme) {
-                      return DropdownMenuItem(
-                        value: theme,
-                        alignment: Alignment.center,
-                        child: Text(theme.humanName),
-                      );
+                      return DropdownMenuItem(value: theme, alignment: Alignment.center, child: Text(theme.humanName));
                     }).toList(),
                     onChanged: (theme) => vm.onChangeTheme(context, theme),
                   ),
@@ -72,11 +67,7 @@ class SettingsTab extends StatelessWidget {
                   child: CustomDropdownButton<ColorMode>(
                     value: vm.settings.colorMode,
                     items: vm.colorModes.map((colorMode) {
-                      return DropdownMenuItem(
-                        value: colorMode,
-                        alignment: Alignment.center,
-                        child: Text(colorMode.humanName),
-                      );
+                      return DropdownMenuItem(value: colorMode, alignment: Alignment.center, child: Text(colorMode.humanName));
                     }).toList(),
                     onChanged: vm.onChangeColorMode,
                   ),
@@ -108,11 +99,7 @@ class SettingsTab extends StatelessWidget {
                     ),
                   ],
                   if (checkPlatformIsDesktop()) ...[
-                    _BooleanEntry(
-                      label: t.settingsTab.general.launchAtStartup,
-                      value: vm.autoStart,
-                      onChanged: (_) => vm.onToggleAutoStart(context),
-                    ),
+                    _BooleanEntry(label: t.settingsTab.general.launchAtStartup, value: vm.autoStart, onChanged: (_) => vm.onToggleAutoStart(context)),
                     Visibility(
                       visible: vm.autoStart,
                       maintainAnimation: true,
@@ -180,10 +167,7 @@ class SettingsTab extends StatelessWidget {
                     } else {
                       final String? newPin = await showDialog<String>(
                         context: context,
-                        builder: (_) => const PinDialog(
-                          obscureText: false,
-                          generateRandom: false,
-                        ),
+                        builder: (_) => const PinDialog(obscureText: false, generateRandom: false),
                       );
 
                       if (newPin != null && newPin.isNotEmpty) {
@@ -248,19 +232,6 @@ class SettingsTab extends StatelessWidget {
                 ),
               ],
             ),
-            if (vm.advanced)
-              _SettingsSection(
-                title: t.settingsTab.send.title,
-                children: [
-                  _BooleanEntry(
-                    label: t.settingsTab.send.shareViaLinkAutoAccept,
-                    value: vm.settings.shareViaLinkAutoAccept,
-                    onChanged: (b) async {
-                      await ref.notifier(settingsProvider).setShareViaLinkAutoAccept(b);
-                    },
-                  ),
-                ],
-              ),
             _SettingsSection(
               title: t.settingsTab.network.title,
               children: [
@@ -366,11 +337,7 @@ class SettingsTab extends StatelessWidget {
                     child: CustomDropdownButton<DeviceType>(
                       value: vm.deviceInfo.deviceType,
                       items: DeviceType.values.map((type) {
-                        return DropdownMenuItem(
-                          value: type,
-                          alignment: Alignment.center,
-                          child: Icon(type.icon),
-                        );
+                        return DropdownMenuItem(value: type, alignment: Alignment.center, child: Icon(type.icon));
                       }).toList(),
                       onChanged: (type) async {
                         await ref.notifier(settingsProvider).setDeviceType(type);
@@ -490,20 +457,10 @@ class SettingsTab extends StatelessWidget {
                   },
                 ),
                 _ButtonEntry(
-                  label: t.settingsTab.other.support,
-                  buttonLabel: t.settingsTab.other.donate,
-                  onTap: () async {
-                    await context.push(() => const DonationPage());
-                  },
-                ),
-                _ButtonEntry(
                   label: t.settingsTab.other.privacyPolicy,
                   buttonLabel: t.general.open,
                   onTap: () async {
-                    await launchUrl(
-                      Uri.parse('https://localsend.org/privacy'),
-                      mode: LaunchMode.externalApplication,
-                    );
+                    await launchUrl(Uri.parse('https://localsend.org/privacy'), mode: LaunchMode.externalApplication);
                   },
                 ),
                 if (checkPlatform([TargetPlatform.iOS, TargetPlatform.macOS]))
@@ -538,21 +495,13 @@ class SettingsTab extends StatelessWidget {
             const LocalSendLogo(withText: true),
             const SizedBox(height: 5),
             ref.watch(versionProvider).maybeWhen(
-                  data: (version) => Text(
-                    'Version: $version',
-                    textAlign: TextAlign.center,
-                  ),
+                  data: (version) => Text('Version: $version', textAlign: TextAlign.center),
                   orElse: () => Container(),
                 ),
-            Text(
-              '© ${DateTime.now().year} Tien Do Nam',
-              textAlign: TextAlign.center,
-            ),
+            Text('© ${DateTime.now().year} Tien Do Nam', textAlign: TextAlign.center),
             Center(
               child: TextButton.icon(
-                style: TextButton.styleFrom(
-                  foregroundColor: Theme.of(context).colorScheme.onSurface,
-                ),
+                style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.onSurface),
                 onPressed: () async {
                   await context.push(() => const ChangelogPage());
                 },
@@ -580,14 +529,9 @@ class _SettingsEntry extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 15),
       child: Row(
         children: [
-          Expanded(
-            child: Text(label),
-          ),
+          Expanded(child: Text(label)),
           const SizedBox(width: 10),
-          SizedBox(
-            width: 150,
-            child: child,
-          ),
+          SizedBox(width: 150, child: child),
         ],
       ),
     );
@@ -600,11 +544,7 @@ class _BooleanEntry extends StatelessWidget {
   final bool value;
   final ValueChanged<bool> onChanged;
 
-  const _BooleanEntry({
-    required this.label,
-    required this.value,
-    required this.onChanged,
-  });
+  const _BooleanEntry({required this.label, required this.value, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
@@ -616,10 +556,7 @@ class _BooleanEntry extends StatelessWidget {
           Container(
             width: double.infinity,
             height: 50,
-            decoration: BoxDecoration(
-              color: theme.inputDecorationTheme.fillColor,
-              borderRadius: theme.inputDecorationTheme.borderRadius,
-            ),
+            decoration: BoxDecoration(color: theme.inputDecorationTheme.fillColor, borderRadius: theme.inputDecorationTheme.borderRadius),
           ),
           Positioned.fill(
             child: Center(
@@ -645,11 +582,7 @@ class _ButtonEntry extends StatelessWidget {
   final String buttonLabel;
   final void Function() onTap;
 
-  const _ButtonEntry({
-    required this.label,
-    required this.buttonLabel,
-    required this.onTap,
-  });
+  const _ButtonEntry({required this.label, required this.buttonLabel, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -664,11 +597,7 @@ class _ButtonEntry extends StatelessWidget {
         onPressed: onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 5),
-          child: Text(
-            buttonLabel,
-            style: Theme.of(context).textTheme.titleMedium,
-            textAlign: TextAlign.center,
-          ),
+          child: Text(buttonLabel, style: Theme.of(context).textTheme.titleMedium, textAlign: TextAlign.center),
         ),
       ),
     );
@@ -680,11 +609,7 @@ class _SettingsSection extends StatelessWidget {
   final List<Widget> children;
   final EdgeInsets padding;
 
-  const _SettingsSection({
-    required this.title,
-    required this.children,
-    this.padding = const EdgeInsets.only(bottom: 15),
-  });
+  const _SettingsSection({required this.title, required this.children, this.padding = const EdgeInsets.only(bottom: 15)});
 
   @override
   Widget build(BuildContext context) {

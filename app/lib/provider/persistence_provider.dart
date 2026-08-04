@@ -32,12 +32,12 @@ final _logger = Logger('PersistenceService');
 
 String get _windowsFile {
   final appData = Platform.environment['APPDATA'];
-  return '$appData\\LocalSend\\settings.json';
+  return '$appData\\qlex\\settings.json';
 }
 
 String get _windowsLegacyFile {
   final appData = Platform.environment['APPDATA'];
-  return '$appData\\org.localsend\\localsend_app\\shared_preferences.json';
+  return '$appData\\qlex\\shared_preferences.json';
 }
 
 // Version of the storage
@@ -83,7 +83,6 @@ const _sendMode = 'ls_send_mode';
 const _enableAnimations = 'ls_enable_animations';
 const _deviceType = 'ls_device_type';
 const _deviceModel = 'ls_device_model';
-const _shareViaLinkAutoAccept = 'ls_share_via_link_auto_accept';
 const _advancedSettingsKey = 'ls_advanced_settings';
 
 final persistenceProvider = Provider<PersistenceService>((ref) {
@@ -97,9 +96,7 @@ class PersistenceService {
 
   PersistenceService._(this._prefs, this.isFirstAppStart);
 
-  static Future<PersistenceService> initialize({
-    required bool supportsDynamicColors,
-  }) async {
+  static Future<PersistenceService> initialize({required bool supportsDynamicColors}) async {
     SharedPreferences prefs;
 
     final portableStore = SharedPreferencesPortable();
@@ -320,14 +317,6 @@ class PersistenceService {
     await _prefs.setInt(_timeoutKey, timeout);
   }
 
-  bool getShareViaLinkAutoAccept() {
-    return _prefs.getBool(_shareViaLinkAutoAccept) ?? false;
-  }
-
-  Future<void> setShareViaLinkAutoAccept(bool shareViaLinkAutoAccept) async {
-    await _prefs.setBool(_shareViaLinkAutoAccept, shareViaLinkAutoAccept);
-  }
-
   String getMulticastGroup() {
     return _prefs.getString(_multicastGroupKey) ?? defaultMulticastGroup;
   }
@@ -468,10 +457,7 @@ class PersistenceService {
       return null;
     }
 
-    return WindowDimensions(
-      position: position,
-      size: size,
-    );
+    return WindowDimensions(position: position, size: size);
   }
 
   Future<void> setSaveWindowPlacement(bool savePlacement) async {

@@ -1,0 +1,80 @@
+name: qlex CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: "3.41.9"
+
+jobs:
+  test-and-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Common dependencies
+        working-directory: common
+        run: dart pub get
+      - name: App dependencies
+        working-directory: app
+        run: flutter pub get
+      - name: Format
+        working-directory: app
+        run: dart format --line-length 150 --output=none --set-exit-if-changed lib/pages/radar lib/qlex test/unit/qlex
+      - name: Analyze common
+        working-directory: common
+        run: dart analyze
+      - name: Test common
+        working-directory: common
+        run: dart test
+      - name: Analyze app
+        working-directory: app
+        run: flutter analyze --no-fatal-infos
+      - name: Test app
+        working-directory: app
+        run: flutter test
+      - name: Build universal Android APK
+        working-directory: app
+        run: flutter build apk --release
+      - name: Name Android artifact
+        run: cp app/build/app/outputs/flutter-apk/app-release.apk app/build/app/outputs/flutter-apk/qlex-0.1.0-android-universal.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qlex-android-universal
+          path: app/build/app/outputs/flutter-apk/qlex-0.1.0-android-universal.apk
+
+  windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Dependencies
+        working-directory: app
+        run: flutter pub get
+      - name: Build Windows x64
+        working-directory: app
+        run: flutter build windows --release
+      - name: Build unsigned Inno Setup installer
+        shell: pwsh
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" scripts\compile_windows_exe-inno.iss'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qlex-windows-x64-installer-unsigned
+          path: dist/qlex-0.1.0-windows-x64-setup.exe

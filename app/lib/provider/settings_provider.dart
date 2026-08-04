@@ -60,7 +60,6 @@ class SettingsService extends PureNotifier<SettingsState> {
         enableAnimations: _persistence.getEnableAnimations(),
         deviceType: _persistence.getDeviceType(),
         deviceModel: _persistence.getDeviceModel(),
-        shareViaLinkAutoAccept: _persistence.getShareViaLinkAutoAccept(),
         discoveryTimeout: _persistence.getDiscoveryTimeout(),
         advancedSettings: _persistence.getAdvancedSettingsEnabled(),
       );
@@ -230,14 +229,6 @@ class SettingsService extends PureNotifier<SettingsState> {
     await _persistence.setDeviceModel(deviceModel);
     state = state.copyWith(
       deviceModel: deviceModel,
-    );
-  }
-
-  Future<void> setShareViaLinkAutoAccept(bool shareViaLinkAutoAccept) async {
-    await _persistence.setShareViaLinkAutoAccept(shareViaLinkAutoAccept);
-
-    state = state.copyWith(
-      shareViaLinkAutoAccept: shareViaLinkAutoAccept,
     );
   }
 }

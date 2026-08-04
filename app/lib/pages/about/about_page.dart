@@ -23,69 +23,44 @@ class AboutPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final primaryColor = Theme.of(context).colorScheme.primary;
     return Scaffold(
-      appBar: AppBar(
-        title: Text(t.aboutPage.title),
-      ),
+      appBar: AppBar(title: Text(t.aboutPage.title)),
       body: ResponsiveListView(
         padding: const EdgeInsets.symmetric(horizontal: 15),
         children: [
           const SizedBox(height: 20),
           const LocalSendLogo(withText: true),
-          Text(
-            '© ${DateTime.now().year} Tien Do Nam',
+          Text('qlex 0.1.0', textAlign: TextAlign.center, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 10),
+          const Text(
+            'qlex is a local-network file transfer client based on LocalSend. '
+            'It preserves LocalSend protocol compatibility and is distributed under the Apache License 2.0.\n\n'
+            'qlex 是基于 LocalSend 修改的局域网文件互传客户端，保留 LocalSend 协议兼容性，并遵循 Apache License 2.0。',
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 10),
-          Center(
-            child: TextButton(
-              onPressed: () async {
-                await launchUrl(Uri.parse('https://localsend.org'));
-              },
-              child: const Text('localsend.org'),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(t.aboutPage.description.join('\n\n')),
+          Text('© ${DateTime.now().year} qlex contributors · LocalSend © Tien Do Nam', textAlign: TextAlign.center),
           const SizedBox(height: 20),
           Text(t.aboutPage.author, style: const TextStyle(fontWeight: FontWeight.bold)),
-          Text.rich(_buildContributor(
-            label: 'Tien Do Nam (@Tienisto)',
-            primaryColor: primaryColor,
-          )),
+          Text.rich(_buildContributor(label: 'Tien Do Nam (@Tienisto)', primaryColor: primaryColor)),
           const SizedBox(height: 20),
           Text(t.aboutPage.contributors, style: const TextStyle(fontWeight: FontWeight.bold)),
           ..._contributors.map((contributor) {
-            return Text.rich(_buildContributor(
-              label: contributor,
-              primaryColor: primaryColor,
-            ));
+            return Text.rich(_buildContributor(label: contributor, primaryColor: primaryColor));
           }),
           const SizedBox(height: 20),
           Text(t.aboutPage.packagers, style: const TextStyle(fontWeight: FontWeight.bold)),
           Table(
-            columnWidths: const {
-              0: IntrinsicColumnWidth(),
-              1: FlexColumnWidth(),
-            },
+            columnWidths: const {0: IntrinsicColumnWidth(), 1: FlexColumnWidth()},
             children: [
               ..._packagers.entries.map(
                 (e) => TableRow(
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.only(right: 10),
-                      child: Text(e.key),
-                    ),
+                    Padding(padding: const EdgeInsets.only(right: 10), child: Text(e.key)),
                     Text.rich(
                       TextSpan(
-                        children: e.value.mapIndexed(
-                          (index, translator) {
-                            return _buildContributor(
-                              label: translator,
-                              primaryColor: primaryColor,
-                              newLine: index != 0,
-                            );
-                          },
-                        ).toList(),
+                        children: e.value.mapIndexed((index, translator) {
+                          return _buildContributor(label: translator, primaryColor: primaryColor, newLine: index != 0);
+                        }).toList(),
                       ),
                     ),
                   ],
@@ -96,29 +71,17 @@ class AboutPage extends StatelessWidget {
           const SizedBox(height: 20),
           Text(t.aboutPage.translators, style: const TextStyle(fontWeight: FontWeight.bold)),
           Table(
-            columnWidths: const {
-              0: IntrinsicColumnWidth(),
-              1: FlexColumnWidth(),
-            },
+            columnWidths: const {0: IntrinsicColumnWidth(), 1: FlexColumnWidth()},
             children: [
               ..._translators.entries.map(
                 (e) => TableRow(
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.only(right: 10),
-                      child: Text(e.key.translations.locale),
-                    ),
+                    Padding(padding: const EdgeInsets.only(right: 10), child: Text(e.key.translations.locale)),
                     Text.rich(
                       TextSpan(
-                        children: e.value.mapIndexed(
-                          (index, translator) {
-                            return _buildContributor(
-                              label: translator,
-                              primaryColor: primaryColor,
-                              newLine: index != 0,
-                            );
-                          },
-                        ).toList(),
+                        children: e.value.mapIndexed((index, translator) {
+                          return _buildContributor(label: translator, primaryColor: primaryColor, newLine: index != 0);
+                        }).toList(),
                       ),
                     ),
                   ],
@@ -134,19 +97,19 @@ class AboutPage extends StatelessWidget {
                 onPressed: () async {
                   await launchUrl(Uri.parse('https://localsend.org'));
                 },
-                child: const Text('Homepage'),
+                child: const Text('LocalSend homepage'),
               ),
               TextButton(
                 onPressed: () async {
-                  await launchUrl(Uri.parse('https://github.com/localsend/localsend'), mode: LaunchMode.externalApplication);
+                  await launchUrl(Uri.parse('https://github.com/haoyu-qi/qlex'), mode: LaunchMode.externalApplication);
                 },
-                child: const Text('Source Code (Github)'),
+                child: const Text('qlex source code (GitHub)'),
               ),
               TextButton(
                 onPressed: () async {
                   await launchUrl(Uri.parse('https://codeberg.org/localsend/localsend'), mode: LaunchMode.externalApplication);
                 },
-                child: const Text('Source Code (Codeberg)'),
+                child: const Text('LocalSend upstream source (Codeberg)'),
               ),
               TextButton(
                 onPressed: () async {

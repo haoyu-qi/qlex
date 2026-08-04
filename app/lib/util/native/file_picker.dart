@@ -9,9 +9,9 @@ import 'package:flutter/services.dart';
 import 'package:localsend_app/config/theme.dart';
 import 'package:localsend_app/gen/strings.g.dart';
 import 'package:localsend_app/model/cross_file.dart';
-import 'package:localsend_app/pages/apk_picker_page.dart';
 import 'package:localsend_app/provider/device_info_provider.dart';
 import 'package:localsend_app/provider/selection/selected_sending_files_provider.dart';
+import 'package:localsend_app/qlex/qlex_strings.dart';
 import 'package:localsend_app/util/determine_image_type.dart';
 import 'package:localsend_app/util/file_path_helper.dart';
 import 'package:localsend_app/util/image_converter.dart';
@@ -21,7 +21,6 @@ import 'package:localsend_app/util/native/pick_directory_path.dart';
 import 'package:localsend_app/util/native/platform_check.dart';
 import 'package:localsend_app/util/ui/asset_picker_translated_text_delegate.dart';
 import 'package:localsend_app/widget/dialogs/loading_dialog.dart';
-import 'package:localsend_app/widget/dialogs/message_input_dialog.dart';
 import 'package:localsend_app/widget/dialogs/no_permission_dialog.dart';
 import 'package:logging/logging.dart';
 import 'package:pasteboard/pasteboard.dart';
@@ -38,8 +37,6 @@ enum FilePickerOption {
   file(Icons.description),
   folder(Icons.folder),
   media(Icons.image),
-  text(Icons.subject),
-  app(Icons.apps),
   clipboard(Icons.paste);
 
   const FilePickerOption(this.icon);
@@ -54,10 +51,6 @@ enum FilePickerOption {
         return t.sendTab.picker.folder;
       case FilePickerOption.media:
         return t.sendTab.picker.media;
-      case FilePickerOption.text:
-        return t.sendTab.picker.text;
-      case FilePickerOption.app:
-        return t.sendTab.picker.app;
       case FilePickerOption.clipboard:
         return t.sendTab.picker.clipboard;
     }
@@ -68,32 +61,14 @@ enum FilePickerOption {
     if (checkPlatform([TargetPlatform.iOS])) {
       // On iOS, picking from media is most common.
       // The file app is very limited.
-      return [
-        FilePickerOption.media,
-        FilePickerOption.text,
-        FilePickerOption.clipboard,
-        FilePickerOption.file,
-        FilePickerOption.folder,
-      ];
+      return [FilePickerOption.media, FilePickerOption.clipboard, FilePickerOption.file, FilePickerOption.folder];
     } else if (checkPlatform([TargetPlatform.android])) {
       // On android, the file app is most powerful.
       // It actually also allows to pick media files.
-      return [
-        FilePickerOption.file,
-        FilePickerOption.media,
-        FilePickerOption.clipboard,
-        FilePickerOption.text,
-        FilePickerOption.folder,
-        FilePickerOption.app,
-      ];
+      return [FilePickerOption.file, FilePickerOption.media, FilePickerOption.clipboard, FilePickerOption.folder];
     } else {
       // Desktop
-      return [
-        FilePickerOption.file,
-        FilePickerOption.folder,
-        FilePickerOption.text,
-        FilePickerOption.clipboard,
-      ];
+      return [FilePickerOption.file, FilePickerOption.folder, FilePickerOption.clipboard];
     }
   }
 }
@@ -102,10 +77,7 @@ class PickFileAction extends AsyncGlobalAction {
   final FilePickerOption option;
   final BuildContext context;
 
-  PickFileAction({
-    required this.option,
-    required this.context,
-  });
+  PickFileAction({required this.option, required this.context});
 
   @override
   Future<void> reduce() async {
@@ -121,17 +93,9 @@ class PickFileAction extends AsyncGlobalAction {
         // ignore: use_build_context_synchronously
         await _pickMedia(context, ref);
         break;
-      case FilePickerOption.text:
-        // ignore: use_build_context_synchronously
-        await _pickText(context, ref);
-        break;
       case FilePickerOption.clipboard:
         // ignore: use_build_context_synchronously
         await _pickClipboard(context, ref);
-        break;
-      case FilePickerOption.app:
-        // ignore: use_build_context_synchronously
-        await _pickApp(context);
         break;
     }
   }
@@ -146,27 +110,17 @@ Future<void> _pickFiles(BuildContext context, Ref ref) async {
   if (checkPlatform([TargetPlatform.android])) {
     // On android, the files are copied to the cache which takes some time.
     // ignore: unawaited_futures
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const LoadingDialog(),
-    );
+    showDialog(context: context, barrierDismissible: false, builder: (_) => const LoadingDialog());
   }
   try {
     if (defaultTargetPlatform == TargetPlatform.android) {
       final result = await android_channel.pickFilesAndroid();
       if (result != null) {
-        await ref.redux(selectedSendingFilesProvider).dispatchAsync(AddFilesAction(
-              files: result,
-              converter: CrossFileConverters.convertFileInfo,
-            ));
+        await ref.redux(selectedSendingFilesProvider).dispatchAsync(AddFilesAction(files: result, converter: CrossFileConverters.convertFileInfo));
       }
     } else {
       final result = await openFiles();
-      await ref.redux(selectedSendingFilesProvider).dispatchAsync(AddFilesAction(
-            files: result,
-            converter: CrossFileConverters.convertXFile,
-          ));
+      await ref.redux(selectedSendingFilesProvider).dispatchAsync(AddFilesAction(files: result, converter: CrossFileConverters.convertXFile));
     }
   } catch (e) {
     if (e is PlatformException && e.code == 'CANCELED') {
@@ -198,11 +152,7 @@ Future<void> _pickFolder(BuildContext context, Ref ref) async {
   }
 
   // ignore: unawaited_futures
-  showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (_) => const LoadingDialog(),
-  );
+  showDialog(context: context, barrierDismissible: false, builder: (_) => const LoadingDialog());
   await sleepAsync(200); // Wait for the dialog to be shown
   try {
     if (defaultTargetPlatform == TargetPlatform.android && (ref.read(deviceInfoProvider).androidSdkInt ?? 0) >= android_channel.contentUriMinSdk) {
@@ -250,24 +200,16 @@ Future<void> _pickMedia(BuildContext context, Ref ref) async {
   });
 
   if (result != null) {
-    await ref.redux(selectedSendingFilesProvider).dispatchAsync(AddFilesAction(
-          files: result,
-          converter: CrossFileConverters.convertAssetEntity,
-        ));
-  }
-}
-
-Future<void> _pickText(BuildContext context, Ref ref) async {
-  final result = await showDialog<String>(context: context, builder: (_) => const MessageInputDialog());
-  if (result != null) {
-    ref.redux(selectedSendingFilesProvider).dispatch(AddMessageAction(message: result));
+    await ref.redux(selectedSendingFilesProvider).dispatchAsync(AddFilesAction(files: result, converter: CrossFileConverters.convertAssetEntity));
   }
 }
 
 Future<void> _pickClipboard(BuildContext context, Ref ref) async {
   final data = await Clipboard.getData(Clipboard.kTextPlain);
   if (data?.text != null) {
-    ref.redux(selectedSendingFilesProvider).dispatch(AddMessageAction(message: data!.text!));
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(QlexStrings.of(context).textUnsupported)));
+    }
     return;
   }
 
@@ -291,11 +233,7 @@ Future<void> _pickClipboard(BuildContext context, Ref ref) async {
     final now = DateTime.now();
     final fileName =
         'clipboard_${now.year}-${now.month.twoDigitString}-${now.day.twoDigitString}_${now.hour.twoDigitString}-${now.minute.twoDigitString}.$imageType';
-    ref.redux(selectedSendingFilesProvider).dispatch(AddBinaryAction(
-          bytes: currImage,
-          fileType: FileType.image,
-          fileName: fileName,
-        ));
+    ref.redux(selectedSendingFilesProvider).dispatch(AddBinaryAction(bytes: currImage, fileType: FileType.image, fileName: fileName));
     return;
   }
 
@@ -330,14 +268,7 @@ Future<void> _pickClipboard(BuildContext context, Ref ref) async {
     return;
   }
 
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-    content: Text(t.general.noItemInClipboard),
-  ));
-}
-
-Future<void> _pickApp(BuildContext context) async {
-  // Currently, only Android APK
-  await context.push(() => const ApkPickerPage());
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t.general.noItemInClipboard)));
 }
 
 extension on int {

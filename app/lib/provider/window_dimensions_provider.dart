@@ -8,18 +8,15 @@ class WindowDimensions {
   final Offset position;
   final Size size;
 
-  WindowDimensions({
-    required this.position,
-    required this.size,
-  });
+  WindowDimensions({required this.position, required this.size});
 }
 
 final windowDimensionProvider = Provider<WindowDimensionsController>((ref) {
   return WindowDimensionsController(ref.read(persistenceProvider));
 });
 
-const Size _minimalSize = Size(400, 500);
-const Size _defaultSize = Size(900, 600);
+const Size _minimalSize = Size(720, 520);
+const Size _defaultSize = Size(960, 640);
 
 class WindowDimensionsController {
   final PersistenceService _service;
@@ -66,10 +63,7 @@ class WindowDimensionsController {
     return checkX && checkY;
   }
 
-  Future<void> storeDimensions({
-    required Offset windowOffset,
-    required Size windowSize,
-  }) async {
+  Future<void> storeDimensions({required Offset windowOffset, required Size windowSize}) async {
     if (await isInScreenBounds(windowOffset)) {
       await _service.setWindowOffsetX(windowOffset.dx);
       await _service.setWindowOffsetY(windowOffset.dy);

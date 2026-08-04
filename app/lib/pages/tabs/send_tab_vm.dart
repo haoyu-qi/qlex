@@ -7,7 +7,6 @@ import 'package:localsend_app/model/persistence/favorite_device.dart';
 import 'package:localsend_app/model/send_mode.dart';
 import 'package:localsend_app/pages/progress_page.dart';
 import 'package:localsend_app/pages/send_page.dart';
-import 'package:localsend_app/pages/web_send_page.dart';
 import 'package:localsend_app/provider/favorites_provider.dart';
 import 'package:localsend_app/provider/local_ip_provider.dart';
 import 'package:localsend_app/provider/network/nearby_devices_provider.dart';
@@ -71,23 +70,13 @@ final sendTabVmProvider = ViewProvider((ref) {
         await context.pushBottomSheet(() => const NoFilesDialog());
         return;
       }
-      final device = await showDialog<Device?>(
-        context: context,
-        builder: (_) => const AddressInputDialog(),
-      );
+      final device = await showDialog<Device?>(context: context, builder: (_) => const AddressInputDialog());
       if (device != null && context.mounted) {
-        await ref.notifier(sendProvider).startSession(
-              target: device,
-              files: files,
-              background: false,
-            );
+        await ref.notifier(sendProvider).startSession(target: device, files: files, background: false);
       }
     },
     onTapFavorite: (context) async {
-      final device = await showDialog<Device?>(
-        context: context,
-        builder: (_) => const FavoritesDialog(),
-      );
+      final device = await showDialog<Device?>(context: context, builder: (_) => const FavoritesDialog());
       if (device != null && context.mounted) {
         final files = ref.read(selectedSendingFilesProvider);
         if (files.isEmpty) {
@@ -95,24 +84,10 @@ final sendTabVmProvider = ViewProvider((ref) {
           return;
         }
 
-        await ref.notifier(sendProvider).startSession(
-              target: device,
-              files: files,
-              background: false,
-            );
+        await ref.notifier(sendProvider).startSession(target: device, files: files, background: false);
       }
     },
     onTapSendMode: (context, mode) async {
-      if (mode == SendMode.link) {
-        final files = ref.read(selectedSendingFilesProvider);
-        if (files.isEmpty) {
-          await context.pushBottomSheet(() => const NoFilesDialog());
-          return;
-        }
-        await context.push(() => WebSendPage(files));
-        return;
-      }
-
       await ref.notifier(settingsProvider).setSendMode(mode);
       if (mode != SendMode.multiple) {
         ref.notifier(sendProvider).clearAllSessions();
@@ -121,15 +96,15 @@ final sendTabVmProvider = ViewProvider((ref) {
     onToggleFavorite: (context, device) async {
       final favoriteDevice = favoriteDevices.findDevice(device);
       if (favoriteDevice != null) {
-        final result = await showDialog<bool>(
-          context: context,
-          builder: (_) => FavoriteDeleteDialog(favoriteDevice),
-        );
+        final result = await showDialog<bool>(context: context, builder: (_) => FavoriteDeleteDialog(favoriteDevice));
         if (result == true) {
           await ref.redux(favoritesProvider).dispatchAsync(RemoveFavoriteAction(deviceFingerprint: device.fingerprint));
         }
       } else {
-        await showDialog(context: context, builder: (_) => FavoriteEditDialog(prefilledDevice: device));
+        await showDialog(
+          context: context,
+          builder: (_) => FavoriteEditDialog(prefilledDevice: device),
+        );
       }
     },
     onTapDevice: (context, device) async {
@@ -138,11 +113,7 @@ final sendTabVmProvider = ViewProvider((ref) {
         return;
       }
 
-      await ref.notifier(sendProvider).startSession(
-            target: device,
-            files: selectedFiles,
-            background: false,
-          );
+      await ref.notifier(sendProvider).startSession(target: device, files: selectedFiles, background: false);
     },
     onTapDeviceMultiSend: (context, device) async {
       final session = ref.read(sendProvider).values.firstWhereOrNull((s) => s.target.ip == device.ip);
@@ -174,11 +145,7 @@ final sendTabVmProvider = ViewProvider((ref) {
         ref.notifier(sendProvider).closeSession(session.sessionId);
       }
 
-      await ref.notifier(sendProvider).startSession(
-            target: device,
-            files: files,
-            background: true,
-          );
+      await ref.notifier(sendProvider).startSession(target: device, files: files, background: true);
     },
   );
 });

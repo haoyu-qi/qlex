@@ -10,17 +10,22 @@ import 'package:slang/generated.dart';
 import 'strings.g.dart';
 
 // Path: <root>
-class TranslationsAz extends Translations {
+class TranslationsAz extends Translations with BaseTranslations<AppLocale, Translations> {
   /// You can call this constructor and build your own translation instance of this locale.
   /// Constructing via the enum [AppLocale.build] is preferred.
-  TranslationsAz({Map<String, Node>? overrides, PluralResolver? cardinalResolver, PluralResolver? ordinalResolver})
+  TranslationsAz(
+      {Map<String, Node>? overrides,
+      PluralResolver? cardinalResolver,
+      PluralResolver? ordinalResolver,
+      TranslationMetadata<AppLocale, Translations>? meta})
       : assert(overrides == null, 'Set "translation_overrides: true" in order to enable this feature.'),
-        $meta = TranslationMetadata(
-          locale: AppLocale.az,
-          overrides: overrides ?? {},
-          cardinalResolver: cardinalResolver,
-          ordinalResolver: ordinalResolver,
-        ),
+        $meta = meta ??
+            TranslationMetadata(
+              locale: AppLocale.az,
+              overrides: overrides ?? {},
+              cardinalResolver: cardinalResolver,
+              ordinalResolver: ordinalResolver,
+            ),
         super(cardinalResolver: cardinalResolver, ordinalResolver: ordinalResolver);
 
   /// Metadata for the translations of <az>.
@@ -29,24 +34,27 @@ class TranslationsAz extends Translations {
 
   late final TranslationsAz _root = this; // ignore: unused_field
 
+  @override
+  TranslationsAz $copyWith({TranslationMetadata<AppLocale, Translations>? meta}) => TranslationsAz(meta: meta ?? this.$meta);
+
   // Translations
   @override
   String get locale => 'Azərbaycanca';
   @override
   String get appName => 'LocalSend';
   @override
-  late final _TranslationsGeneralAz general = _TranslationsGeneralAz._(_root);
+  late final _Translations$general$az general = _Translations$general$az._(_root);
   @override
-  late final _TranslationsReceiveTabAz receiveTab = _TranslationsReceiveTabAz._(_root);
+  late final _Translations$receiveTab$az receiveTab = _Translations$receiveTab$az._(_root);
   @override
-  late final _TranslationsSendTabAz sendTab = _TranslationsSendTabAz._(_root);
+  late final _Translations$sendTab$az sendTab = _Translations$sendTab$az._(_root);
   @override
-  late final _TranslationsSettingsTabAz settingsTab = _TranslationsSettingsTabAz._(_root);
+  late final _Translations$settingsTab$az settingsTab = _Translations$settingsTab$az._(_root);
 }
 
 // Path: general
-class _TranslationsGeneralAz extends TranslationsGeneralEn {
-  _TranslationsGeneralAz._(TranslationsAz root)
+class _Translations$general$az extends Translations$general$en {
+  _Translations$general$az._(TranslationsAz root)
       : this._root = root,
         super.internal(root);
 
@@ -132,8 +140,8 @@ class _TranslationsGeneralAz extends TranslationsGeneralEn {
 }
 
 // Path: receiveTab
-class _TranslationsReceiveTabAz extends TranslationsReceiveTabEn {
-  _TranslationsReceiveTabAz._(TranslationsAz root)
+class _Translations$receiveTab$az extends Translations$receiveTab$en {
+  _Translations$receiveTab$az._(TranslationsAz root)
       : this._root = root,
         super.internal(root);
 
@@ -143,14 +151,14 @@ class _TranslationsReceiveTabAz extends TranslationsReceiveTabEn {
   @override
   String get title => 'Qəbul et';
   @override
-  late final _TranslationsReceiveTabInfoBoxAz infoBox = _TranslationsReceiveTabInfoBoxAz._(_root);
+  late final _Translations$receiveTab$infoBox$az infoBox = _Translations$receiveTab$infoBox$az._(_root);
   @override
-  late final _TranslationsReceiveTabQuickSaveAz quickSave = _TranslationsReceiveTabQuickSaveAz._(_root);
+  late final _Translations$receiveTab$quickSave$az quickSave = _Translations$receiveTab$quickSave$az._(_root);
 }
 
 // Path: sendTab
-class _TranslationsSendTabAz extends TranslationsSendTabEn {
-  _TranslationsSendTabAz._(TranslationsAz root)
+class _Translations$sendTab$az extends Translations$sendTab$en {
+  _Translations$sendTab$az._(TranslationsAz root)
       : this._root = root,
         super.internal(root);
 
@@ -160,9 +168,9 @@ class _TranslationsSendTabAz extends TranslationsSendTabEn {
   @override
   String get title => 'Göndər';
   @override
-  late final _TranslationsSendTabSelectionAz selection = _TranslationsSendTabSelectionAz._(_root);
+  late final _Translations$sendTab$selection$az selection = _Translations$sendTab$selection$az._(_root);
   @override
-  late final _TranslationsSendTabPickerAz picker = _TranslationsSendTabPickerAz._(_root);
+  late final _Translations$sendTab$picker$az picker = _Translations$sendTab$picker$az._(_root);
   @override
   String get shareIntentInfo => 'Faylları daha rahat seçmək üçün mobil cihazınızın "Paylaş" xüsusiyyətin də istifadə edə bilərsiniz.';
   @override
@@ -176,7 +184,7 @@ class _TranslationsSendTabAz extends TranslationsSendTabEn {
   @override
   String get sendMode => 'Göndərmə üsulu';
   @override
-  late final _TranslationsSendTabSendModesAz sendModes = _TranslationsSendTabSendModesAz._(_root);
+  late final _Translations$sendTab$sendModes$az sendModes = _Translations$sendTab$sendModes$az._(_root);
   @override
   String get sendModeHelp => 'İzahat';
   @override
@@ -186,8 +194,8 @@ class _TranslationsSendTabAz extends TranslationsSendTabEn {
 }
 
 // Path: settingsTab
-class _TranslationsSettingsTabAz extends TranslationsSettingsTabEn {
-  _TranslationsSettingsTabAz._(TranslationsAz root)
+class _Translations$settingsTab$az extends Translations$settingsTab$en {
+  _Translations$settingsTab$az._(TranslationsAz root)
       : this._root = root,
         super.internal(root);
 
@@ -197,14 +205,14 @@ class _TranslationsSettingsTabAz extends TranslationsSettingsTabEn {
   @override
   String get title => 'Tənzimləmələr';
   @override
-  late final _TranslationsSettingsTabGeneralAz general = _TranslationsSettingsTabGeneralAz._(_root);
+  late final _Translations$settingsTab$general$az general = _Translations$settingsTab$general$az._(_root);
   @override
-  late final _TranslationsSettingsTabReceiveAz receive = _TranslationsSettingsTabReceiveAz._(_root);
+  late final _Translations$settingsTab$receive$az receive = _Translations$settingsTab$receive$az._(_root);
 }
 
 // Path: receiveTab.infoBox
-class _TranslationsReceiveTabInfoBoxAz extends TranslationsReceiveTabInfoBoxEn {
-  _TranslationsReceiveTabInfoBoxAz._(TranslationsAz root)
+class _Translations$receiveTab$infoBox$az extends Translations$receiveTab$infoBox$en {
+  _Translations$receiveTab$infoBox$az._(TranslationsAz root)
       : this._root = root,
         super.internal(root);
 
@@ -220,8 +228,8 @@ class _TranslationsReceiveTabInfoBoxAz extends TranslationsReceiveTabInfoBoxEn {
 }
 
 // Path: receiveTab.quickSave
-class _TranslationsReceiveTabQuickSaveAz extends TranslationsReceiveTabQuickSaveEn {
-  _TranslationsReceiveTabQuickSaveAz._(TranslationsAz root)
+class _Translations$receiveTab$quickSave$az extends Translations$receiveTab$quickSave$en {
+  _Translations$receiveTab$quickSave$az._(TranslationsAz root)
       : this._root = root,
         super.internal(root);
 
@@ -237,8 +245,8 @@ class _TranslationsReceiveTabQuickSaveAz extends TranslationsReceiveTabQuickSave
 }
 
 // Path: sendTab.selection
-class _TranslationsSendTabSelectionAz extends TranslationsSendTabSelectionEn {
-  _TranslationsSendTabSelectionAz._(TranslationsAz root)
+class _Translations$sendTab$selection$az extends Translations$sendTab$selection$en {
+  _Translations$sendTab$selection$az._(TranslationsAz root)
       : this._root = root,
         super.internal(root);
 
@@ -254,8 +262,8 @@ class _TranslationsSendTabSelectionAz extends TranslationsSendTabSelectionEn {
 }
 
 // Path: sendTab.picker
-class _TranslationsSendTabPickerAz extends TranslationsSendTabPickerEn {
-  _TranslationsSendTabPickerAz._(TranslationsAz root)
+class _Translations$sendTab$picker$az extends Translations$sendTab$picker$en {
+  _Translations$sendTab$picker$az._(TranslationsAz root)
       : this._root = root,
         super.internal(root);
 
@@ -277,8 +285,8 @@ class _TranslationsSendTabPickerAz extends TranslationsSendTabPickerEn {
 }
 
 // Path: sendTab.sendModes
-class _TranslationsSendTabSendModesAz extends TranslationsSendTabSendModesEn {
-  _TranslationsSendTabSendModesAz._(TranslationsAz root)
+class _Translations$sendTab$sendModes$az extends Translations$sendTab$sendModes$en {
+  _Translations$sendTab$sendModes$az._(TranslationsAz root)
       : this._root = root,
         super.internal(root);
 
@@ -294,8 +302,8 @@ class _TranslationsSendTabSendModesAz extends TranslationsSendTabSendModesEn {
 }
 
 // Path: settingsTab.general
-class _TranslationsSettingsTabGeneralAz extends TranslationsSettingsTabGeneralEn {
-  _TranslationsSettingsTabGeneralAz._(TranslationsAz root)
+class _Translations$settingsTab$general$az extends Translations$settingsTab$general$en {
+  _Translations$settingsTab$general$az._(TranslationsAz root)
       : this._root = root,
         super.internal(root);
 
@@ -307,15 +315,16 @@ class _TranslationsSettingsTabGeneralAz extends TranslationsSettingsTabGeneralEn
   @override
   String get brightness => 'Tema';
   @override
-  late final _TranslationsSettingsTabGeneralBrightnessOptionsAz brightnessOptions = _TranslationsSettingsTabGeneralBrightnessOptionsAz._(_root);
+  late final _Translations$settingsTab$general$brightnessOptions$az brightnessOptions =
+      _Translations$settingsTab$general$brightnessOptions$az._(_root);
   @override
   String get color => 'Rəng';
   @override
-  late final _TranslationsSettingsTabGeneralColorOptionsAz colorOptions = _TranslationsSettingsTabGeneralColorOptionsAz._(_root);
+  late final _Translations$settingsTab$general$colorOptions$az colorOptions = _Translations$settingsTab$general$colorOptions$az._(_root);
   @override
   String get language => 'Dil';
   @override
-  late final _TranslationsSettingsTabGeneralLanguageOptionsAz languageOptions = _TranslationsSettingsTabGeneralLanguageOptionsAz._(_root);
+  late final _Translations$settingsTab$general$languageOptions$az languageOptions = _Translations$settingsTab$general$languageOptions$az._(_root);
   @override
   String get saveWindowPlacement => 'Çıxdıqdan sonra pəncərə mövqeyini saxla';
   @override
@@ -333,8 +342,8 @@ class _TranslationsSettingsTabGeneralAz extends TranslationsSettingsTabGeneralEn
 }
 
 // Path: settingsTab.receive
-class _TranslationsSettingsTabReceiveAz extends TranslationsSettingsTabReceiveEn {
-  _TranslationsSettingsTabReceiveAz._(TranslationsAz root)
+class _Translations$settingsTab$receive$az extends Translations$settingsTab$receive$en {
+  _Translations$settingsTab$receive$az._(TranslationsAz root)
       : this._root = root,
         super.internal(root);
 
@@ -352,8 +361,8 @@ class _TranslationsSettingsTabReceiveAz extends TranslationsSettingsTabReceiveEn
 }
 
 // Path: settingsTab.general.brightnessOptions
-class _TranslationsSettingsTabGeneralBrightnessOptionsAz extends TranslationsSettingsTabGeneralBrightnessOptionsEn {
-  _TranslationsSettingsTabGeneralBrightnessOptionsAz._(TranslationsAz root)
+class _Translations$settingsTab$general$brightnessOptions$az extends Translations$settingsTab$general$brightnessOptions$en {
+  _Translations$settingsTab$general$brightnessOptions$az._(TranslationsAz root)
       : this._root = root,
         super.internal(root);
 
@@ -369,8 +378,8 @@ class _TranslationsSettingsTabGeneralBrightnessOptionsAz extends TranslationsSet
 }
 
 // Path: settingsTab.general.colorOptions
-class _TranslationsSettingsTabGeneralColorOptionsAz extends TranslationsSettingsTabGeneralColorOptionsEn {
-  _TranslationsSettingsTabGeneralColorOptionsAz._(TranslationsAz root)
+class _Translations$settingsTab$general$colorOptions$az extends Translations$settingsTab$general$colorOptions$en {
+  _Translations$settingsTab$general$colorOptions$az._(TranslationsAz root)
       : this._root = root,
         super.internal(root);
 
@@ -384,8 +393,8 @@ class _TranslationsSettingsTabGeneralColorOptionsAz extends TranslationsSettings
 }
 
 // Path: settingsTab.general.languageOptions
-class _TranslationsSettingsTabGeneralLanguageOptionsAz extends TranslationsSettingsTabGeneralLanguageOptionsEn {
-  _TranslationsSettingsTabGeneralLanguageOptionsAz._(TranslationsAz root)
+class _Translations$settingsTab$general$languageOptions$az extends Translations$settingsTab$general$languageOptions$en {
+  _Translations$settingsTab$general$languageOptions$az._(TranslationsAz root)
       : this._root = root,
         super.internal(root);
 

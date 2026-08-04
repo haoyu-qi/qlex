@@ -1,4 +1,3 @@
-import 'dart:convert' show utf8;
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -13,10 +12,8 @@ import 'package:localsend_app/util/send_ignore.dart';
 import 'package:logging/logging.dart';
 import 'package:path/path.dart' as p;
 import 'package:refena_flutter/refena_flutter.dart';
-import 'package:uuid/uuid.dart';
 
 final _logger = Logger('SelectedSendingFiles');
-const _uuid = Uuid();
 
 /// Manages files selected for sending.
 /// Will stay alive even after a session has been completed to send the same files to another device.
@@ -29,55 +26,6 @@ class SelectedSendingFilesNotifier extends ReduxNotifier<List<CrossFile>> {
   List<CrossFile> init() => [];
 }
 
-/// Adds a message.
-class AddMessageAction extends ReduxAction<SelectedSendingFilesNotifier, List<CrossFile>> {
-  final String message;
-  final int? index;
-
-  AddMessageAction({
-    required this.message,
-    this.index,
-  });
-
-  @override
-  List<CrossFile> reduce() {
-    final List<int> bytes = utf8.encode(message);
-    final file = CrossFile(
-      name: '${_uuid.v4()}.txt',
-      fileType: FileType.text,
-      size: bytes.length,
-      thumbnail: null,
-      asset: null,
-      path: null,
-      bytes: bytes,
-      lastModified: null,
-      lastAccessed: null,
-    );
-
-    return List.unmodifiable([
-      ...state,
-    ]..insert(index ?? state.length, file));
-  }
-}
-
-/// Updates a message.
-class UpdateMessageAction extends ReduxAction<SelectedSendingFilesNotifier, List<CrossFile>> {
-  final String message;
-  final int index;
-
-  UpdateMessageAction({
-    required this.message,
-    required this.index,
-  });
-
-  @override
-  List<CrossFile> reduce() {
-    dispatch(RemoveSelectedFileAction(index));
-    dispatch(AddMessageAction(message: message, index: index));
-    return state;
-  }
-}
-
 /// Adds a binary file to the list.
 /// During the sending process, the file will be read from the memory.
 class AddBinaryAction extends ReduxAction<SelectedSendingFilesNotifier, List<CrossFile>> {
@@ -85,11 +33,7 @@ class AddBinaryAction extends ReduxAction<SelectedSendingFilesNotifier, List<Cro
   final FileType fileType;
   final String fileName;
 
-  AddBinaryAction({
-    required this.bytes,
-    required this.fileType,
-    required this.fileName,
-  });
+  AddBinaryAction({required this.bytes, required this.fileType, required this.fileName});
 
   @override
   List<CrossFile> reduce() {
@@ -105,10 +49,7 @@ class AddBinaryAction extends ReduxAction<SelectedSendingFilesNotifier, List<Cro
       lastAccessed: null,
     );
 
-    return List.unmodifiable([
-      ...state,
-      file,
-    ]);
+    return List.unmodifiable([...state, file]);
   }
 }
 
@@ -117,10 +58,7 @@ class AddFilesAction<T> extends AsyncReduxAction<SelectedSendingFilesNotifier, L
   final Iterable<T> files;
   final Future<CrossFile> Function(T) converter;
 
-  AddFilesAction({
-    required this.files,
-    required this.converter,
-  });
+  AddFilesAction({required this.files, required this.converter});
 
   @override
   Future<List<CrossFile>> reduce() async {
@@ -135,10 +73,7 @@ class AddFilesAction<T> extends AsyncReduxAction<SelectedSendingFilesNotifier, L
         newFiles.add(crossFile);
       }
     }
-    return List.unmodifiable([
-      ...state,
-      ...newFiles,
-    ]);
+    return List.unmodifiable([...state, ...newFiles]);
   }
 }
 
@@ -191,10 +126,7 @@ class AddDirectoryAction extends AsyncReduxAction<SelectedSendingFilesNotifier, 
       }
     }
 
-    return List.unmodifiable([
-      ...state,
-      ...newFiles,
-    ]);
+    return List.unmodifiable([...state, ...newFiles]);
   }
 }
 
@@ -251,10 +183,7 @@ class AddAndroidDirectoryAction extends AsyncReduxAction<SelectedSendingFilesNot
       }
     }
 
-    return List.unmodifiable([
-      ...state,
-      ...newFiles,
-    ]);
+    return List.unmodifiable([...state, ...newFiles]);
   }
 }
 
@@ -296,10 +225,7 @@ class LoadSelectionFromArgsAction extends AsyncReduxActionWithResult<SelectedSen
       final directory = Directory(arg);
 
       if (file.existsSync()) {
-        await dispatchAsync(AddFilesAction(
-          files: [file],
-          converter: CrossFileConverters.convertFile,
-        ));
+        await dispatchAsync(AddFilesAction(files: [file], converter: CrossFileConverters.convertFile));
         filesAdded = true;
       } else if (directory.existsSync()) {
         await dispatchAsync(AddDirectoryAction(arg));

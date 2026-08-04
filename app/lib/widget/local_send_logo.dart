@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:localsend_app/gen/assets.gen.dart';
 
 class LocalSendLogo extends StatelessWidget {
   final bool withText;
@@ -8,23 +7,14 @@ class LocalSendLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final logo = ColorFiltered(
-      colorFilter: ColorFilter.mode(
-        Theme.of(context).colorScheme.primary,
-        BlendMode.srcATop,
-      ),
-      child: Assets.img.logo512.image(
-        width: 200,
-        height: 200,
-      ),
-    );
+    final logo = Image.asset('assets/img/qlex-mark.png', width: 200, height: 200, filterQuality: FilterQuality.high);
 
     if (withText) {
       return Column(
         children: [
           logo,
           const Text(
-            'LocalSend',
+            'qlex',
             style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
             textAlign: TextAlign.center,
           ),

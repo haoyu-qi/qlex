@@ -9,6 +9,9 @@ import 'package:refena_flutter/refena_flutter.dart';
 import 'package:yaru/yaru.dart' as yaru;
 
 final _borderRadius = BorderRadius.circular(5);
+const qlexCyan = Color(0xFF22D3EE);
+const qlexFog = Color(0xFFF5F7F8);
+const qlexGraphite = Color(0xFF111827);
 
 /// On desktop, we need to add additional padding to achieve the same visual appearance as on mobile
 double get desktopPaddingFix => checkPlatformIsDesktop() ? 8 : 0;
@@ -46,11 +49,18 @@ ThemeData getTheme(ColorMode colorMode, Brightness brightness, DynamicColors? dy
 
   return ThemeData(
     colorScheme: colorScheme,
+    scaffoldBackgroundColor: colorScheme.surface,
     useMaterial3: true,
+    cardTheme: CardThemeData(
+      elevation: 0,
+      color: colorScheme.surfaceContainer,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.55)),
+      ),
+    ),
     navigationBarTheme: colorScheme.brightness == Brightness.dark
-        ? NavigationBarThemeData(
-            iconTheme: WidgetStateProperty.all(const IconThemeData(color: Colors.white)),
-          )
+        ? NavigationBarThemeData(iconTheme: WidgetStateProperty.all(const IconThemeData(color: Colors.white)))
         : null,
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
@@ -67,9 +77,7 @@ ThemeData getTheme(ColorMode colorMode, Brightness brightness, DynamicColors? dy
       ),
     ),
     textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(
-        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8 + desktopPaddingFix),
-      ),
+      style: TextButton.styleFrom(padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8 + desktopPaddingFix)),
     ),
     fontFamily: fontFamily,
   );
@@ -89,18 +97,22 @@ Future<void> updateSystemOverlayStyleWithBrightness(Brightness brightness) async
 
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge); // ignore: unawaited_futures
 
-    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: brightness == Brightness.light ? Brightness.dark : Brightness.light,
-      systemNavigationBarColor: edgeToEdge ? Colors.transparent : (darkMode ? Colors.black : Colors.white),
-      systemNavigationBarContrastEnforced: false,
-      systemNavigationBarIconBrightness: darkMode ? Brightness.light : Brightness.dark,
-    ));
+    SystemChrome.setSystemUIOverlayStyle(
+      SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: brightness == Brightness.light ? Brightness.dark : Brightness.light,
+        systemNavigationBarColor: edgeToEdge ? Colors.transparent : (darkMode ? Colors.black : Colors.white),
+        systemNavigationBarContrastEnforced: false,
+        systemNavigationBarIconBrightness: darkMode ? Brightness.light : Brightness.dark,
+      ),
+    );
   } else {
-    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
-      statusBarBrightness: brightness, // iOS
-      statusBarColor: Colors.transparent, // Not relevant to this issue
-    ));
+    SystemChrome.setSystemUIOverlayStyle(
+      SystemUiOverlayStyle(
+        statusBarBrightness: brightness, // iOS
+        statusBarColor: Colors.transparent, // Not relevant to this issue
+      ),
+    );
   }
 }
 
@@ -125,26 +137,18 @@ extension ColorSchemeExt on ColorScheme {
   }
 }
 
-extension InputDecorationThemeExt on InputDecorationTheme {
+extension InputDecorationThemeExt on InputDecorationThemeData {
   BorderRadius get borderRadius => _borderRadius;
 }
 
 ColorScheme _determineColorScheme(ColorMode mode, Brightness brightness, DynamicColors? dynamicColors) {
-  final defaultColorScheme = ColorScheme.fromSeed(
-    seedColor: Colors.teal,
-    brightness: brightness,
+  final qlexScheme = ColorScheme.fromSeed(seedColor: qlexCyan, brightness: brightness).copyWith(
+    primary: brightness == Brightness.light ? const Color(0xFF007C91) : qlexCyan,
+    surface: brightness == Brightness.light ? qlexFog : qlexGraphite,
+    surfaceContainer: brightness == Brightness.light ? Colors.white : const Color(0xFF192234),
   );
 
-  final colorScheme = switch (mode) {
-    ColorMode.system => brightness == Brightness.light ? dynamicColors?.light : dynamicColors?.dark,
-    ColorMode.localsend => null,
-    ColorMode.oled => (dynamicColors?.dark ?? defaultColorScheme).copyWith(
-        surface: Colors.black,
-      ),
-    ColorMode.yaru => throw 'Should reach here',
-  };
-
-  return colorScheme ?? defaultColorScheme;
+  return mode == ColorMode.oled ? qlexScheme.copyWith(surface: Colors.black) : qlexScheme;
 }
 
 ThemeData _getYaruTheme(Brightness brightness) {
@@ -163,9 +167,7 @@ ThemeData _getYaruTheme(Brightness brightness) {
 
   return baseTheme.copyWith(
     navigationBarTheme: colorScheme.brightness == Brightness.dark
-        ? NavigationBarThemeData(
-            iconTheme: WidgetStateProperty.all(const IconThemeData(color: Colors.white)),
-          )
+        ? NavigationBarThemeData(iconTheme: WidgetStateProperty.all(const IconThemeData(color: Colors.white)))
         : null,
     inputDecorationTheme: InputDecorationTheme(
       filled: true,

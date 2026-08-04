@@ -7,10 +7,7 @@ import 'package:window_manager/window_manager.dart';
 final _logger = Logger('Init');
 
 /// Shows an alternative app if the initialization failed.
-void showInitErrorApp({
-  required Object error,
-  required StackTrace stackTrace,
-}) async {
+void showInitErrorApp({required Object error, required StackTrace stackTrace}) async {
   _logger.severe('Error during init', error, stackTrace);
 
   if (checkPlatformIsDesktop()) {
@@ -18,20 +15,14 @@ void showInitErrorApp({
     await WindowManager.instance.show();
   }
 
-  runApp(_ErrorApp(
-    error: error,
-    stackTrace: stackTrace,
-  ));
+  runApp(_ErrorApp(error: error, stackTrace: stackTrace));
 }
 
 class _ErrorApp extends StatefulWidget {
   final Object error;
   final StackTrace stackTrace;
 
-  const _ErrorApp({
-    required this.error,
-    required this.stackTrace,
-  });
+  const _ErrorApp({required this.error, required this.stackTrace});
 
   @override
   State<_ErrorApp> createState() => _ErrorAppState();
@@ -48,14 +39,14 @@ class _ErrorAppState extends State<_ErrorApp> {
     _controller.text = 'Error: ${widget.error}\n\n${widget.stackTrace}';
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final info = await PackageInfo.fromPlatform();
-      _controller.text = 'LocalSend ${info.version} (${info.buildNumber})\n\nError: ${widget.error}\n\n${widget.stackTrace}';
+      _controller.text = 'qlex ${info.version} (${info.buildNumber})\n\nError: ${widget.error}\n\n${widget.stackTrace}';
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'LocalSend: Error',
+      title: 'qlex: Error',
       debugShowCheckedModeBanner: false,
       home: Scaffold(
         body: TextFormField(
@@ -64,9 +55,7 @@ class _ErrorAppState extends State<_ErrorApp> {
           readOnly: true,
           decoration: const InputDecoration(
             contentPadding: EdgeInsets.all(10),
-            border: OutlineInputBorder(
-              borderSide: BorderSide(),
-            ),
+            border: OutlineInputBorder(borderSide: BorderSide()),
           ),
         ),
       ),

@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:common/model/file_type.dart';
-import 'package:device_apps/device_apps.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:localsend_app/model/cross_file.dart';
@@ -85,20 +84,6 @@ class CrossFileConverters {
     );
   }
 
-  static Future<CrossFile> convertApplication(Application app) async {
-    final file = File(app.apkFilePath);
-    return CrossFile(
-      name: '${app.appName.trim()} - v${app.versionName}.apk',
-      fileType: FileType.apk,
-      thumbnail: app is ApplicationWithIcon ? app.icon : null,
-      size: await file.length(),
-      asset: null,
-      path: app.apkFilePath,
-      bytes: null,
-      lastModified: null,
-      lastAccessed: null,
-    );
-  }
 }
 
 extension CompareFile on CrossFile {

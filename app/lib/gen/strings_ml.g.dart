@@ -10,17 +10,22 @@ import 'package:slang/generated.dart';
 import 'strings.g.dart';
 
 // Path: <root>
-class TranslationsMl extends Translations {
+class TranslationsMl extends Translations with BaseTranslations<AppLocale, Translations> {
   /// You can call this constructor and build your own translation instance of this locale.
   /// Constructing via the enum [AppLocale.build] is preferred.
-  TranslationsMl({Map<String, Node>? overrides, PluralResolver? cardinalResolver, PluralResolver? ordinalResolver})
+  TranslationsMl(
+      {Map<String, Node>? overrides,
+      PluralResolver? cardinalResolver,
+      PluralResolver? ordinalResolver,
+      TranslationMetadata<AppLocale, Translations>? meta})
       : assert(overrides == null, 'Set "translation_overrides: true" in order to enable this feature.'),
-        $meta = TranslationMetadata(
-          locale: AppLocale.ml,
-          overrides: overrides ?? {},
-          cardinalResolver: cardinalResolver,
-          ordinalResolver: ordinalResolver,
-        ),
+        $meta = meta ??
+            TranslationMetadata(
+              locale: AppLocale.ml,
+              overrides: overrides ?? {},
+              cardinalResolver: cardinalResolver,
+              ordinalResolver: ordinalResolver,
+            ),
         super(cardinalResolver: cardinalResolver, ordinalResolver: ordinalResolver);
 
   /// Metadata for the translations of <ml>.
@@ -29,36 +34,39 @@ class TranslationsMl extends Translations {
 
   late final TranslationsMl _root = this; // ignore: unused_field
 
+  @override
+  TranslationsMl $copyWith({TranslationMetadata<AppLocale, Translations>? meta}) => TranslationsMl(meta: meta ?? this.$meta);
+
   // Translations
   @override
-  late final _TranslationsGeneralMl general = _TranslationsGeneralMl._(_root);
+  late final _Translations$general$ml general = _Translations$general$ml._(_root);
   @override
   String get appName => 'ലോക്കൽസെൻഡ്‌';
   @override
   String get locale => 'മലയാളം';
   @override
-  late final _TranslationsSendTabMl sendTab = _TranslationsSendTabMl._(_root);
+  late final _Translations$sendTab$ml sendTab = _Translations$sendTab$ml._(_root);
   @override
-  late final _TranslationsReceiveTabMl receiveTab = _TranslationsReceiveTabMl._(_root);
+  late final _Translations$receiveTab$ml receiveTab = _Translations$receiveTab$ml._(_root);
   @override
-  late final _TranslationsSettingsTabMl settingsTab = _TranslationsSettingsTabMl._(_root);
+  late final _Translations$settingsTab$ml settingsTab = _Translations$settingsTab$ml._(_root);
   @override
-  late final _TranslationsAssetPickerMl assetPicker = _TranslationsAssetPickerMl._(_root);
+  late final _Translations$assetPicker$ml assetPicker = _Translations$assetPicker$ml._(_root);
   @override
-  late final _TranslationsWebMl web = _TranslationsWebMl._(_root);
+  late final _Translations$web$ml web = _Translations$web$ml._(_root);
   @override
-  late final _TranslationsDialogsMl dialogs = _TranslationsDialogsMl._(_root);
+  late final _Translations$dialogs$ml dialogs = _Translations$dialogs$ml._(_root);
   @override
-  late final _TranslationsTrayMl tray = _TranslationsTrayMl._(_root);
+  late final _Translations$tray$ml tray = _Translations$tray$ml._(_root);
   @override
-  late final _TranslationsNetworkInterfacesPageMl networkInterfacesPage = _TranslationsNetworkInterfacesPageMl._(_root);
+  late final _Translations$networkInterfacesPage$ml networkInterfacesPage = _Translations$networkInterfacesPage$ml._(_root);
   @override
-  late final _TranslationsSanitizationMl sanitization = _TranslationsSanitizationMl._(_root);
+  late final _Translations$sanitization$ml sanitization = _Translations$sanitization$ml._(_root);
 }
 
 // Path: general
-class _TranslationsGeneralMl extends TranslationsGeneralEn {
-  _TranslationsGeneralMl._(TranslationsMl root)
+class _Translations$general$ml extends Translations$general$en {
+  _Translations$general$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -144,8 +152,8 @@ class _TranslationsGeneralMl extends TranslationsGeneralEn {
 }
 
 // Path: sendTab
-class _TranslationsSendTabMl extends TranslationsSendTabEn {
-  _TranslationsSendTabMl._(TranslationsMl root)
+class _Translations$sendTab$ml extends Translations$sendTab$en {
+  _Translations$sendTab$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -157,9 +165,9 @@ class _TranslationsSendTabMl extends TranslationsSendTabEn {
   @override
   String get title => 'അയക്കുക';
   @override
-  late final _TranslationsSendTabSelectionMl selection = _TranslationsSendTabSelectionMl._(_root);
+  late final _Translations$sendTab$selection$ml selection = _Translations$sendTab$selection$ml._(_root);
   @override
-  late final _TranslationsSendTabPickerMl picker = _TranslationsSendTabPickerMl._(_root);
+  late final _Translations$sendTab$picker$ml picker = _Translations$sendTab$picker$ml._(_root);
   @override
   String get nearbyDevices => 'അടുത്തുള്ള ഉപകരണങ്ങൾ';
   @override
@@ -171,7 +179,7 @@ class _TranslationsSendTabMl extends TranslationsSendTabEn {
   @override
   String get sendMode => 'അയക്കുന്ന രീതി';
   @override
-  late final _TranslationsSendTabSendModesMl sendModes = _TranslationsSendTabSendModesMl._(_root);
+  late final _Translations$sendTab$sendModes$ml sendModes = _Translations$sendTab$sendModes$ml._(_root);
   @override
   String get sendModeHelp => 'വിശദീകരണം';
   @override
@@ -181,8 +189,8 @@ class _TranslationsSendTabMl extends TranslationsSendTabEn {
 }
 
 // Path: receiveTab
-class _TranslationsReceiveTabMl extends TranslationsReceiveTabEn {
-  _TranslationsReceiveTabMl._(TranslationsMl root)
+class _Translations$receiveTab$ml extends Translations$receiveTab$en {
+  _Translations$receiveTab$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -192,14 +200,14 @@ class _TranslationsReceiveTabMl extends TranslationsReceiveTabEn {
   @override
   String get title => 'സ്വീകരിക്കുക';
   @override
-  late final _TranslationsReceiveTabInfoBoxMl infoBox = _TranslationsReceiveTabInfoBoxMl._(_root);
+  late final _Translations$receiveTab$infoBox$ml infoBox = _Translations$receiveTab$infoBox$ml._(_root);
   @override
-  late final _TranslationsReceiveTabQuickSaveMl quickSave = _TranslationsReceiveTabQuickSaveMl._(_root);
+  late final _Translations$receiveTab$quickSave$ml quickSave = _Translations$receiveTab$quickSave$ml._(_root);
 }
 
 // Path: settingsTab
-class _TranslationsSettingsTabMl extends TranslationsSettingsTabEn {
-  _TranslationsSettingsTabMl._(TranslationsMl root)
+class _Translations$settingsTab$ml extends Translations$settingsTab$en {
+  _Translations$settingsTab$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -207,22 +215,22 @@ class _TranslationsSettingsTabMl extends TranslationsSettingsTabEn {
 
   // Translations
   @override
-  late final _TranslationsSettingsTabGeneralMl general = _TranslationsSettingsTabGeneralMl._(_root);
+  late final _Translations$settingsTab$general$ml general = _Translations$settingsTab$general$ml._(_root);
   @override
-  late final _TranslationsSettingsTabNetworkMl network = _TranslationsSettingsTabNetworkMl._(_root);
+  late final _Translations$settingsTab$network$ml network = _Translations$settingsTab$network$ml._(_root);
   @override
-  late final _TranslationsSettingsTabReceiveMl receive = _TranslationsSettingsTabReceiveMl._(_root);
+  late final _Translations$settingsTab$receive$ml receive = _Translations$settingsTab$receive$ml._(_root);
   @override
-  late final _TranslationsSettingsTabSendMl send = _TranslationsSettingsTabSendMl._(_root);
+  late final _Translations$settingsTab$send$ml send = _Translations$settingsTab$send$ml._(_root);
   @override
   String get title => 'സജ്ജീകരണങ്ങൾ';
   @override
-  late final _TranslationsSettingsTabOtherMl other = _TranslationsSettingsTabOtherMl._(_root);
+  late final _Translations$settingsTab$other$ml other = _Translations$settingsTab$other$ml._(_root);
 }
 
 // Path: assetPicker
-class _TranslationsAssetPickerMl extends TranslationsAssetPickerEn {
-  _TranslationsAssetPickerMl._(TranslationsMl root)
+class _Translations$assetPicker$ml extends Translations$assetPicker$en {
+  _Translations$assetPicker$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -288,8 +296,8 @@ class _TranslationsAssetPickerMl extends TranslationsAssetPickerEn {
 }
 
 // Path: web
-class _TranslationsWebMl extends TranslationsWebEn {
-  _TranslationsWebMl._(TranslationsMl root)
+class _Translations$web$ml extends Translations$web$en {
+  _Translations$web$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -313,8 +321,8 @@ class _TranslationsWebMl extends TranslationsWebEn {
 }
 
 // Path: dialogs
-class _TranslationsDialogsMl extends TranslationsDialogsEn {
-  _TranslationsDialogsMl._(TranslationsMl root)
+class _Translations$dialogs$ml extends Translations$dialogs$en {
+  _Translations$dialogs$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -322,19 +330,19 @@ class _TranslationsDialogsMl extends TranslationsDialogsEn {
 
   // Translations
   @override
-  late final _TranslationsDialogsQuickSaveFromFavoritesNoticeMl quickSaveFromFavoritesNotice =
-      _TranslationsDialogsQuickSaveFromFavoritesNoticeMl._(_root);
+  late final _Translations$dialogs$quickSaveFromFavoritesNotice$ml quickSaveFromFavoritesNotice =
+      _Translations$dialogs$quickSaveFromFavoritesNotice$ml._(_root);
   @override
-  late final _TranslationsDialogsSendModeHelpMl sendModeHelp = _TranslationsDialogsSendModeHelpMl._(_root);
+  late final _Translations$dialogs$sendModeHelp$ml sendModeHelp = _Translations$dialogs$sendModeHelp$ml._(_root);
   @override
-  late final _TranslationsDialogsPinMl pin = _TranslationsDialogsPinMl._(_root);
+  late final _Translations$dialogs$pin$ml pin = _Translations$dialogs$pin$ml._(_root);
   @override
-  late final _TranslationsDialogsZoomMl zoom = _TranslationsDialogsZoomMl._(_root);
+  late final _Translations$dialogs$zoom$ml zoom = _Translations$dialogs$zoom$ml._(_root);
 }
 
 // Path: tray
-class _TranslationsTrayMl extends TranslationsTrayEn {
-  _TranslationsTrayMl._(TranslationsMl root)
+class _Translations$tray$ml extends Translations$tray$en {
+  _Translations$tray$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -348,8 +356,8 @@ class _TranslationsTrayMl extends TranslationsTrayEn {
 }
 
 // Path: networkInterfacesPage
-class _TranslationsNetworkInterfacesPageMl extends TranslationsNetworkInterfacesPageEn {
-  _TranslationsNetworkInterfacesPageMl._(TranslationsMl root)
+class _Translations$networkInterfacesPage$ml extends Translations$networkInterfacesPage$en {
+  _Translations$networkInterfacesPage$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -361,8 +369,8 @@ class _TranslationsNetworkInterfacesPageMl extends TranslationsNetworkInterfaces
 }
 
 // Path: sanitization
-class _TranslationsSanitizationMl extends TranslationsSanitizationEn {
-  _TranslationsSanitizationMl._(TranslationsMl root)
+class _Translations$sanitization$ml extends Translations$sanitization$en {
+  _Translations$sanitization$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -376,8 +384,8 @@ class _TranslationsSanitizationMl extends TranslationsSanitizationEn {
 }
 
 // Path: sendTab.selection
-class _TranslationsSendTabSelectionMl extends TranslationsSendTabSelectionEn {
-  _TranslationsSendTabSelectionMl._(TranslationsMl root)
+class _Translations$sendTab$selection$ml extends Translations$sendTab$selection$en {
+  _Translations$sendTab$selection$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -389,8 +397,8 @@ class _TranslationsSendTabSelectionMl extends TranslationsSendTabSelectionEn {
 }
 
 // Path: sendTab.picker
-class _TranslationsSendTabPickerMl extends TranslationsSendTabPickerEn {
-  _TranslationsSendTabPickerMl._(TranslationsMl root)
+class _Translations$sendTab$picker$ml extends Translations$sendTab$picker$en {
+  _Translations$sendTab$picker$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -412,8 +420,8 @@ class _TranslationsSendTabPickerMl extends TranslationsSendTabPickerEn {
 }
 
 // Path: sendTab.sendModes
-class _TranslationsSendTabSendModesMl extends TranslationsSendTabSendModesEn {
-  _TranslationsSendTabSendModesMl._(TranslationsMl root)
+class _Translations$sendTab$sendModes$ml extends Translations$sendTab$sendModes$en {
+  _Translations$sendTab$sendModes$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -429,8 +437,8 @@ class _TranslationsSendTabSendModesMl extends TranslationsSendTabSendModesEn {
 }
 
 // Path: receiveTab.infoBox
-class _TranslationsReceiveTabInfoBoxMl extends TranslationsReceiveTabInfoBoxEn {
-  _TranslationsReceiveTabInfoBoxMl._(TranslationsMl root)
+class _Translations$receiveTab$infoBox$ml extends Translations$receiveTab$infoBox$en {
+  _Translations$receiveTab$infoBox$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -446,8 +454,8 @@ class _TranslationsReceiveTabInfoBoxMl extends TranslationsReceiveTabInfoBoxEn {
 }
 
 // Path: receiveTab.quickSave
-class _TranslationsReceiveTabQuickSaveMl extends TranslationsReceiveTabQuickSaveEn {
-  _TranslationsReceiveTabQuickSaveMl._(TranslationsMl root)
+class _Translations$receiveTab$quickSave$ml extends Translations$receiveTab$quickSave$en {
+  _Translations$receiveTab$quickSave$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -461,8 +469,8 @@ class _TranslationsReceiveTabQuickSaveMl extends TranslationsReceiveTabQuickSave
 }
 
 // Path: settingsTab.general
-class _TranslationsSettingsTabGeneralMl extends TranslationsSettingsTabGeneralEn {
-  _TranslationsSettingsTabGeneralMl._(TranslationsMl root)
+class _Translations$settingsTab$general$ml extends Translations$settingsTab$general$en {
+  _Translations$settingsTab$general$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -478,15 +486,16 @@ class _TranslationsSettingsTabGeneralMl extends TranslationsSettingsTabGeneralEn
   @override
   String get brightness => 'തീം';
   @override
-  late final _TranslationsSettingsTabGeneralBrightnessOptionsMl brightnessOptions = _TranslationsSettingsTabGeneralBrightnessOptionsMl._(_root);
+  late final _Translations$settingsTab$general$brightnessOptions$ml brightnessOptions =
+      _Translations$settingsTab$general$brightnessOptions$ml._(_root);
   @override
   String get color => 'നിറങ്ങൾ';
   @override
-  late final _TranslationsSettingsTabGeneralColorOptionsMl colorOptions = _TranslationsSettingsTabGeneralColorOptionsMl._(_root);
+  late final _Translations$settingsTab$general$colorOptions$ml colorOptions = _Translations$settingsTab$general$colorOptions$ml._(_root);
   @override
   String get language => 'ഭാഷ';
   @override
-  late final _TranslationsSettingsTabGeneralLanguageOptionsMl languageOptions = _TranslationsSettingsTabGeneralLanguageOptionsMl._(_root);
+  late final _Translations$settingsTab$general$languageOptions$ml languageOptions = _Translations$settingsTab$general$languageOptions$ml._(_root);
   @override
   String get saveWindowPlacement => 'എക്സിറ് ആയ ശേഷം ഇപ്പോൾ ഉള്ള വിന്ഡോ പൊസിഷൻ സേവ് ചെയ്യുക';
   @override
@@ -500,8 +509,8 @@ class _TranslationsSettingsTabGeneralMl extends TranslationsSettingsTabGeneralEn
 }
 
 // Path: settingsTab.network
-class _TranslationsSettingsTabNetworkMl extends TranslationsSettingsTabNetworkEn {
-  _TranslationsSettingsTabNetworkMl._(TranslationsMl root)
+class _Translations$settingsTab$network$ml extends Translations$settingsTab$network$en {
+  _Translations$settingsTab$network$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -525,7 +534,7 @@ class _TranslationsSettingsTabNetworkMl extends TranslationsSettingsTabNetworkEn
   @override
   String get network => 'നെറ്റ്‌വർക്ക്';
   @override
-  late final _TranslationsSettingsTabNetworkNetworkOptionsMl networkOptions = _TranslationsSettingsTabNetworkNetworkOptionsMl._(_root);
+  late final _Translations$settingsTab$network$networkOptions$ml networkOptions = _Translations$settingsTab$network$networkOptions$ml._(_root);
   @override
   String get discoveryTimeout => 'ഡിസ്കവർ ചെയ്യാനുള്ള സമയം കഴിഞ്ഞു';
   @override
@@ -535,8 +544,8 @@ class _TranslationsSettingsTabNetworkMl extends TranslationsSettingsTabNetworkEn
 }
 
 // Path: settingsTab.receive
-class _TranslationsSettingsTabReceiveMl extends TranslationsSettingsTabReceiveEn {
-  _TranslationsSettingsTabReceiveMl._(TranslationsMl root)
+class _Translations$settingsTab$receive$ml extends Translations$settingsTab$receive$en {
+  _Translations$settingsTab$receive$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -558,8 +567,8 @@ class _TranslationsSettingsTabReceiveMl extends TranslationsSettingsTabReceiveEn
 }
 
 // Path: settingsTab.send
-class _TranslationsSettingsTabSendMl extends TranslationsSettingsTabSendEn {
-  _TranslationsSettingsTabSendMl._(TranslationsMl root)
+class _Translations$settingsTab$send$ml extends Translations$settingsTab$send$en {
+  _Translations$settingsTab$send$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -573,8 +582,8 @@ class _TranslationsSettingsTabSendMl extends TranslationsSettingsTabSendEn {
 }
 
 // Path: settingsTab.other
-class _TranslationsSettingsTabOtherMl extends TranslationsSettingsTabOtherEn {
-  _TranslationsSettingsTabOtherMl._(TranslationsMl root)
+class _Translations$settingsTab$other$ml extends Translations$settingsTab$other$en {
+  _Translations$settingsTab$other$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -586,8 +595,8 @@ class _TranslationsSettingsTabOtherMl extends TranslationsSettingsTabOtherEn {
 }
 
 // Path: dialogs.quickSaveFromFavoritesNotice
-class _TranslationsDialogsQuickSaveFromFavoritesNoticeMl extends TranslationsDialogsQuickSaveFromFavoritesNoticeEn {
-  _TranslationsDialogsQuickSaveFromFavoritesNoticeMl._(TranslationsMl root)
+class _Translations$dialogs$quickSaveFromFavoritesNotice$ml extends Translations$dialogs$quickSaveFromFavoritesNotice$en {
+  _Translations$dialogs$quickSaveFromFavoritesNotice$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -603,8 +612,8 @@ class _TranslationsDialogsQuickSaveFromFavoritesNoticeMl extends TranslationsDia
 }
 
 // Path: dialogs.sendModeHelp
-class _TranslationsDialogsSendModeHelpMl extends TranslationsDialogsSendModeHelpEn {
-  _TranslationsDialogsSendModeHelpMl._(TranslationsMl root)
+class _Translations$dialogs$sendModeHelp$ml extends Translations$dialogs$sendModeHelp$en {
+  _Translations$dialogs$sendModeHelp$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -622,8 +631,8 @@ class _TranslationsDialogsSendModeHelpMl extends TranslationsDialogsSendModeHelp
 }
 
 // Path: dialogs.pin
-class _TranslationsDialogsPinMl extends TranslationsDialogsPinEn {
-  _TranslationsDialogsPinMl._(TranslationsMl root)
+class _Translations$dialogs$pin$ml extends Translations$dialogs$pin$en {
+  _Translations$dialogs$pin$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -635,8 +644,8 @@ class _TranslationsDialogsPinMl extends TranslationsDialogsPinEn {
 }
 
 // Path: dialogs.zoom
-class _TranslationsDialogsZoomMl extends TranslationsDialogsZoomEn {
-  _TranslationsDialogsZoomMl._(TranslationsMl root)
+class _Translations$dialogs$zoom$ml extends Translations$dialogs$zoom$en {
+  _Translations$dialogs$zoom$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -648,8 +657,8 @@ class _TranslationsDialogsZoomMl extends TranslationsDialogsZoomEn {
 }
 
 // Path: settingsTab.general.brightnessOptions
-class _TranslationsSettingsTabGeneralBrightnessOptionsMl extends TranslationsSettingsTabGeneralBrightnessOptionsEn {
-  _TranslationsSettingsTabGeneralBrightnessOptionsMl._(TranslationsMl root)
+class _Translations$settingsTab$general$brightnessOptions$ml extends Translations$settingsTab$general$brightnessOptions$en {
+  _Translations$settingsTab$general$brightnessOptions$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -665,8 +674,8 @@ class _TranslationsSettingsTabGeneralBrightnessOptionsMl extends TranslationsSet
 }
 
 // Path: settingsTab.general.colorOptions
-class _TranslationsSettingsTabGeneralColorOptionsMl extends TranslationsSettingsTabGeneralColorOptionsEn {
-  _TranslationsSettingsTabGeneralColorOptionsMl._(TranslationsMl root)
+class _Translations$settingsTab$general$colorOptions$ml extends Translations$settingsTab$general$colorOptions$en {
+  _Translations$settingsTab$general$colorOptions$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -680,8 +689,8 @@ class _TranslationsSettingsTabGeneralColorOptionsMl extends TranslationsSettings
 }
 
 // Path: settingsTab.general.languageOptions
-class _TranslationsSettingsTabGeneralLanguageOptionsMl extends TranslationsSettingsTabGeneralLanguageOptionsEn {
-  _TranslationsSettingsTabGeneralLanguageOptionsMl._(TranslationsMl root)
+class _Translations$settingsTab$general$languageOptions$ml extends Translations$settingsTab$general$languageOptions$en {
+  _Translations$settingsTab$general$languageOptions$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 
@@ -693,8 +702,8 @@ class _TranslationsSettingsTabGeneralLanguageOptionsMl extends TranslationsSetti
 }
 
 // Path: settingsTab.network.networkOptions
-class _TranslationsSettingsTabNetworkNetworkOptionsMl extends TranslationsSettingsTabNetworkNetworkOptionsEn {
-  _TranslationsSettingsTabNetworkNetworkOptionsMl._(TranslationsMl root)
+class _Translations$settingsTab$network$networkOptions$ml extends Translations$settingsTab$network$networkOptions$en {
+  _Translations$settingsTab$network$networkOptions$ml._(TranslationsMl root)
       : this._root = root,
         super.internal(root);
 

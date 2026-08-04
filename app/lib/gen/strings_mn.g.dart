@@ -10,17 +10,22 @@ import 'package:slang/generated.dart';
 import 'strings.g.dart';
 
 // Path: <root>
-class TranslationsMn extends Translations {
+class TranslationsMn extends Translations with BaseTranslations<AppLocale, Translations> {
   /// You can call this constructor and build your own translation instance of this locale.
   /// Constructing via the enum [AppLocale.build] is preferred.
-  TranslationsMn({Map<String, Node>? overrides, PluralResolver? cardinalResolver, PluralResolver? ordinalResolver})
+  TranslationsMn(
+      {Map<String, Node>? overrides,
+      PluralResolver? cardinalResolver,
+      PluralResolver? ordinalResolver,
+      TranslationMetadata<AppLocale, Translations>? meta})
       : assert(overrides == null, 'Set "translation_overrides: true" in order to enable this feature.'),
-        $meta = TranslationMetadata(
-          locale: AppLocale.mn,
-          overrides: overrides ?? {},
-          cardinalResolver: cardinalResolver,
-          ordinalResolver: ordinalResolver,
-        ),
+        $meta = meta ??
+            TranslationMetadata(
+              locale: AppLocale.mn,
+              overrides: overrides ?? {},
+              cardinalResolver: cardinalResolver,
+              ordinalResolver: ordinalResolver,
+            ),
         super(cardinalResolver: cardinalResolver, ordinalResolver: ordinalResolver);
 
   /// Metadata for the translations of <mn>.
@@ -29,50 +34,51 @@ class TranslationsMn extends Translations {
 
   late final TranslationsMn _root = this; // ignore: unused_field
 
+  @override
+  TranslationsMn $copyWith({TranslationMetadata<AppLocale, Translations>? meta}) => TranslationsMn(meta: meta ?? this.$meta);
+
   // Translations
   @override
   String get locale => 'Mongolian';
   @override
   String get appName => 'LocalSend';
   @override
-  late final _TranslationsGeneralMn general = _TranslationsGeneralMn._(_root);
+  late final _Translations$general$mn general = _Translations$general$mn._(_root);
   @override
-  late final _TranslationsReceiveTabMn receiveTab = _TranslationsReceiveTabMn._(_root);
+  late final _Translations$receiveTab$mn receiveTab = _Translations$receiveTab$mn._(_root);
   @override
-  late final _TranslationsSendTabMn sendTab = _TranslationsSendTabMn._(_root);
+  late final _Translations$sendTab$mn sendTab = _Translations$sendTab$mn._(_root);
   @override
-  late final _TranslationsSettingsTabMn settingsTab = _TranslationsSettingsTabMn._(_root);
+  late final _Translations$settingsTab$mn settingsTab = _Translations$settingsTab$mn._(_root);
   @override
-  late final _TranslationsTroubleshootPageMn troubleshootPage = _TranslationsTroubleshootPageMn._(_root);
+  late final _Translations$troubleshootPage$mn troubleshootPage = _Translations$troubleshootPage$mn._(_root);
   @override
-  late final _TranslationsReceiveHistoryPageMn receiveHistoryPage = _TranslationsReceiveHistoryPageMn._(_root);
+  late final _Translations$receiveHistoryPage$mn receiveHistoryPage = _Translations$receiveHistoryPage$mn._(_root);
   @override
-  late final _TranslationsApkPickerPageMn apkPickerPage = _TranslationsApkPickerPageMn._(_root);
+  late final _Translations$apkPickerPage$mn apkPickerPage = _Translations$apkPickerPage$mn._(_root);
   @override
-  late final _TranslationsSelectedFilesPageMn selectedFilesPage = _TranslationsSelectedFilesPageMn._(_root);
+  late final _Translations$selectedFilesPage$mn selectedFilesPage = _Translations$selectedFilesPage$mn._(_root);
   @override
-  late final _TranslationsReceivePageMn receivePage = _TranslationsReceivePageMn._(_root);
+  late final _Translations$receivePage$mn receivePage = _Translations$receivePage$mn._(_root);
   @override
-  late final _TranslationsReceiveOptionsPageMn receiveOptionsPage = _TranslationsReceiveOptionsPageMn._(_root);
+  late final _Translations$receiveOptionsPage$mn receiveOptionsPage = _Translations$receiveOptionsPage$mn._(_root);
   @override
-  late final _TranslationsSendPageMn sendPage = _TranslationsSendPageMn._(_root);
+  late final _Translations$sendPage$mn sendPage = _Translations$sendPage$mn._(_root);
   @override
-  late final _TranslationsProgressPageMn progressPage = _TranslationsProgressPageMn._(_root);
+  late final _Translations$progressPage$mn progressPage = _Translations$progressPage$mn._(_root);
   @override
-  late final _TranslationsWebSharePageMn webSharePage = _TranslationsWebSharePageMn._(_root);
+  late final _Translations$webSharePage$mn webSharePage = _Translations$webSharePage$mn._(_root);
   @override
-  late final _TranslationsAboutPageMn aboutPage = _TranslationsAboutPageMn._(_root);
+  late final _Translations$aboutPage$mn aboutPage = _Translations$aboutPage$mn._(_root);
   @override
-  late final _TranslationsDonationPageMn donationPage = _TranslationsDonationPageMn._(_root);
+  late final _Translations$donationPage$mn donationPage = _Translations$donationPage$mn._(_root);
   @override
-  late final _TranslationsChangelogPageMn changelogPage = _TranslationsChangelogPageMn._(_root);
-  @override
-  late final _TranslationsAliasGeneratorMn aliasGenerator = _TranslationsAliasGeneratorMn._(_root);
+  late final _Translations$changelogPage$mn changelogPage = _Translations$changelogPage$mn._(_root);
 }
 
 // Path: general
-class _TranslationsGeneralMn extends TranslationsGeneralEn {
-  _TranslationsGeneralMn._(TranslationsMn root)
+class _Translations$general$mn extends Translations$general$en {
+  _Translations$general$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -156,8 +162,8 @@ class _TranslationsGeneralMn extends TranslationsGeneralEn {
 }
 
 // Path: receiveTab
-class _TranslationsReceiveTabMn extends TranslationsReceiveTabEn {
-  _TranslationsReceiveTabMn._(TranslationsMn root)
+class _Translations$receiveTab$mn extends Translations$receiveTab$en {
+  _Translations$receiveTab$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -167,14 +173,14 @@ class _TranslationsReceiveTabMn extends TranslationsReceiveTabEn {
   @override
   String get title => 'Авах';
   @override
-  late final _TranslationsReceiveTabInfoBoxMn infoBox = _TranslationsReceiveTabInfoBoxMn._(_root);
+  late final _Translations$receiveTab$infoBox$mn infoBox = _Translations$receiveTab$infoBox$mn._(_root);
   @override
-  late final _TranslationsReceiveTabQuickSaveMn quickSave = _TranslationsReceiveTabQuickSaveMn._(_root);
+  late final _Translations$receiveTab$quickSave$mn quickSave = _Translations$receiveTab$quickSave$mn._(_root);
 }
 
 // Path: sendTab
-class _TranslationsSendTabMn extends TranslationsSendTabEn {
-  _TranslationsSendTabMn._(TranslationsMn root)
+class _Translations$sendTab$mn extends Translations$sendTab$en {
+  _Translations$sendTab$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -184,9 +190,9 @@ class _TranslationsSendTabMn extends TranslationsSendTabEn {
   @override
   String get title => 'Илгээх';
   @override
-  late final _TranslationsSendTabSelectionMn selection = _TranslationsSendTabSelectionMn._(_root);
+  late final _Translations$sendTab$selection$mn selection = _Translations$sendTab$selection$mn._(_root);
   @override
-  late final _TranslationsSendTabPickerMn picker = _TranslationsSendTabPickerMn._(_root);
+  late final _Translations$sendTab$picker$mn picker = _Translations$sendTab$picker$mn._(_root);
   @override
   String get shareIntentInfo => 'Та өөрийн төхөөрөмжийн "Хуваалцах" цэсийг ашиглан файлуудаа хялбар сонгох боломжтой.';
   @override
@@ -200,7 +206,7 @@ class _TranslationsSendTabMn extends TranslationsSendTabEn {
   @override
   String get sendMode => 'Илгээх горим';
   @override
-  late final _TranslationsSendTabSendModesMn sendModes = _TranslationsSendTabSendModesMn._(_root);
+  late final _Translations$sendTab$sendModes$mn sendModes = _Translations$sendTab$sendModes$mn._(_root);
   @override
   String get sendModeHelp => 'Тайлбар';
   @override
@@ -210,8 +216,8 @@ class _TranslationsSendTabMn extends TranslationsSendTabEn {
 }
 
 // Path: settingsTab
-class _TranslationsSettingsTabMn extends TranslationsSettingsTabEn {
-  _TranslationsSettingsTabMn._(TranslationsMn root)
+class _Translations$settingsTab$mn extends Translations$settingsTab$en {
+  _Translations$settingsTab$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -221,22 +227,22 @@ class _TranslationsSettingsTabMn extends TranslationsSettingsTabEn {
   @override
   String get title => 'Тохиргоо';
   @override
-  late final _TranslationsSettingsTabGeneralMn general = _TranslationsSettingsTabGeneralMn._(_root);
+  late final _Translations$settingsTab$general$mn general = _Translations$settingsTab$general$mn._(_root);
   @override
-  late final _TranslationsSettingsTabReceiveMn receive = _TranslationsSettingsTabReceiveMn._(_root);
+  late final _Translations$settingsTab$receive$mn receive = _Translations$settingsTab$receive$mn._(_root);
   @override
-  late final _TranslationsSettingsTabSendMn send = _TranslationsSettingsTabSendMn._(_root);
+  late final _Translations$settingsTab$send$mn send = _Translations$settingsTab$send$mn._(_root);
   @override
-  late final _TranslationsSettingsTabNetworkMn network = _TranslationsSettingsTabNetworkMn._(_root);
+  late final _Translations$settingsTab$network$mn network = _Translations$settingsTab$network$mn._(_root);
   @override
-  late final _TranslationsSettingsTabOtherMn other = _TranslationsSettingsTabOtherMn._(_root);
+  late final _Translations$settingsTab$other$mn other = _Translations$settingsTab$other$mn._(_root);
   @override
   String get advancedSettings => 'Нэмэлт тохиргоо';
 }
 
 // Path: troubleshootPage
-class _TranslationsTroubleshootPageMn extends TranslationsTroubleshootPageEn {
-  _TranslationsTroubleshootPageMn._(TranslationsMn root)
+class _Translations$troubleshootPage$mn extends Translations$troubleshootPage$en {
+  _Translations$troubleshootPage$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -252,16 +258,16 @@ class _TranslationsTroubleshootPageMn extends TranslationsTroubleshootPageEn {
   @override
   String get fixButton => 'Автоматаар засварлах';
   @override
-  late final _TranslationsTroubleshootPageFirewallMn firewall = _TranslationsTroubleshootPageFirewallMn._(_root);
+  late final _Translations$troubleshootPage$firewall$mn firewall = _Translations$troubleshootPage$firewall$mn._(_root);
   @override
-  late final _TranslationsTroubleshootPageNoDiscoveryMn noDiscovery = _TranslationsTroubleshootPageNoDiscoveryMn._(_root);
+  late final _Translations$troubleshootPage$noDiscovery$mn noDiscovery = _Translations$troubleshootPage$noDiscovery$mn._(_root);
   @override
-  late final _TranslationsTroubleshootPageNoConnectionMn noConnection = _TranslationsTroubleshootPageNoConnectionMn._(_root);
+  late final _Translations$troubleshootPage$noConnection$mn noConnection = _Translations$troubleshootPage$noConnection$mn._(_root);
 }
 
 // Path: receiveHistoryPage
-class _TranslationsReceiveHistoryPageMn extends TranslationsReceiveHistoryPageEn {
-  _TranslationsReceiveHistoryPageMn._(TranslationsMn root)
+class _Translations$receiveHistoryPage$mn extends Translations$receiveHistoryPage$en {
+  _Translations$receiveHistoryPage$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -277,12 +283,12 @@ class _TranslationsReceiveHistoryPageMn extends TranslationsReceiveHistoryPageEn
   @override
   String get empty => 'Түүх хоосон байна.';
   @override
-  late final _TranslationsReceiveHistoryPageEntryActionsMn entryActions = _TranslationsReceiveHistoryPageEntryActionsMn._(_root);
+  late final _Translations$receiveHistoryPage$entryActions$mn entryActions = _Translations$receiveHistoryPage$entryActions$mn._(_root);
 }
 
 // Path: apkPickerPage
-class _TranslationsApkPickerPageMn extends TranslationsApkPickerPageEn {
-  _TranslationsApkPickerPageMn._(TranslationsMn root)
+class _Translations$apkPickerPage$mn extends Translations$apkPickerPage$en {
+  _Translations$apkPickerPage$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -300,8 +306,8 @@ class _TranslationsApkPickerPageMn extends TranslationsApkPickerPageEn {
 }
 
 // Path: selectedFilesPage
-class _TranslationsSelectedFilesPageMn extends TranslationsSelectedFilesPageEn {
-  _TranslationsSelectedFilesPageMn._(TranslationsMn root)
+class _Translations$selectedFilesPage$mn extends Translations$selectedFilesPage$en {
+  _Translations$selectedFilesPage$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -313,8 +319,8 @@ class _TranslationsSelectedFilesPageMn extends TranslationsSelectedFilesPageEn {
 }
 
 // Path: receivePage
-class _TranslationsReceivePageMn extends TranslationsReceivePageEn {
-  _TranslationsReceivePageMn._(TranslationsMn root)
+class _Translations$receivePage$mn extends Translations$receivePage$en {
+  _Translations$receivePage$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -336,8 +342,8 @@ class _TranslationsReceivePageMn extends TranslationsReceivePageEn {
 }
 
 // Path: receiveOptionsPage
-class _TranslationsReceiveOptionsPageMn extends TranslationsReceiveOptionsPageEn {
-  _TranslationsReceiveOptionsPageMn._(TranslationsMn root)
+class _Translations$receiveOptionsPage$mn extends Translations$receiveOptionsPage$en {
+  _Translations$receiveOptionsPage$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -357,8 +363,8 @@ class _TranslationsReceiveOptionsPageMn extends TranslationsReceiveOptionsPageEn
 }
 
 // Path: sendPage
-class _TranslationsSendPageMn extends TranslationsSendPageEn {
-  _TranslationsSendPageMn._(TranslationsMn root)
+class _Translations$sendPage$mn extends Translations$sendPage$en {
+  _Translations$sendPage$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -374,8 +380,8 @@ class _TranslationsSendPageMn extends TranslationsSendPageEn {
 }
 
 // Path: progressPage
-class _TranslationsProgressPageMn extends TranslationsProgressPageEn {
-  _TranslationsProgressPageMn._(TranslationsMn root)
+class _Translations$progressPage$mn extends Translations$progressPage$en {
+  _Translations$progressPage$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -389,12 +395,12 @@ class _TranslationsProgressPageMn extends TranslationsProgressPageEn {
   @override
   String get savedToGallery => 'Photos дээр амжилттай хадгаллаа';
   @override
-  late final _TranslationsProgressPageTotalMn total = _TranslationsProgressPageTotalMn._(_root);
+  late final _Translations$progressPage$total$mn total = _Translations$progressPage$total$mn._(_root);
 }
 
 // Path: webSharePage
-class _TranslationsWebSharePageMn extends TranslationsWebSharePageEn {
-  _TranslationsWebSharePageMn._(TranslationsMn root)
+class _Translations$webSharePage$mn extends Translations$webSharePage$en {
+  _Translations$webSharePage$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -428,8 +434,8 @@ class _TranslationsWebSharePageMn extends TranslationsWebSharePageEn {
 }
 
 // Path: aboutPage
-class _TranslationsAboutPageMn extends TranslationsAboutPageEn {
-  _TranslationsAboutPageMn._(TranslationsMn root)
+class _Translations$aboutPage$mn extends Translations$aboutPage$en {
+  _Translations$aboutPage$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -452,8 +458,8 @@ class _TranslationsAboutPageMn extends TranslationsAboutPageEn {
 }
 
 // Path: donationPage
-class _TranslationsDonationPageMn extends TranslationsDonationPageEn {
-  _TranslationsDonationPageMn._(TranslationsMn root)
+class _Translations$donationPage$mn extends Translations$donationPage$en {
+  _Translations$donationPage$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -474,8 +480,8 @@ class _TranslationsDonationPageMn extends TranslationsDonationPageEn {
 }
 
 // Path: changelogPage
-class _TranslationsChangelogPageMn extends TranslationsChangelogPageEn {
-  _TranslationsChangelogPageMn._(TranslationsMn root)
+class _Translations$changelogPage$mn extends Translations$changelogPage$en {
+  _Translations$changelogPage$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -486,20 +492,9 @@ class _TranslationsChangelogPageMn extends TranslationsChangelogPageEn {
   String get title => 'Шинэчлэлт';
 }
 
-// Path: aliasGenerator
-class _TranslationsAliasGeneratorMn extends TranslationsAliasGeneratorEn {
-  _TranslationsAliasGeneratorMn._(TranslationsMn root)
-      : this._root = root,
-        super.internal(root);
-
-  final TranslationsMn _root; // ignore: unused_field
-
-  // Translations
-}
-
 // Path: receiveTab.infoBox
-class _TranslationsReceiveTabInfoBoxMn extends TranslationsReceiveTabInfoBoxEn {
-  _TranslationsReceiveTabInfoBoxMn._(TranslationsMn root)
+class _Translations$receiveTab$infoBox$mn extends Translations$receiveTab$infoBox$en {
+  _Translations$receiveTab$infoBox$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -515,8 +510,8 @@ class _TranslationsReceiveTabInfoBoxMn extends TranslationsReceiveTabInfoBoxEn {
 }
 
 // Path: receiveTab.quickSave
-class _TranslationsReceiveTabQuickSaveMn extends TranslationsReceiveTabQuickSaveEn {
-  _TranslationsReceiveTabQuickSaveMn._(TranslationsMn root)
+class _Translations$receiveTab$quickSave$mn extends Translations$receiveTab$quickSave$en {
+  _Translations$receiveTab$quickSave$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -532,8 +527,8 @@ class _TranslationsReceiveTabQuickSaveMn extends TranslationsReceiveTabQuickSave
 }
 
 // Path: sendTab.selection
-class _TranslationsSendTabSelectionMn extends TranslationsSendTabSelectionEn {
-  _TranslationsSendTabSelectionMn._(TranslationsMn root)
+class _Translations$sendTab$selection$mn extends Translations$sendTab$selection$en {
+  _Translations$sendTab$selection$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -549,8 +544,8 @@ class _TranslationsSendTabSelectionMn extends TranslationsSendTabSelectionEn {
 }
 
 // Path: sendTab.picker
-class _TranslationsSendTabPickerMn extends TranslationsSendTabPickerEn {
-  _TranslationsSendTabPickerMn._(TranslationsMn root)
+class _Translations$sendTab$picker$mn extends Translations$sendTab$picker$en {
+  _Translations$sendTab$picker$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -572,8 +567,8 @@ class _TranslationsSendTabPickerMn extends TranslationsSendTabPickerEn {
 }
 
 // Path: sendTab.sendModes
-class _TranslationsSendTabSendModesMn extends TranslationsSendTabSendModesEn {
-  _TranslationsSendTabSendModesMn._(TranslationsMn root)
+class _Translations$sendTab$sendModes$mn extends Translations$sendTab$sendModes$en {
+  _Translations$sendTab$sendModes$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -589,8 +584,8 @@ class _TranslationsSendTabSendModesMn extends TranslationsSendTabSendModesEn {
 }
 
 // Path: settingsTab.general
-class _TranslationsSettingsTabGeneralMn extends TranslationsSettingsTabGeneralEn {
-  _TranslationsSettingsTabGeneralMn._(TranslationsMn root)
+class _Translations$settingsTab$general$mn extends Translations$settingsTab$general$en {
+  _Translations$settingsTab$general$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -602,15 +597,16 @@ class _TranslationsSettingsTabGeneralMn extends TranslationsSettingsTabGeneralEn
   @override
   String get brightness => 'Үзэмж';
   @override
-  late final _TranslationsSettingsTabGeneralBrightnessOptionsMn brightnessOptions = _TranslationsSettingsTabGeneralBrightnessOptionsMn._(_root);
+  late final _Translations$settingsTab$general$brightnessOptions$mn brightnessOptions =
+      _Translations$settingsTab$general$brightnessOptions$mn._(_root);
   @override
   String get color => 'Өнгө';
   @override
-  late final _TranslationsSettingsTabGeneralColorOptionsMn colorOptions = _TranslationsSettingsTabGeneralColorOptionsMn._(_root);
+  late final _Translations$settingsTab$general$colorOptions$mn colorOptions = _Translations$settingsTab$general$colorOptions$mn._(_root);
   @override
   String get language => 'Хэл';
   @override
-  late final _TranslationsSettingsTabGeneralLanguageOptionsMn languageOptions = _TranslationsSettingsTabGeneralLanguageOptionsMn._(_root);
+  late final _Translations$settingsTab$general$languageOptions$mn languageOptions = _Translations$settingsTab$general$languageOptions$mn._(_root);
   @override
   String get saveWindowPlacement => 'Гарсаны дараа цонхны байрлал хадгалах';
   @override
@@ -628,8 +624,8 @@ class _TranslationsSettingsTabGeneralMn extends TranslationsSettingsTabGeneralEn
 }
 
 // Path: settingsTab.receive
-class _TranslationsSettingsTabReceiveMn extends TranslationsSettingsTabReceiveEn {
-  _TranslationsSettingsTabReceiveMn._(TranslationsMn root)
+class _Translations$settingsTab$receive$mn extends Translations$settingsTab$receive$en {
+  _Translations$settingsTab$receive$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -655,8 +651,8 @@ class _TranslationsSettingsTabReceiveMn extends TranslationsSettingsTabReceiveEn
 }
 
 // Path: settingsTab.send
-class _TranslationsSettingsTabSendMn extends TranslationsSettingsTabSendEn {
-  _TranslationsSettingsTabSendMn._(TranslationsMn root)
+class _Translations$settingsTab$send$mn extends Translations$settingsTab$send$en {
+  _Translations$settingsTab$send$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -670,8 +666,8 @@ class _TranslationsSettingsTabSendMn extends TranslationsSettingsTabSendEn {
 }
 
 // Path: settingsTab.network
-class _TranslationsSettingsTabNetworkMn extends TranslationsSettingsTabNetworkEn {
-  _TranslationsSettingsTabNetworkMn._(TranslationsMn root)
+class _Translations$settingsTab$network$mn extends Translations$settingsTab$network$en {
+  _Translations$settingsTab$network$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -709,8 +705,8 @@ class _TranslationsSettingsTabNetworkMn extends TranslationsSettingsTabNetworkEn
 }
 
 // Path: settingsTab.other
-class _TranslationsSettingsTabOtherMn extends TranslationsSettingsTabOtherEn {
-  _TranslationsSettingsTabOtherMn._(TranslationsMn root)
+class _Translations$settingsTab$other$mn extends Translations$settingsTab$other$en {
+  _Translations$settingsTab$other$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -730,8 +726,8 @@ class _TranslationsSettingsTabOtherMn extends TranslationsSettingsTabOtherEn {
 }
 
 // Path: troubleshootPage.firewall
-class _TranslationsTroubleshootPageFirewallMn extends TranslationsTroubleshootPageFirewallEn {
-  _TranslationsTroubleshootPageFirewallMn._(TranslationsMn root)
+class _Translations$troubleshootPage$firewall$mn extends Translations$troubleshootPage$firewall$en {
+  _Translations$troubleshootPage$firewall$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -748,8 +744,8 @@ class _TranslationsTroubleshootPageFirewallMn extends TranslationsTroubleshootPa
 }
 
 // Path: troubleshootPage.noDiscovery
-class _TranslationsTroubleshootPageNoDiscoveryMn extends TranslationsTroubleshootPageNoDiscoveryEn {
-  _TranslationsTroubleshootPageNoDiscoveryMn._(TranslationsMn root)
+class _Translations$troubleshootPage$noDiscovery$mn extends Translations$troubleshootPage$noDiscovery$en {
+  _Translations$troubleshootPage$noDiscovery$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -764,8 +760,8 @@ class _TranslationsTroubleshootPageNoDiscoveryMn extends TranslationsTroubleshoo
 }
 
 // Path: troubleshootPage.noConnection
-class _TranslationsTroubleshootPageNoConnectionMn extends TranslationsTroubleshootPageNoConnectionEn {
-  _TranslationsTroubleshootPageNoConnectionMn._(TranslationsMn root)
+class _Translations$troubleshootPage$noConnection$mn extends Translations$troubleshootPage$noConnection$en {
+  _Translations$troubleshootPage$noConnection$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -780,8 +776,8 @@ class _TranslationsTroubleshootPageNoConnectionMn extends TranslationsTroublesho
 }
 
 // Path: receiveHistoryPage.entryActions
-class _TranslationsReceiveHistoryPageEntryActionsMn extends TranslationsReceiveHistoryPageEntryActionsEn {
-  _TranslationsReceiveHistoryPageEntryActionsMn._(TranslationsMn root)
+class _Translations$receiveHistoryPage$entryActions$mn extends Translations$receiveHistoryPage$entryActions$en {
+  _Translations$receiveHistoryPage$entryActions$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -799,8 +795,8 @@ class _TranslationsReceiveHistoryPageEntryActionsMn extends TranslationsReceiveH
 }
 
 // Path: progressPage.total
-class _TranslationsProgressPageTotalMn extends TranslationsProgressPageTotalEn {
-  _TranslationsProgressPageTotalMn._(TranslationsMn root)
+class _Translations$progressPage$total$mn extends Translations$progressPage$total$en {
+  _Translations$progressPage$total$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -808,7 +804,7 @@ class _TranslationsProgressPageTotalMn extends TranslationsProgressPageTotalEn {
 
   // Translations
   @override
-  late final _TranslationsProgressPageTotalTitleMn title = _TranslationsProgressPageTotalTitleMn._(_root);
+  late final _Translations$progressPage$total$title$mn title = _Translations$progressPage$total$title$mn._(_root);
   @override
   String count({required Object curr, required Object n}) => 'Файл: ${curr} / ${n}';
   @override
@@ -818,8 +814,8 @@ class _TranslationsProgressPageTotalMn extends TranslationsProgressPageTotalEn {
 }
 
 // Path: settingsTab.general.brightnessOptions
-class _TranslationsSettingsTabGeneralBrightnessOptionsMn extends TranslationsSettingsTabGeneralBrightnessOptionsEn {
-  _TranslationsSettingsTabGeneralBrightnessOptionsMn._(TranslationsMn root)
+class _Translations$settingsTab$general$brightnessOptions$mn extends Translations$settingsTab$general$brightnessOptions$en {
+  _Translations$settingsTab$general$brightnessOptions$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -835,8 +831,8 @@ class _TranslationsSettingsTabGeneralBrightnessOptionsMn extends TranslationsSet
 }
 
 // Path: settingsTab.general.colorOptions
-class _TranslationsSettingsTabGeneralColorOptionsMn extends TranslationsSettingsTabGeneralColorOptionsEn {
-  _TranslationsSettingsTabGeneralColorOptionsMn._(TranslationsMn root)
+class _Translations$settingsTab$general$colorOptions$mn extends Translations$settingsTab$general$colorOptions$en {
+  _Translations$settingsTab$general$colorOptions$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -850,8 +846,8 @@ class _TranslationsSettingsTabGeneralColorOptionsMn extends TranslationsSettings
 }
 
 // Path: settingsTab.general.languageOptions
-class _TranslationsSettingsTabGeneralLanguageOptionsMn extends TranslationsSettingsTabGeneralLanguageOptionsEn {
-  _TranslationsSettingsTabGeneralLanguageOptionsMn._(TranslationsMn root)
+class _Translations$settingsTab$general$languageOptions$mn extends Translations$settingsTab$general$languageOptions$en {
+  _Translations$settingsTab$general$languageOptions$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
@@ -863,8 +859,8 @@ class _TranslationsSettingsTabGeneralLanguageOptionsMn extends TranslationsSetti
 }
 
 // Path: progressPage.total.title
-class _TranslationsProgressPageTotalTitleMn extends TranslationsProgressPageTotalTitleEn {
-  _TranslationsProgressPageTotalTitleMn._(TranslationsMn root)
+class _Translations$progressPage$total$title$mn extends Translations$progressPage$total$title$en {
+  _Translations$progressPage$total$title$mn._(TranslationsMn root)
       : this._root = root,
         super.internal(root);
 
