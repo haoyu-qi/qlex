@@ -51,7 +51,7 @@ jobs:
         run: flutter build apk --release
       - name: Name Android artifact
         run: cp app/build/app/outputs/flutter-apk/app-release.apk app/build/app/outputs/flutter-apk/qlex-0.1.0-android-universal.apk
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: qlex-android-universal
           path: app/build/app/outputs/flutter-apk/qlex-0.1.0-android-universal.apk
@@ -74,7 +74,7 @@ jobs:
       - name: Build unsigned Inno Setup installer
         shell: pwsh
         run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" scripts\compile_windows_exe-inno.iss'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: qlex-windows-x64-installer-unsigned
           path: dist/qlex-0.1.0-windows-x64-setup.exe
