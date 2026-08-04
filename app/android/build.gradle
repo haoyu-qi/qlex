@@ -9,12 +9,18 @@ rootProject.buildDir = '../build'
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
 
-    // shared_storage 0.8.1 predates Android Gradle Plugin 8 and only declares
-    // its package in AndroidManifest.xml. Keep the upstream dependency pinned
-    // while supplying the namespace required by current Flutter toolchains.
-    if (project.name == 'shared_storage') {
-        project.plugins.withId('com.android.library') {
-            project.android.namespace = 'io.alexrintt.sharedstorage'
+    // Some pinned LocalSend plugins predate Android Gradle Plugin 8 and only
+    // declare their package in AndroidManifest.xml. Preserve those upstream
+    // versions while deriving the namespace required by current Flutter builds.
+    project.plugins.withId('com.android.library') {
+        if (!project.android.namespace) {
+            def manifestFile = project.file('src/main/AndroidManifest.xml')
+            if (manifestFile.exists()) {
+                def manifestPackage = new XmlSlurper().parse(manifestFile).@package.text()
+                if (manifestPackage) {
+                    project.android.namespace = manifestPackage
+                }
+            }
         }
     }
 }

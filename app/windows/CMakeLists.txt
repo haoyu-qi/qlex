@@ -61,6 +61,12 @@ add_subdirectory("runner")
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# gal uses C++/WinRT activation helpers but its pinned CMake target does not
+# link the Windows Runtime import library with recent Visual Studio toolsets.
+if(TARGET gal_plugin)
+  target_link_libraries(gal_plugin PRIVATE runtimeobject)
+endif()
+
 
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can
