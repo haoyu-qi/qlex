@@ -13,11 +13,15 @@ subprojects {
     // declare their package in AndroidManifest.xml. Preserve those upstream
     // versions while deriving the namespace required by current Flutter builds.
     project.plugins.withId('com.android.library') {
-        if (project.name == 'shared_storage') {
+        if (project.name in ['shared_storage', 'system_settings']) {
             project.android.compileOptions {
                 sourceCompatibility JavaVersion.VERSION_17
                 targetCompatibility JavaVersion.VERSION_17
             }
+        }
+
+        if (project.name == 'system_settings') {
+            project.android.compileSdkVersion 33
         }
 
         if (!project.android.namespace) {
