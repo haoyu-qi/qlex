@@ -3,6 +3,7 @@ import argparse,json,sys
 from urllib.parse import urlencode,urlsplit
 from urllib.request import Request,build_opener,ProxyHandler
 from urllib.error import HTTPError,URLError
+from .long_memory import NOTE_KINDS, SEARCH_KINDS
 from .service import load,canonical,NoRedirect
 
 def api(config,path,body=None):
@@ -22,9 +23,13 @@ def api(config,path,body=None):
             if index==len(bases)-1:raise
 
 TOOLS=[{'name':name,'description':desc,'inputSchema':{'type':'object','properties':props,'required':required,'additionalProperties':False},'annotations':{'readOnlyHint':readonly,'destructiveHint':False}} for name,desc,props,required,readonly in [
- ('workcontext_memory.search','Search Mini durable memories and cited work records.',{'query':{'type':'string'}},['query'],True),
+ ('workcontext_memory.search','Search Mini memory and source records. Filter by exact project label or memory kind.',
+  {'query':{'type':'string'},'project':{'type':'string'},'kind':{'type':'string','enum':list(SEARCH_KINDS)}},['query'],True),
  ('workcontext_memory.get','Get a memory/source by ID.',{'id':{'type':'string'}},['id'],True),
- ('workcontext_memory.remember','Save a stable memory on Mini.',{k:{'type':'string'} for k in ['content','title','kind','project','note_id']},['content'],False)]]
+ ('workcontext_memory.activity','List all archived work for a Beijing calendar day; follow next_offset until null. Search ranking is not a coverage audit.',{'day':{'type':'string'},'offset':{'type':'integer','minimum':0},'limit':{'type':'integer','minimum':1,'maximum':100}},['day'],True),
+ ('workcontext_memory.remember','Save a stable memory or reusable experience. Cite archived source record IDs when available and use note_id to revise a note.',
+  {**{k:{'type':'string'} for k in ['content','title','project','note_id']},
+   'kind':{'type':'string','enum':list(NOTE_KINDS)},'evidence':{'type':'array','items':{'type':'string'},'maxItems':50}},['content'],False)]]
 def run(config):
     for raw in sys.stdin.buffer:
         request=None
@@ -40,8 +45,11 @@ def run(config):
                 name=p.get('name');args=p.get('arguments',{});tool=next((t for t in TOOLS if t['name']==name),None)
                 try:
                     if not tool or not isinstance(args,dict) or set(args)-set(tool['inputSchema']['properties']) or not set(tool['inputSchema']['required'])<=set(args):raise ValueError()
-                    if name.endswith('.search'):value=api(config,'/memory/search?'+urlencode({'q':args['query']}))
+                    if name.endswith('.search'):
+                        query={'q':args['query'],**{k:args[k] for k in ('project','kind') if k in args}}
+                        value=api(config,'/memory/search?'+urlencode(query))
                     elif name.endswith('.get'):value=api(config,'/memory/get?'+urlencode(args))
+                    elif name.endswith('.activity'):value=api(config,'/memory/activity?'+urlencode(args))
                     else:value=api(config,'/memory/remember',args)
                     result={'content':[{'type':'text','text':json.dumps(value,ensure_ascii=False)}],'structuredContent':value,'isError':False}
                 except Exception:result={'content':[{'type':'text','text':'Memory unavailable or request refused.'}],'isError':True}

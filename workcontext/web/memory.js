@@ -34,6 +34,7 @@ async function api(path, credential = token) {
 }
 function clear() {
   epoch++; token = ''; sessionMode = false; $('memory-token').value = '';
+  $('memory-filters').hidden = $('memory-source').value !== 'memory';
   $('memory-results').replaceChildren(); $('memory-detail').replaceChildren();
   status('已断开，凭证和查询结果已清除。');
 }
@@ -95,13 +96,21 @@ $('memory-search').addEventListener('submit', async event => {
   button.disabled = true; target.replaceChildren(element('p', '正在检索…', 'muted'));
   try {
     if (!query) throw Error('请输入检索词。');
-    const data = await api('search?q=' + encodeURIComponent(query));
+    const params = new URLSearchParams({ q: query });
+    if ($('memory-source').value === 'memory') {
+      const project = $('memory-project').value.trim(), kind = $('memory-kind').value;
+      if (project) params.set('project', project);
+      if (kind) params.set('kind', kind);
+    }
+    const data = await api('search?' + params);
     if (stamp !== epoch || request !== searchRequest) return;
     target.replaceChildren(element('p', `找到 ${data.matches.length} 条相关记录（最多显示 8 条）`, 'muted'));
     if (!data.matches.length) target.append(element('p', '没有匹配记录，请换一个关键词。', 'empty'));
     for (const hit of data.matches) {
       const card = element('article', undefined, 'record');
-      card.append(element('h3', hit.title || hit.project || '工作记录'), element('p', hit.type === 'notes' ? '显式记忆' : '来源记录', 'tag'), element('p', hit.excerpt || hit.content || hit.text));
+      const kind = hit.type === 'notes' ? hit.kind : 'record';
+      const label = Array.from($('memory-kind').options).find(option => option.value === kind)?.text;
+      card.append(element('h3', hit.title || hit.project || '工作记录'), element('p', label || '显式记忆', 'tag'), element('p', hit.excerpt || hit.content || hit.text));
       const button = element('button', '查看详情与来源', 'secondary');
       button.type = 'button'; button.addEventListener('click', () => showDetail(hit.id)); card.append(button); target.append(card);
     }

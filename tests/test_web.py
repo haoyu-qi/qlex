@@ -61,9 +61,12 @@ class WebConsole(unittest.TestCase):
                 self.assertEqual(req('/api/memory-stats')[1]['records'],2)
                 self.assertEqual(req('/api/memory-stats','invalid')[0],401)
                 self.assertEqual(len(req('/api/memory-search?'+urlencode({'q':'Searchable'}))[1]['matches']),3)
+                filtered=urlencode({'q':'Searchable','project':'personal','kind':'fact'})
+                self.assertEqual([hit['id'] for hit in req('/api/memory-search?'+filtered)[1]['matches']],[note['id']])
                 self.assertEqual(req('/api/memory-get?id='+note['id'])[1]['evidence'],json.dumps([record['id']]))
                 self.assertEqual(req('/api/memory-get?id='+record['id'])[1]['metadata'],json.dumps(record['metadata'],sort_keys=True))
-                for path in ['/api/memory-search?q=','/api/memory-search?q=a&q=b','/api/memory-stats?extra=1','/api/memory-get']:
+                for path in ['/api/memory-search?q=','/api/memory-search?q=a&q=b','/api/memory-search?q=a&kind=unknown',
+                             '/api/memory-stats?extra=1','/api/memory-get']:
                     self.assertEqual(req(path)[0],400)
                 self.assertEqual(req('/api/memory-stats',headers={'Origin':'https://bad.invalid'})[0],403)
                 self.assertEqual(req('/api/memory-remember',body={'content':'forbidden'})[0],403)

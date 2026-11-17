@@ -4,13 +4,33 @@ from datetime import datetime,timedelta,timezone
 from pathlib import Path
 from urllib.error import HTTPError
 from workcontext.long_memory import Store
-from workcontext.memory_relay import scan,upload,connect,text_from
+from workcontext.memory_relay import scan,upload,connect,text_from,occurred_from
 from workcontext.memory_client import api
 from workcontext.service import digest
 from workcontext.source_logs import records
 from test_p1 import port,wait
 ROOT=Path(__file__).resolve().parents[1]
 class Memory(unittest.TestCase):
+ def test_dsh_timestamp_and_envelope(self):
+  self.assertEqual(occurred_from({'time':1793958666554}),'2026-11-06T09:51:06.554Z')
+  self.assertEqual(occurred_from({'timestamp':1793958666.554}),'2026-11-06T09:51:06.554Z')
+  self.assertEqual(occurred_from({'timestamp':'2026-11-06T17:51:06.554+08:00'}),'2026-11-06T09:51:06.554Z')
+  self.assertEqual(occurred_from({'timestamp':'2026-11-06T17:51:06'}),'')
+  self.assertEqual(text_from({'type':'request/header','data':{'text':'schema noise'}}),'')
+  self.assertEqual(text_from({'type':'tool/result','data':{'text':'private output'}}),'')
+  self.assertEqual(text_from({'type':'user/message','data':{'source':{'kind':'time-context'},'content':[{'text':'clock noise'}]}}),'')
+  self.assertEqual(text_from({'type':'assistant/message','data':{'message':{'role':'assistant','content':[{'type':'reasoning','text':'private'},{'type':'text','text':'work result'}]}}}),'work result')
+ def test_activity_uses_occurrence_and_pages_across_beijing_midnight(self):
+  with tempfile.TemporaryDirectory() as t:
+   s=Store(Path(t)/'memory.sqlite')
+   stamps=['2026-11-05T15:59:59Z','2026-11-05T16:00:00Z','2026-11-06T23:59:59+08:00','2026-11-06T16:00:00Z','']
+   s.ingest([{'id':hashlib.sha256(str(i).encode()).hexdigest(),'device':'macbook','agent':'dsh','session':'s'+str(i),'project':'p','ordinal':str(i),'text':'result','occurred':stamp,'metadata':{}} for i,stamp in enumerate(stamps)])
+   first=s.activity('2026-11-06',limit=1)
+   self.assertEqual(first['total'],2);self.assertEqual(first['undated_records'],1);self.assertEqual(len(first['sessions']),2)
+   self.assertEqual(first['next_offset'],1)
+   second=s.activity('2026-11-06',offset=first['next_offset'],limit=1)
+   self.assertIsNone(second['next_offset']);self.assertNotEqual(first['records'][0]['id'],second['records'][0]['id'])
+   with self.assertRaises(ValueError):s.activity('2026-11-06',limit=101)
  def test_oversized_record_preserves_gap_and_later_messages(self):
   with tempfile.TemporaryDirectory() as t:
    p=Path(t)/'session.jsonl';p.write_text(json.dumps({'content':'x'*1048577})+'\n'+json.dumps({'role':'user','content':'later work survives'})+'\n')
@@ -27,6 +47,34 @@ class Memory(unittest.TestCase):
    self.assertIn(n['id'],s.context('项目')['context']);self.assertTrue(s.search('SQLite')['matches'])
    with self.assertRaises(ValueError):s.remember('invented','bad',evidence=['unknown'])
    secret='sk-'+'x'*30;note=s.remember('api_key='+secret,'scrub');self.assertNotIn(secret,note['content'])
+ def test_scoped_experience_recall_preserves_source_and_revision(self):
+  with tempfile.TemporaryDirectory() as t:
+   store=Store(Path(t)/'memory.sqlite')
+   record={'id':'a'*64,'device':'macbook','agent':'codex','session':'s','project':'relay',
+           'ordinal':'1','text':'前'*2100+'重试策略验证成功','occurred':'','metadata':{}}
+   store.ingest([record])
+   old=store.remember('重试见断线恢复手册',title='断线恢复',project='relay',evidence=[record['id']])
+   experience=store.remember(old['content'],kind='experience',evidence=[record['id']],note_id=old['id'])
+   store.remember('重试策略验证成功',title='策略',kind='experience',project='different')
+   self.assertEqual(experience['version'],2)
+   self.assertEqual(store.remember(experience['content'],evidence=[record['id']],
+                                   note_id=experience['id'])['version'],2)
+   with store.db() as db:
+    previous=db.execute('SELECT body FROM revisions WHERE note_id=? AND version=1',(old['id'],)).fetchone()
+   self.assertEqual(json.loads(previous[0])['kind'],'fact')
+   hits=store.search('重试策略验证成功',project='relay',kind='experience')['matches']
+   self.assertEqual([hit['id'] for hit in hits],[experience['id']])
+   hits=store.search('重试策略验证成功',project='relay',kind='record')['matches']
+   self.assertEqual([hit['id'] for hit in hits],[record['id']])
+   self.assertIn('重试策略验证成功',hits[0]['excerpt'])
+   context=store.context('重试策略验证成功',project='relay',budget=320)['context']
+   self.assertLessEqual(len(context),320)
+   self.assertIn('experience v2 sources: '+record['id'],context)
+   self.assertIn(experience['id'],context)
+   self.assertEqual(store.context('重试策略验证成功',budget=20),{'context':'','matches':0})
+   store.ingest([{**record,'id':'b'*64,'text':'乙丙'}])
+   self.assertEqual(store.search('甲乙，丙丁',project='relay')['matches'],[])
+   with self.assertRaises(ValueError):store.search('重试',kind='unknown')
  def test_http_relay_scope_durable_ack_and_read_only(self):
   with tempfile.TemporaryDirectory() as t:
    root=Path(t);workspace=root/'work';workspace.mkdir();logs=root/'logs';logs.mkdir();file=logs/'session.jsonl'
@@ -44,6 +92,23 @@ class Memory(unittest.TestCase):
     with self.assertRaises(ValueError):api({**client,'fallback_urls':['http://example.invalid']},'/stats')
     self.assertEqual(scan(relay)['queued'],1);self.assertEqual(upload(relay)['delivered'],1);self.assertEqual(upload(relay)['delivered'],0)
     hits=api(client,'/memory/search?q=SQLite')['matches'];self.assertEqual(hits[0]['agent'],'codex');self.assertEqual(api(client,'/stats')['records'],1)
+    source_id=hits[0]['id']
+    owner_config=root/'memory-client.json';owner_config.write_text(json.dumps(client))
+    calls=[
+     ('remember',{'content':'Use SQLite retries','kind':'experience','project':'work','evidence':[source_id]}),
+     ('search',{'query':'SQLite','kind':'experience','project':'work'}),
+    ]
+    result=subprocess.run([sys.executable,'-m','workcontext.memory_client','--config',str(owner_config)],
+                          input=''.join(json.dumps({'jsonrpc':'2.0','id':i,'method':'tools/call','params':
+                                {'name':'workcontext_memory.'+name,'arguments':args}})+'\n'
+                                for i,(name,args) in enumerate(calls)),text=True,capture_output=True,check=True,timeout=10)
+    remembered,searched=[json.loads(line)['result']['structuredContent'] for line in result.stdout.splitlines()]
+    self.assertEqual(json.loads(remembered['evidence']),[source_id])
+    self.assertEqual([hit['id'] for hit in searched['matches']],[remembered['id']])
+    self.assertIn(source_id,api(readonly,'/memory/context?q=SQLite&project=work')['context'])
+    self.assertEqual(api(readonly,'/memory/search?q=SQLite&project=other')['matches'],[])
+    self.assertEqual(api(readonly,'/memory/activity?day=2026-11-06')['undated_records'],1)
+    with self.assertRaises(HTTPError):api(relay,'/memory/activity?day=2026-11-06')
     with self.assertRaises(HTTPError):api(readonly,'/memory/remember',{'content':'not allowed'})
     with closing(connect(relay)) as db:db.execute("UPDATE outbox SET state='pending'");db.commit()
     self.assertEqual(upload(relay)['delivered'],1);self.assertEqual(api(client,'/stats')['records'],1)

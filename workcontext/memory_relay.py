@@ -2,13 +2,39 @@
 import argparse,hashlib,json,os,sqlite3,time
 from contextlib import closing
 from pathlib import Path
+from datetime import datetime,timezone
 from .service import canonical,load
 from .source_logs import eligible,records
 from .long_memory import clean
 from .memory_client import api
 
 IGNORE={'reasoning','reasoning_content','reasoning_details','encrypted_content','system_prompt','api_content','arguments','output','tool_response','tool_input','tool_calls'}
+def occurred_from(raw):
+    for key in ['timestamp','createdAt','time']:
+        value=raw.get(key)
+        if value is None or value=='':continue
+        try:
+            if isinstance(value,(int,float)) or str(value).replace('.','',1).isdigit():
+                value=float(value)
+                if value>100000000000:value/=1000
+                stamp=datetime.fromtimestamp(value,timezone.utc)
+            else:
+                stamp=datetime.fromisoformat(str(value).replace('Z','+00:00'))
+                if stamp.tzinfo is None:continue
+            return stamp.astimezone(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')
+        except (ValueError,OverflowError,OSError):continue
+    return ''
+
 def text_from(raw):
+    # DSH envelopes also contain request schemas and tool output text.
+    if '/' in str(raw.get('type','')):
+        kind=raw['type'];data=raw.get('data',{})
+        if not isinstance(data,dict):return ''
+        if kind=='tool/call':return 'Tool activity: '+str(data.get('name','unknown'))
+        if kind not in ['user/message','assistant/message']:return ''
+        raw=data.get('message',data)
+        source=raw.get('source',{})
+        if isinstance(source,dict) and source.get('kind') not in [None,'user']:return ''
     parts=[]
     def walk(value,depth=0):
         if depth>9:return
@@ -64,7 +90,7 @@ def scan(config):
                         text=text_from(raw)
                         if text and permitted(c,cwd):
                             identity=hashlib.sha256(canonical([c['device'],source['agent'],session,str(ordinal),hashlib.sha256(canonical(raw).encode()).hexdigest()]).encode()).hexdigest()
-                            row={'id':identity,'device':c['device'],'agent':source['agent'],'session':str(session),'project':Path(cwd).name,'ordinal':str(ordinal),'text':text,'occurred':str(raw.get('timestamp',raw.get('createdAt',''))),'metadata':{'cwd':str(Path(cwd).resolve()),'source_path':str(path),'record_ordinal':str(ordinal)}}
+                            row={'id':identity,'device':c['device'],'agent':source['agent'],'session':str(session),'project':Path(cwd).name,'ordinal':str(ordinal),'text':text,'occurred':occurred_from(raw),'metadata':{'cwd':str(Path(cwd).resolve()),'source_path':str(path),'record_ordinal':str(ordinal)}}
                             before=db.total_changes;db.execute('INSERT OR IGNORE INTO outbox(id,body) VALUES (?,?)',(identity,canonical(row)));count+=db.total_changes-before
                         added+=1
                         if added>=c.get('records_per_file',500):complete=0;break

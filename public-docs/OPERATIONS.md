@@ -10,7 +10,7 @@ workcontext selfcheck
 workcontext --help
 ```
 
-Python 3.9+ is required; the core has no third-party Python runtime dependencies. Zstandard source logs require Python's `compression.zstd`, the `zstd` executable, or the optional `zstandard` Python module. Report missing decoders rather than silently skipping compressed work history.
+Python 3.9+ is required. macOS and Linux use the system time zone database. The package installs `tzdata` on Windows for calendar-day memory queries. Zstandard source logs require Python's `compression.zstd`, the `zstd` executable, or the optional `zstandard` Python module. Report missing decoders rather than silently skipping compressed work history.
 
 ## Service entry points
 

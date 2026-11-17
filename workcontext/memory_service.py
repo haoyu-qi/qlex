@@ -43,9 +43,12 @@ class Handler(BaseHTTPRequestHandler):
                     result=store.remember(**body)
                 else:raise Rejected('route_denied')
             elif policy['role'] in ['owner','reader']:
-                if u.path=='/memory/search' and set(q)=={'q'}:result=store.search(q['q'][0])
-                elif u.path=='/memory/context' and set(q)=={'q'}:result=store.context(q['q'][0])
+                if u.path=='/memory/search' and 'q' in q and set(q)<={'q','project','kind'}:
+                    result=store.search(q['q'][0],project=q.get('project',[None])[0],kind=q.get('kind',[None])[0])
+                elif u.path=='/memory/context' and 'q' in q and set(q)<={'q','project'}:
+                    result=store.context(q['q'][0],project=q.get('project',[None])[0])
                 elif u.path=='/memory/get' and set(q)=={'id'}:result=store.get(q['id'][0])
+                elif u.path=='/memory/activity' and {'day'}<=set(q) and not set(q)-{'day','offset','limit'}:result=store.activity(q['day'][0],offset=int(q.get('offset',['0'])[0]),limit=int(q.get('limit',['100'])[0]))
                 elif u.path=='/stats' and not q:result=store.stats()
                 else:raise Rejected('route_denied')
             else:raise Rejected('route_denied')

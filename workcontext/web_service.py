@@ -11,6 +11,7 @@ from .web_auth import Sessions,session_cookie
 
 ASSETS=Path(__file__).with_name('web')
 MEMORY_ROUTES={'memory-stats':('/stats',set()),'memory-search':('/memory/search',{'q'}),'memory-get':('/memory/get',{'id'})}
+MEMORY_SEARCH_FILTERS={'project','kind'}
 ROUTES={'activity':set(['project_id','task_id']),'search':{'q'},'project':{'project_id'},'task':{'project_id','task_id'}}
 def memory_http(config,path,token):
     bases=list(dict.fromkeys([config['memory_url']]+config.get('memory_fallback_urls',[])))
@@ -104,7 +105,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.command=='GET' and memory_route:
                 if not c.get('memory_url'):return self.reply(503,{'error':'memory_not_configured'})
                 route,fields=memory_route;q=parse_qs(u.query,keep_blank_values=True)
-                if set(q)!=fields or any(len(v)!=1 or not v[0].strip() for v in q.values()):return self.reply(400,{'error':'invalid_query'})
+                optional=MEMORY_SEARCH_FILTERS if route=='/memory/search' else set()
+                if not fields<=set(q)<=fields|optional or any(len(v)!=1 or not v[0].strip() for v in q.values()):return self.reply(400,{'error':'invalid_query'})
                 return self.reply(200,memory_http(c,route+('?' +urlencode({k:v[0] for k,v in q.items()}) if q else ''),token))
             if self.command=='GET' and u.path=='/api/inventory' and not u.query:
                 # Use the upstream policy check, including enabled/expiry, before returning inventory.

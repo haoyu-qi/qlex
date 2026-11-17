@@ -7,7 +7,7 @@ name = "workcontext-services"
 version = "0.4.0"
 description = "Agent context, capability-based execution, local log adapters and controlled skill sync"
 requires-python = ">=3.9"
-dependencies = []
+dependencies = ["tzdata; platform_system == 'Windows'"]
 
 [project.scripts]
 workcontext = "workcontext.__main__:main"
