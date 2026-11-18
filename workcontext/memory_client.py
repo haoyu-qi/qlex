@@ -38,7 +38,7 @@ def run(config):
             request=json.loads(raw)
             if 'id' not in request:continue
             method=request.get('method');p=request.get('params',{})
-            if method=='initialize':result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'workcontext-memory','version':'0.4.0'}}
+            if method=='initialize':result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'workcontext-memory','version':'0.4.1'}}
             elif method=='ping':result={}
             elif method=='tools/list':result={'tools':TOOLS}
             elif method=='tools/call':

@@ -22,10 +22,10 @@ def main():
     names=subprocess.check_output(['git','ls-files','-z'],cwd=ROOT).decode().split('\0');names=[n for n in names if n]
     if not names:raise ValueError('Stage the curated public files first')
     manifest=audit(names);out=ROOT/'dist';out.mkdir(exist_ok=True)
-    target=out/'workcontext-services-0.4.0.zip'
+    target=out/'workcontext-services-0.4.1.zip'
     with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED) as z:
         for item in manifest:z.write(ROOT/item['path'],'workcontext-services/'+item['path'])
-        z.writestr('workcontext-services/PUBLICATION-MANIFEST.json',json.dumps({'version':'0.4.0','files':manifest},indent=2))
-    (out/'PUBLICATION-MANIFEST.json').write_text(json.dumps({'version':'0.4.0','files':manifest},indent=2))
+        z.writestr('workcontext-services/PUBLICATION-MANIFEST.json',json.dumps({'version':'0.4.1','files':manifest},indent=2))
+    (out/'PUBLICATION-MANIFEST.json').write_text(json.dumps({'version':'0.4.1','files':manifest},indent=2))
     print(json.dumps({'source_bundle':str(target),'files':len(manifest),'secret_scan':'passed','sha256':hashlib.sha256(target.read_bytes()).hexdigest()},indent=2))
 if __name__=='__main__':main()
