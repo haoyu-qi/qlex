@@ -2,7 +2,7 @@
 
 **换一个会话、Agent 或设备，工作也能接着做。**
 
-WorkContext 把分散在 Codex、Claude Code、Hermes 和 dsh 里的工作记录汇到你自己的 Mac mini。下次接手同一个项目时，你可以找回当时的决定、验证结果和已经跑通的方法，并沿着引用读到原始记录。
+WorkContext 把分散在 Codex、Claude Code、Hermes、DeepSeek Harness 和 Antigravity 里的工作记录汇到你自己的 Mac mini。下次接手同一个项目时，你可以找回当时的决定、验证结果和已经跑通的方法，并沿着引用读到原始记录。
 
 ## 它能帮你做什么
 
@@ -34,7 +34,7 @@ MCP 工具名是 `workcontext_memory.search`。Mini 上的原生 Hermes 工具�
 需要 Python 3.9 或更新版本。从 GitHub Releases 下载 wheel 后安装，也可以在仓库根目录运行 `python -m pip install .`。
 
 ```sh
-python -m pip install ./workcontext_services-0.4.0-py3-none-any.whl
+python -m pip install ./workcontext_services-0.4.1-py3-none-any.whl
 workcontext selfcheck
 workcontext --help
 ```

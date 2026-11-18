@@ -1,4 +1,4 @@
-import hashlib,json,os,secrets,subprocess,sys,tempfile,time,unittest
+import hashlib,json,os,secrets,sqlite3,subprocess,sys,tempfile,time,unittest
 from contextlib import closing
 from datetime import datetime,timedelta,timezone
 from pathlib import Path
@@ -20,6 +20,66 @@ class Memory(unittest.TestCase):
   self.assertEqual(text_from({'type':'tool/result','data':{'text':'private output'}}),'')
   self.assertEqual(text_from({'type':'user/message','data':{'source':{'kind':'time-context'},'content':[{'text':'clock noise'}]}}),'')
   self.assertEqual(text_from({'type':'assistant/message','data':{'message':{'role':'assistant','content':[{'type':'reasoning','text':'private'},{'type':'text','text':'work result'}]}}}),'work result')
+ def test_dsh_backfill_replays_only_previously_excluded_model_replies(self):
+  with tempfile.TemporaryDirectory() as t:
+   root=Path(t);log=root/'session.jsonl'
+   user={'type':'user/message','data':{'role':'user','content':'user text'}}
+   model={'type':'assistant/message','time':1793958666554,'data':{'message':{
+      'role':'assistant','source':{'kind':'model'},'content':[
+       {'type':'reasoning','text':'private reasoning'},{'type':'tool-call','text':'private arguments'},
+       {'type':'text','text':'visible reply'}]}}}
+   log.write_text(''.join(json.dumps(row)+'\n' for row in [
+      {'type':'session','id':'session-1','cwd':str(root)},user,model]))
+   config={'device':'test','outbox':str(root/'outbox.sqlite'),'allowed_roots':[str(root)],
+           'sources':[{'agent':'dsh','path':str(log)}]}
+   with closing(connect(config)) as db,db:
+    db.execute('INSERT INTO checkpoints VALUES (?,?,?,?,?,?)',
+               (str(log),'old',3,'session-1',str(root),1))
+   self.assertEqual(scan(config),{'queued':1,'errors':[]})
+   self.assertEqual(scan(config),{'queued':0,'errors':[]})
+   with closing(connect(config)) as db:
+    row=json.loads(db.execute('SELECT body FROM outbox').fetchone()[0])
+   self.assertEqual(row['text'],'visible reply')
+   self.assertEqual(row['occurred'],'2026-11-06T09:51:06.554Z')
+ def test_antigravity_scope_and_wal_updates(self):
+  def number(field,value):
+   return bytes([field*8,value])
+  def data(field,value):
+   tag=field*8+2
+   key=bytes([tag]) if tag<128 else bytes([(tag&127)|128,tag>>7])
+   return key+bytes([len(value)])+value
+  with tempfile.TemporaryDirectory() as t:
+   root=Path(t);logs=root/'conversations';logs.mkdir()
+   workspace=root/'工作 project';workspace.mkdir()
+   with closing(sqlite3.connect(root/'conversation_summaries.db')) as index,index:
+    index.execute('CREATE TABLE conversation_summaries(conversation_id,workspace_uris)')
+    index.executemany('INSERT INTO conversation_summaries VALUES (?,?)',[
+      ('allowed',json.dumps([workspace.as_uri()])),('outside',json.dumps([root.as_uri()])),
+      ('unbound',''),('multi',json.dumps([workspace.as_uri(),root.as_uri()]))])
+   config={'device':'test','outbox':str(root/'outbox.sqlite'),'allowed_roots':[str(workspace)],
+           'sources':[{'agent':'antigravity','path':str(logs),'format':'antigravity-sqlite'}]}
+   for session in ('outside','unbound','multi'):
+    (logs/(session+'.db')).write_bytes(b'workspace denied before opening')
+   with closing(sqlite3.connect(logs/'allowed.db')) as db:
+    db.execute('PRAGMA journal_mode=WAL')
+    db.execute('CREATE TABLE steps(idx,step_type,status,metadata,step_payload,step_format)')
+    timestamp=data(1,number(1,10))
+    user=number(1,14)+data(19,data(2,'你好'.encode())+data(9,b'private prompt'))
+    reply=number(1,15)+data(20,data(3,b'final answer')+data(7,b'private tool input'))
+    db.executemany('INSERT INTO steps VALUES (?,?,?,?,?,0)',[
+     (0,14,3,timestamp,user),(1,15,2,timestamp,reply),(2,14,3,timestamp,user),
+     (3,132,3,timestamp,b'private tool output')])
+    db.commit()
+    self.assertEqual(scan(config),{'queued':2,'errors':[]})
+    self.assertEqual(scan(config),{'queued':0,'errors':[]})
+    db.execute('UPDATE steps SET status=3 WHERE idx=1');db.commit()
+    self.assertEqual(scan(config),{'queued':1,'errors':[]})
+    self.assertEqual(scan(config),{'queued':0,'errors':[]})
+   with closing(connect(config)) as outbox:
+    rows={row['ordinal']:row for body, in outbox.execute('SELECT body FROM outbox') if (row:=json.loads(body))}
+   self.assertEqual({k:v['text'] for k,v in rows.items()},{'1':'你好','2':'final answer','3':'你好'})
+   self.assertEqual(rows['2']['project'],workspace.name)
+   self.assertEqual(rows['2']['occurred'],'1970-01-01T00:00:10.000Z')
  def test_activity_uses_occurrence_and_pages_across_beijing_midnight(self):
   with tempfile.TemporaryDirectory() as t:
    s=Store(Path(t)/'memory.sqlite')

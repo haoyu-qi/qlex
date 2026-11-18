@@ -1,6 +1,8 @@
 import { normalizeToken } from './token.mjs';
 
 const $ = id => document.getElementById(id);
+const agentLabel = agent => agent === 'dsh' ? 'DeepSeek Harness' :
+  agent === 'antigravity' ? 'Antigravity' : agent;
 const element = (tag, text, cls) => {
   const value = document.createElement(tag);
   if (text !== undefined) value.textContent = text;
@@ -43,7 +45,7 @@ function renderStats(data) {
   const groups = element('div', undefined, 'devices');
   for (const group of data.agents || []) {
     const card = element('article', undefined, 'device');
-    card.append(element('h3', group.device + ' / ' + group.agent), element('p', group.count + ' 条来源记录'));
+    card.append(element('h3', group.device + ' / ' + agentLabel(group.agent)), element('p', group.count + ' 条来源记录'));
     groups.append(card);
   }
   $('memory-stats').append(groups);
@@ -76,7 +78,8 @@ async function showDetail(id) {
   try {
     const data = await api('get?id=' + encodeURIComponent(id));
     if (stamp !== epoch || request !== detailRequest) return;
-    target.replaceChildren(element('h3', data.title || '来源记录'), element('p', data.project || '', 'muted'), element('pre', data.content || data.text || ''));
+    const source = [data.project, agentLabel(data.agent)].filter(Boolean).join(' · ');
+    target.replaceChildren(element('h3', data.title || '来源记录'), element('p', source, 'muted'), element('pre', data.content || data.text || ''));
     let refs = data.evidence || [];
     if (typeof refs === 'string') { try { refs = JSON.parse(refs); } catch { refs = []; } }
     for (const source of refs) {
@@ -110,7 +113,8 @@ $('memory-search').addEventListener('submit', async event => {
       const card = element('article', undefined, 'record');
       const kind = hit.type === 'notes' ? hit.kind : 'record';
       const label = Array.from($('memory-kind').options).find(option => option.value === kind)?.text;
-      card.append(element('h3', hit.title || hit.project || '工作记录'), element('p', label || '显式记忆', 'tag'), element('p', hit.excerpt || hit.content || hit.text));
+      const source = [label || '显式记忆', agentLabel(hit.agent)].filter(Boolean).join(' · ');
+      card.append(element('h3', hit.title || hit.project || '工作记录'), element('p', source, 'tag'), element('p', hit.excerpt || hit.content || hit.text));
       const button = element('button', '查看详情与来源', 'secondary');
       button.type = 'button'; button.addEventListener('click', () => showDetail(hit.id)); card.append(button); target.append(card);
     }

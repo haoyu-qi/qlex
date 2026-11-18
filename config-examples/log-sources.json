@@ -2,6 +2,8 @@
   "database": "state/source-records.sqlite",
   "sources": [
     {"agent": "dsh", "path": "~/.dsh/sessions", "format": "jsonl"},
+    {"agent": "antigravity", "path": "~/.gemini/antigravity/conversations", "format": "antigravity-sqlite"},
+    {"agent": "antigravity", "path": "~/.gemini/antigravity-cli/conversations", "format": "antigravity-sqlite"},
     {"agent": "codex", "path": "~/.codex/sessions", "format": "jsonl"},
     {"agent": "claude_code", "path": "~/.claude/projects", "format": "jsonl"},
     {"agent": "hermes", "path": "~/.hermes/state.db", "format": "hermes-sqlite"}

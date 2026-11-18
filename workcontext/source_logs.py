@@ -3,6 +3,7 @@ import hashlib,io,json,os,re,shutil,sqlite3,subprocess,time
 from contextlib import contextmanager
 from pathlib import Path
 from .service import canonical
+from . import antigravity_logs
 
 SENSITIVE=re.compile(r'(?i)^(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|credentials|reasoning|reasoning_content|reasoning_details)$')
 SECRETS=re.compile(r'(?:-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|Bearer [A-Za-z0-9._~+/-]{16,})')
@@ -48,10 +49,14 @@ def inventory(sources):
 def eligible(root,format):
     if root.is_file():return [root]
     if not root.exists():return []
+    if format=='antigravity-sqlite':
+        return sorted(p for p in root.glob('*.db') if p.is_file() and not p.is_symlink())
     return sorted(p for p in root.rglob('*') if p.is_file() and not p.is_symlink() and any(str(p).endswith(x) for x in ['.jsonl','.jsonl.zstd','.jsonl.zst']))
 
 def records(path,format,skip_oversized=False):
-    if format=='hermes-sqlite':
+    if format=='antigravity-sqlite':
+        yield from antigravity_logs.messages(path,skip_oversized)
+    elif format=='hermes-sqlite':
         db=sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True);db.row_factory=sqlite3.Row
         try:
             columns={r[1] for r in db.execute('PRAGMA table_info(messages)')}
@@ -80,13 +85,16 @@ def collect(config,include_content=False,max_records=None):
     try:
         for source in config['sources']:
             path=Path(source['path']).expanduser()
-            for p in eligible(path,source.get('format','jsonl')):
+            format=source.get('format','jsonl')
+            for p in eligible(path,format):
                 try:
-                    stat=p.stat();signature=canonical([stat.st_size,stat.st_mtime_ns,include_content])
+                    stat=p.stat()
+                    fingerprint=antigravity_logs.sqlite_signature(p) if format=='antigravity-sqlite' else (stat.st_size,stat.st_mtime_ns)
+                    signature=canonical([*fingerprint,include_content])
                     previous=db.execute('SELECT signature FROM files WHERE path=?',(str(p),)).fetchone()
                     if previous and previous[0]==signature:summary['unchanged_files']+=1;continue
                     session=p.stem
-                    for ordinal,raw in records(p,source.get('format','jsonl')):
+                    for ordinal,raw in records(p,format):
                         if not isinstance(raw,dict):continue
                         payload=raw.get('payload',{});payload=payload if isinstance(payload,dict) else {}
                         if raw.get('type') in ['session','session_meta']:session=raw.get('id') or payload.get('id') or session

@@ -3,12 +3,25 @@ import argparse,hashlib,json,os,sqlite3,time
 from contextlib import closing
 from pathlib import Path
 from datetime import datetime,timezone
+from . import antigravity_logs
 from .service import canonical,load
 from .source_logs import eligible,records
 from .long_memory import clean
 from .memory_client import api
 
 IGNORE={'reasoning','reasoning_content','reasoning_details','encrypted_content','system_prompt','api_content','arguments','output','tool_response','tool_input','tool_calls'}
+
+def dsh_model_message(raw):
+    if raw.get('type')!='assistant/message' or not isinstance(raw.get('data'),dict):
+        return None
+    message=raw['data'].get('message',raw['data'])
+    if not isinstance(message,dict):
+        return None
+    source=message.get('source')
+    if message.get('role')=='assistant' and isinstance(source,dict) and source.get('kind')=='model':
+        return message
+    return None
+
 def occurred_from(raw):
     for key in ['timestamp','createdAt','time']:
         value=raw.get(key)
@@ -27,12 +40,21 @@ def occurred_from(raw):
 
 def text_from(raw):
     # DSH envelopes also contain request schemas and tool output text.
+    model=dsh_model_message(raw)
+    if model is not None:
+        content=model.get('content')
+        if isinstance(content,str):return clean(content)[:8000]
+        if not isinstance(content,list):return ''
+        parts=[part['text'] for part in content if isinstance(part,dict) and
+               part.get('type')=='text' and isinstance(part.get('text'),str)]
+        return clean('\n'.join(dict.fromkeys(parts)))[:8000]
     if '/' in str(raw.get('type','')):
         kind=raw['type'];data=raw.get('data',{})
         if not isinstance(data,dict):return ''
         if kind=='tool/call':return 'Tool activity: '+str(data.get('name','unknown'))
         if kind not in ['user/message','assistant/message']:return ''
         raw=data.get('message',data)
+        if not isinstance(raw,dict):return ''
         source=raw.get('source',{})
         if isinstance(source,dict) and source.get('kind') not in [None,'user']:return ''
     parts=[]
@@ -68,31 +90,64 @@ def scan(config):
     c=load(config) if not isinstance(config,dict) else config;count=0;errors=[]
     with closing(connect(c)) as db,db:
         for source in c['sources']:
-            root=Path(source['path']).expanduser();candidates=sorted(eligible(root,source.get('format','jsonl')),key=lambda p:p.stat().st_mtime,reverse=True);processed=0
-            session_dirs={}
-            if source.get('format')=='hermes-sqlite' and root.exists():
-                with closing(sqlite3.connect(root.resolve().as_uri()+'?mode=ro',uri=True)) as native:
-                    session_dirs=dict(native.execute('SELECT id,cwd FROM sessions'))
+            root=Path(source['path']).expanduser()
+            format=source.get('format','jsonl')
+            is_antigravity=format=='antigravity-sqlite'
+            is_dsh=source['agent']=='dsh'
+            processed=0
+            try:
+                if not root.exists():
+                    errors.append({'source':source['agent'],'error':'source_missing'})
+                    continue
+                session_dirs={}
+                candidates=eligible(root,format)
+                if is_antigravity:
+                    session_dirs=antigravity_logs.workspaces(root)
+                    candidates=[p for p in candidates if permitted(c,session_dirs.get(p.stem))]
+                elif format=='hermes-sqlite':
+                    with closing(sqlite3.connect(root.resolve().as_uri()+'?mode=ro',uri=True)) as native:
+                        session_dirs=dict(native.execute('SELECT id,cwd FROM sessions'))
+                candidates.sort(key=lambda p:p.stat().st_mtime_ns,reverse=True)
+            except (OSError,ValueError,sqlite3.Error) as error:
+                errors.append({'source':source['agent'],'error':type(error).__name__})
+                continue
             for path in candidates:
-                stat=path.stat();signature=str(stat.st_size)+':'+str(stat.st_mtime_ns);old=db.execute('SELECT * FROM checkpoints WHERE path=?',(str(path),)).fetchone()
-                if old and old['signature']==signature and old['complete']:continue
                 if processed>=c.get('files_per_source',2):break
-                processed+=1;last=old['ordinal'] if old else 0;session=old['session'] if old else path.stem;cwd=old['cwd'] if old else None;seen=0;added=0;complete=1
                 try:
-                    for ordinal,raw in records(path,source.get('format','jsonl'),skip_oversized=True):
+                    old=db.execute('SELECT * FROM checkpoints WHERE path=?',(str(path),)).fetchone()
+                    cwd=old['cwd'] if old else None
+                    last=old['ordinal'] if old else 0
+                    session=old['session'] if old else path.stem
+                    backfill=False
+                    if is_antigravity:
+                        cwd=session_dirs[path.stem]
+                        signature=canonical([antigravity_logs.sqlite_signature(path),cwd])
+                        # A pending step can complete at an earlier index.
+                        # Replay the changed database and deduplicate by ID.
+                        if old and old['signature']!=signature:last=0
+                    else:
+                        stat=path.stat()
+                        signature=str(stat.st_size)+':'+str(stat.st_mtime_ns)
+                        if is_dsh:
+                            prefix='dsh-model-v1:'
+                            backfill=bool(old and not old['signature'].startswith(prefix))
+                            signature=prefix+signature
+                    if old and old['signature']==signature and old['complete']:continue
+                    processed+=1;seen=0;added=0;complete=1
+                    for ordinal,raw in records(path,format,skip_oversized=True):
                         if not isinstance(raw,dict):continue
                         seen=int(ordinal);payload=raw.get('payload') if isinstance(raw.get('payload'),dict) else {}
                         if raw.get('type') in ['session','session_meta']:
                             session=raw.get('id') or payload.get('id') or session;cwd=raw.get('cwd') or payload.get('cwd') or cwd
                         session=raw.get('session_id') or raw.get('sessionId') or session
                         cwd=raw.get('cwd') or payload.get('cwd') or session_dirs.get(session) or cwd
-                        if seen<=last:continue
+                        if seen<=last and not (backfill and dsh_model_message(raw) is not None):continue
                         text=text_from(raw)
                         if text and permitted(c,cwd):
                             identity=hashlib.sha256(canonical([c['device'],source['agent'],session,str(ordinal),hashlib.sha256(canonical(raw).encode()).hexdigest()]).encode()).hexdigest()
                             row={'id':identity,'device':c['device'],'agent':source['agent'],'session':str(session),'project':Path(cwd).name,'ordinal':str(ordinal),'text':text,'occurred':occurred_from(raw),'metadata':{'cwd':str(Path(cwd).resolve()),'source_path':str(path),'record_ordinal':str(ordinal)}}
                             before=db.total_changes;db.execute('INSERT OR IGNORE INTO outbox(id,body) VALUES (?,?)',(identity,canonical(row)));count+=db.total_changes-before
-                        added+=1
+                        if seen>last:added+=1
                         if added>=c.get('records_per_file',500):complete=0;break
                     if seen<last:seen=0;complete=0
                     db.execute('INSERT OR REPLACE INTO checkpoints VALUES (?,?,?,?,?,?)',(str(path),signature,seen,str(session),cwd,complete));db.commit()

@@ -72,5 +72,5 @@ def main():
         from importlib import resources
         assert resources.files('workcontext').joinpath('web/index.html').is_file()
         assert resources.files('workcontext').joinpath('migrations/p2/001-up.sql').is_file()
-        output({'service':'workcontext','version':'0.4.0','status':'ok'})
+        output({'service':'workcontext','version':'0.4.1','status':'ok'})
 if __name__=='__main__':main()

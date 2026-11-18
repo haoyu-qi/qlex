@@ -5,7 +5,7 @@ Roles: MacBook gathers local Agent work records; Mini provides task context, coo
 ## Install and check
 
 ```sh
-python -m pip install ./workcontext_services-0.4.0-py3-none-any.whl
+python -m pip install ./workcontext_services-0.4.1-py3-none-any.whl
 workcontext selfcheck
 workcontext --help
 ```
@@ -131,7 +131,7 @@ workcontext logs collect --config config-examples/log-sources.json
 workcontext logs watch --config config-examples/log-sources.json --interval 30
 ```
 
-Adapters cover dsh JSONL/Zstandard, Codex JSONL/Zstandard, Claude Code JSONL, and read-only Hermes `state.db` messages. Source paths are explicit. Collection is local-only; the command does not upload records to GitHub, Mini, or a model provider. Default storage contains normalized event metadata; `--include-content` opts into scrubbed source content. Reasoning fields and recognized credential fields are removed, but pattern filtering is not a guarantee that arbitrary personal information is absent.
+Adapters cover DeepSeek Harness and Codex JSONL/Zstandard, Claude Code JSONL, and read-only SQLite for Antigravity desktop and CLI and Hermes. Source paths are explicit. Collection is local-only; the command does not upload records to GitHub, Mini, or a model provider. Default storage contains normalized event metadata; `--include-content` opts into scrubbed source content. Reasoning fields and recognized credential fields are removed, but pattern filtering is not a guarantee that arbitrary personal information is absent.
 
 Changed files are rescanned with logical event deduplication; unchanged files are skipped. Compressed snapshots may require full decompression. Unsupported/corrupt inputs are reported. `--max-records N` provides a bounded local trial. The independent memory Relay can upload approved work records to Mini with durable acknowledgements. Native Hermes recall/capture and explicit stable notes are described in [long-term memory](LONG-TERM-MEMORY.md); a successful local collection alone does not prove delivery or fact validation.
 
