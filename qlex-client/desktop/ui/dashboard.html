@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'" />
+  <title>QLEX · 用量看板</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="dashboard.css" />
+  <script src="../vendor/token-monitor/glassRendering.js" defer></script>
+  <script src="theme.js" defer></script>
+  <script src="dashboard.js" defer></script>
+</head>
+<body>
+  <div class="dash-shell">
+    <header class="dash-header">
+      <div class="dash-title">
+        <img class="app-logo" src="../../docs/assets/brand/logo.png" alt="" />
+        <span>QLEX · 用量与工作台看板</span>
+      </div>
+      <div class="dash-header-actions">
+        <button id="flatToggle" class="icon-button" type="button" title="切换毛玻璃 / 实色背景">◐</button>
+        <button id="refreshBtn" class="icon-button" type="button" title="刷新数据">↻</button>
+        <button id="minBtn" class="icon-button" type="button" title="最小化">−</button>
+        <button id="closeBtn" class="icon-button" type="button" title="关闭">×</button>
+      </div>
+    </header>
+
+    <div class="dash-tabs-bar">
+      <nav class="dash-tabs">
+        <button id="activityTab" class="dash-tab active" type="button" data-tab="activity">总览</button>
+        <button id="trendsTab" class="dash-tab" type="button" data-tab="trends">趋势分析</button>
+      </nav>
+      <div id="rangeGroup" class="dash-range-group">
+        <button class="range-btn" type="button" data-days="1">今日</button>
+        <button class="range-btn active" type="button" data-days="7">近 7 天</button>
+        <button class="range-btn" type="button" data-days="30">近 30 天</button>
+        <button class="range-btn" type="button" data-days="90">近 90 天</button>
+      </div>
+    </div>
+
+    <section id="activityPane" class="dash-pane">
+      <div id="dashCards" class="dash-cards"></div>
+      <div class="dash-chart-block">
+        <div class="dash-section-title">
+          <span>每日 Token 活跃柱状图</span>
+          <small id="dashUpdated">—</small>
+        </div>
+        <div id="dashMiniChart" class="dash-mini-chart"></div>
+      </div>
+      <div id="dashBreakdown" class="dash-breakdown"></div>
+    </section>
+
+    <section id="trendsPane" class="dash-pane hidden">
+      <div id="dashChart" class="dash-chart-wrap"></div>
+      <div id="dashLegend" class="dash-legend"></div>
+    </section>
+
+    <div id="dashTooltip" class="dash-tooltip hidden"></div>
+  </div>
+</body>
+</html>

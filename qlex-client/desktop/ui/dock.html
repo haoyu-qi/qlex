@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'" />
+  <title>QLEX 快览</title>
+  <link rel="stylesheet" href="dock.css" />
+  <script src="../vendor/token-monitor/glassRendering.js" defer></script>
+  <script src="../vendor/token-monitor/shapes.js" defer></script>
+  <script src="theme.js" defer></script>
+  <script src="dock.js" defer></script>
+</head>
+<body class="edge-dock">
+  <svg id="silhouette" class="edge-dock-shape" aria-hidden="true">
+    <path id="glass" class="edge-dock-shape-fill"></path>
+    <path id="rim" class="edge-dock-shape-line"></path>
+  </svg>
+
+  <nav id="rail" aria-label="QLEX 侧边吸附" hidden>
+    <button data-item="sync" aria-label="同步与本机技能" title="同步状态与本机 Skills">
+      <span class="dock-icon-badge-wrap">
+        <svg id="syncRailSvg" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a7.5 7.5 0 0 0-12-1L4 10m0 0V5m0 5h5m-4 6a7.5 7.5 0 0 0 12 1l3-3m0 0v5m0-5h-5"/></svg>
+        <i id="syncRailDot" class="dock-status-dot"></i>
+      </span>
+    </button>
+    <button data-item="usage" aria-label="今日用量" title="今日用量">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 18v-5m7 5V6m7 12V9"/></svg>
+    </button>
+    <button data-item="limits" aria-label="订阅额度" title="Codex 订阅额度">
+      <span class="dock-ring-wrap">
+        <svg class="dock-ring-svg" viewBox="0 0 36 36" aria-hidden="true">
+          <circle class="dock-ring-track" cx="18" cy="18" r="13" />
+          <circle id="quotaRingFill" class="dock-ring-fill" cx="18" cy="18" r="13" stroke-dasharray="81.68" stroke-dashoffset="0" />
+        </svg>
+        <span id="quotaRingText" class="dock-ring-text">—</span>
+      </span>
+    </button>
+    <button data-item="memory" aria-label="记忆压缩归档" title="每日/每周/每月记忆归档">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5 12 4l8 3.5-8 3.5-8-3.5Zm0 4.5 8 3.5 8-3.5M4 16.5 12 20l8-3.5"/></svg>
+    </button>
+  </nav>
+
+  <main id="card" hidden>
+    <header>
+      <h1 id="title"></h1>
+      <button id="dismiss" type="button" aria-label="关闭快览">×</button>
+    </header>
+    <div id="details"></div>
+    <footer class="card-footer">
+      <button id="quickAction" class="quick-action-btn" type="button" hidden></button>
+      <button id="open" type="button">打开工作台 <span aria-hidden="true">↗</span></button>
+    </footer>
+  </main>
+</body>
+</html>

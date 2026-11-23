@@ -1,0 +1,866 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const electron_1 = require("electron");
+const node_assert_1 = require("node:assert");
+const node_fs_1 = require("node:fs");
+const node_os_1 = require("node:os");
+const node_path_1 = require("node:path");
+const node_url_1 = require("node:url");
+const state_1 = require("./state");
+const pairing_1 = require("./pairing");
+const { createUsageCollector } = require("./usage");
+const { createSkillSync } = require("./skill-sync");
+const { createMemoryArchiver } = require("./memory-archive");
+const { installMemorySkill, getMemorySkillStatus } = require("./memory-skill");
+const { createEdgeDock } = require("./edge-dock");
+const {
+    attachNativeMaterialVisibility,
+    syncNativeMaterialVisibility,
+    getNativeMaterialState,
+} = require("../vendor/token-monitor/nativeMaterialVisibility");
+const {
+    isLiquidGlassBackdrop,
+    liquidGlassStyle,
+    liquidGlassTint,
+} = require("../vendor/token-monitor/macBackdropMode");
+
+const smoke = process.argv.includes("--qlex-smoke");
+const smokeDirectory = smoke ? (0, node_fs_1.mkdtempSync)((0, node_path_1.join)((0, node_os_1.tmpdir)(), "qlex-smoke-")) : undefined;
+const uiPath = (0, node_path_1.join)(__dirname, "../ui/index.html");
+const uiUrl = (0, node_url_1.pathToFileURL)(uiPath).href;
+const dashboardPath = (0, node_path_1.join)(__dirname, "../ui/dashboard.html");
+const dashboardUrl = (0, node_url_1.pathToFileURL)(dashboardPath).href;
+const dockPath = (0, node_path_1.join)(__dirname, "../ui/dock.html");
+const dockUrl = (0, node_url_1.pathToFileURL)(dockPath).href;
+const logo = (0, node_path_1.join)(electron_1.app.getAppPath(), "docs/assets/brand/logo.png");
+
+const DEFAULT_WINDOW = { width: 372, height: 676 };
+const WINDOW_LIMITS = { minWidth: 280, minHeight: 380, maxWidth: 1200, maxHeight: 1400 };
+const LIQUID_GLASS_SUPPORTED = process.platform === "darwin" && Number.parseInt(node_os_1.release(), 10) >= 25;
+
+let store;
+let pairing;
+let usage;
+let skills;
+let memoryArchive;
+let edgeDock;
+let changingRole = false;
+let syncRunning = null;
+let syncState = { phase: "idle", label: "待同步", detail: "", time: 0 };
+let window;
+let dashboardWindow;
+let tray;
+let trayStatus;
+let queuedPage;
+let persistBoundsTimer;
+let quitting = false;
+
+electron_1.app.setName("QLEX");
+if (smokeDirectory)
+    electron_1.app.setPath("userData", smokeDirectory);
+
+function isLightPreset(appearance) {
+    return appearance?.themePreset === "porcelain";
+}
+
+function nativeMaterialOptions(appearance = store?.snapshot().appearance, dashboard = false) {
+    const a = appearance || state_1.DEFAULT_APPEARANCE;
+    return {
+        enabled: a.systemGlass !== false,
+        liquidGlass: isLiquidGlassBackdrop(a.macBackdrop),
+        style: liquidGlassStyle(a.macBackdrop),
+        tintOpacity: liquidGlassTint(a, a.macBackdrop),
+        opaque: dashboard && a.dashboardFlat === true,
+        reducedTransparency: electron_1.nativeTheme.prefersReducedTransparency === true,
+        highContrast: electron_1.nativeTheme.shouldUseHighContrastColors === true,
+        dark: !isLightPreset(a),
+        radius: 14,
+    };
+}
+
+function applyAllNativeMaterials(appearance = store?.snapshot().appearance) {
+    if (window && !window.isDestroyed()) {
+        syncNativeMaterialVisibility(window, nativeMaterialOptions(appearance, false));
+        window.setAlwaysOnTop(Boolean(appearance?.alwaysOnTop), appearance?.alwaysOnTop ? "floating" : "normal");
+    }
+    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+        syncNativeMaterialVisibility(dashboardWindow, nativeMaterialOptions(appearance, true));
+    }
+    edgeDock?.syncMaterial();
+}
+
+function computeSyncSummary() {
+    if (syncState.phase === "syncing") {
+        return { phase: "syncing", label: "同步中…", detail: syncState.detail || "正在同步本机技能、配对与记忆", time: syncState.time };
+    }
+    const net = pairing.view();
+    const sk = skills.snapshot();
+    const mem = memoryArchive.snapshot();
+
+    if (syncState.phase === "error" || sk.phase === "error" || mem.phase === "error") {
+        return { phase: "error", label: "同步异常", detail: syncState.detail || mem.error || "部分同步失败，点击重试", time: syncState.time };
+    }
+    if (sk.conflicts > 0) {
+        return { phase: "conflict", label: `冲突 ${sk.conflicts}`, detail: "部分本机 Skills 存在本地改动冲突", time: Math.max(syncState.time, sk.time) };
+    }
+    if (net.mode === "endpoint" && net.endpoint?.status === "pending") {
+        return { phase: "pending", label: "待确认", detail: "等待中心端确认配对", time: syncState.time };
+    }
+    if (net.mode === "center" && net.peers.some(p => p.status === "pending")) {
+        const count = net.peers.filter(p => p.status === "pending").length;
+        return { phase: "pending", label: `待确认 ${count}`, detail: `${count} 台新设备等待批准`, time: syncState.time };
+    }
+    if (net.mode === "endpoint" && !net.online) {
+        return { phase: "offline", label: "中心离线", detail: "本机 Skills 与记忆仍可正常归档", time: syncState.time };
+    }
+    const lastTime = Math.max(syncState.time, sk.localTime || 0, sk.time || 0, mem.lastRun || 0);
+    if (lastTime > 0) {
+        const t = new Date(lastTime).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+        return {
+            phase: "synced",
+            label: `已同步 ${t}`,
+            detail: `技能 ${sk.uniqueSkills} · 记忆 ${mem.counts.daily}日/${mem.counts.weekly}周/${mem.counts.monthly}月`,
+            time: lastTime,
+        };
+    }
+    return {
+        phase: "idle",
+        label: sk.missingLinks > 0 ? `待同步 ${sk.missingLinks}` : "立即同步",
+        detail: sk.missingLinks > 0 ? `本机有 ${sk.missingLinks} 项工具技能待对齐` : "点击同步本机技能、用量与记忆归档",
+        time: 0,
+    };
+}
+
+function broadcastState(state) {
+    const payload = desktopState(state);
+    for (const target of [window, dashboardWindow]) {
+        if (target && !target.isDestroyed()) {
+            target.webContents.send("qlex:state-changed", payload);
+        }
+    }
+    edgeDock?.reposition?.();
+    return payload;
+}
+
+function desktopState(state = store.snapshot()) {
+    const { pairing: _privatePairing, ...local } = state;
+    updateTray();
+    return {
+        ...local,
+        usage: usage.snapshot(),
+        skills: skills.snapshot(),
+        memoryArchive: memoryArchive.snapshot(),
+        memorySkill: getMemorySkillStatus({ namespaces: local.localSkillNamespaces }),
+        syncStatus: computeSyncSummary(),
+        pairing: pairing.view(),
+        deviceName: (0, node_os_1.hostname)(),
+        trayAvailable: Boolean(tray),
+        platform: process.platform,
+        liquidGlassSupported: LIQUID_GLASS_SUPPORTED,
+        nativeMaterial: window && !window.isDestroyed() ? getNativeMaterialState(window) : null,
+    };
+}
+
+async function runUnifiedSync() {
+    if (syncRunning) return syncRunning;
+    syncRunning = (async () => {
+        syncState = { phase: "syncing", label: "同步中…", detail: "正在同步配对、本机 Skills、记忆引擎与 Agent 检索技能", time: syncState.time };
+        broadcastState();
+        const snap = store.snapshot();
+        try {
+            const jobs = [usage.refresh().catch(() => {})];
+            if (pairing.view().mode !== "local") {
+                jobs.push(pairing.refresh().catch(() => {}));
+            }
+            await Promise.all(jobs);
+
+            if (snap.skillSyncEnabled) {
+                installMemorySkill({ namespaces: snap.localSkillNamespaces });
+                skills.syncLocal(snap.localSkillNamespaces);
+                if (pairing.view().mode === "endpoint") {
+                    await skills.refresh(pairing, snap.localSkillNamespaces);
+                }
+            } else {
+                skills.scanLocal(snap.localSkillNamespaces);
+            }
+
+            if (snap.memoryAutoCompress !== false) {
+                await memoryArchive.compressNow();
+            }
+
+            syncState = { phase: "synced", label: "已同步", detail: "", time: Date.now() };
+        } catch (err) {
+            syncState = { phase: "error", label: "同步异常", detail: err?.message || "同步过程中出现异常", time: Date.now() };
+        }
+        return broadcastState();
+    })().finally(() => { syncRunning = null; });
+    return syncRunning;
+}
+
+function persistBoundsSoon() {
+    clearTimeout(persistBoundsTimer);
+    persistBoundsTimer = setTimeout(() => {
+        if (!window || window.isDestroyed() || window.isMinimized()) return;
+        const b = window.getBounds();
+        store.setWindowBounds({ x: b.x, y: b.y, width: b.width, height: b.height });
+    }, 350);
+}
+
+function restoredBounds() {
+    const saved = store.snapshot().windowBounds;
+    if (!saved) return DEFAULT_WINDOW;
+    const width = Math.min(WINDOW_LIMITS.maxWidth, Math.max(WINDOW_LIMITS.minWidth, saved.width));
+    const height = Math.min(WINDOW_LIMITS.maxHeight, Math.max(WINDOW_LIMITS.minHeight, saved.height));
+    if (typeof saved.x === "number" && typeof saved.y === "number") {
+        const display = electron_1.screen.getDisplayMatching({ x: saved.x, y: saved.y, width, height });
+        const area = display?.workArea;
+        if (area) {
+            const x = Math.max(area.x - width + 80, Math.min(area.x + area.width - 80, saved.x));
+            const y = Math.max(area.y, Math.min(area.y + area.height - 80, saved.y));
+            return { x, y, width, height };
+        }
+    }
+    return { width, height };
+}
+
+function showWindow() {
+    if (window && !window.isDestroyed()) {
+        if (window.isMinimized()) window.restore();
+        window.show();
+        window.focus();
+        return window;
+    }
+    const bounds = restoredBounds();
+    const appearance = store.snapshot().appearance;
+    const created = new electron_1.BrowserWindow({
+        width: bounds.width,
+        height: bounds.height,
+        ...(typeof bounds.x === "number" ? { x: bounds.x, y: bounds.y } : {}),
+        ...WINDOW_LIMITS,
+        title: "QLEX",
+        icon: logo,
+        frame: false,
+        transparent: true,
+        resizable: true,
+        backgroundColor: "#00000000",
+        ...(process.platform === "darwin" ? { vibrancy: "hud", visualEffectState: "active" } : {}),
+        show: false,
+        webPreferences: {
+            preload: (0, node_path_1.join)(__dirname, "preload.js"),
+            contextIsolation: true,
+            sandbox: true,
+            nodeIntegration: false,
+        },
+    });
+    window = created;
+    if (appearance?.alwaysOnTop) {
+        created.setAlwaysOnTop(true, "floating");
+    }
+    attachNativeMaterialVisibility(created, () => nativeMaterialOptions(store.snapshot().appearance, false));
+    syncNativeMaterialVisibility(created, nativeMaterialOptions(store.snapshot().appearance, false));
+
+    created.on("move", () => { edgeDock?.follow(created); persistBoundsSoon(); });
+    created.on("resize", persistBoundsSoon);
+    created.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    created.webContents.on("will-navigate", (event) => event.preventDefault());
+    created.once("ready-to-show", () => {
+        syncNativeMaterialVisibility(created, nativeMaterialOptions(store.snapshot().appearance, false));
+        if (!smoke) created.show();
+    });
+    created.on("close", (event) => {
+        if (!quitting && tray && store.snapshot().keepRunning) {
+            event.preventDefault();
+            created.hide();
+        }
+    });
+    created.on("closed", () => { window = undefined; });
+    void created.loadFile(uiPath).then(() => {
+        syncNativeMaterialVisibility(created, nativeMaterialOptions(store.snapshot().appearance, false));
+        if (queuedPage && !created.isDestroyed()) {
+            created.webContents.send("qlex:navigate", queuedPage);
+            queuedPage = undefined;
+        }
+        if (smoke)
+            void smokeTest(created);
+    }).catch((error) => {
+        console.error(error);
+        if (smoke)
+            electron_1.app.exit(1);
+        else
+            electron_1.dialog.showErrorBox("QLEX 无法加载", "请重新打开应用。");
+    });
+    return created;
+}
+
+function openDashboardWindow(tab = "activity") {
+    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+        if (dashboardWindow.isMinimized()) dashboardWindow.restore();
+        dashboardWindow.show();
+        dashboardWindow.focus();
+        if (!dashboardWindow.webContents.isLoadingMainFrame()) {
+            dashboardWindow.webContents.send("qlex:dashboard-tab", tab);
+        }
+        return dashboardWindow;
+    }
+    const created = new electron_1.BrowserWindow({
+        width: 940,
+        height: 640,
+        minWidth: 620,
+        minHeight: 440,
+        title: "QLEX · 用量看板",
+        icon: logo,
+        frame: false,
+        transparent: true,
+        backgroundColor: "#00000000",
+        ...(process.platform === "darwin" ? { vibrancy: "hud", visualEffectState: "active" } : {}),
+        show: false,
+        webPreferences: {
+            preload: (0, node_path_1.join)(__dirname, "preload.js"),
+            contextIsolation: true,
+            sandbox: true,
+            nodeIntegration: false,
+        },
+    });
+    dashboardWindow = created;
+    attachNativeMaterialVisibility(created, () => nativeMaterialOptions(store.snapshot().appearance, true));
+    syncNativeMaterialVisibility(created, nativeMaterialOptions(store.snapshot().appearance, true));
+    created.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    created.webContents.on("will-navigate", (event) => event.preventDefault());
+    created.once("ready-to-show", () => {
+        syncNativeMaterialVisibility(created, nativeMaterialOptions(store.snapshot().appearance, true));
+        if (!smoke) created.show();
+    });
+    created.on("closed", () => {
+        if (dashboardWindow === created) dashboardWindow = undefined;
+    });
+    void created.loadFile(dashboardPath, { query: { tab: tab === "trends" ? "trends" : "activity" } }).then(() => {
+        syncNativeMaterialVisibility(created, nativeMaterialOptions(store.snapshot().appearance, true));
+    }).catch(console.error);
+    return created;
+}
+
+function navigateDashboard(page) {
+    const hadWindow = Boolean(window && !window.isDestroyed());
+    const target = showWindow();
+    if (hadWindow && !target.webContents.isLoadingMainFrame())
+        target.webContents.send("qlex:navigate", page);
+    else
+        queuedPage = page;
+}
+
+function applyEdgeDock(side) {
+    const next = store.setEdgeDock(side);
+    edgeDock.apply(side, window, next.edgeDockMode);
+    updateTray();
+    return broadcastState(next);
+}
+
+function applyEdgeDockMode(mode) {
+    const next = store.setEdgeDockMode(mode);
+    edgeDock.setMode(mode);
+    updateTray();
+    return broadcastState(next);
+}
+
+function createTray() {
+    const original = electron_1.nativeImage.createFromPath(logo);
+    if (original.isEmpty())
+        return;
+    const { width, height } = original.getSize();
+    const mark = original.crop({
+        x: Math.round(width * .15), y: Math.round(height * .26),
+        width: Math.round(width * .69), height: Math.round(height * .54),
+    }).resize({ width: 19 });
+    mark.setTemplateImage(process.platform === "darwin");
+    tray = new electron_1.Tray(mark);
+    tray.on("click", () => {
+        if (window && !window.isDestroyed() && window.isVisible() && window.isFocused()) {
+            window.hide();
+        } else {
+            showWindow();
+        }
+    });
+    updateTray();
+}
+
+function updateTray() {
+    if (!tray)
+        return;
+    const network = pairing.view();
+    const snap = store.snapshot();
+    const appearance = snap.appearance;
+    const syncInfo = computeSyncSummary();
+    let status = "仅在本机使用";
+    if (network.mode === "center")
+        status = network.online ? "中心点 · 运行中" : "中心点 · 未启动";
+    if (network.mode === "endpoint") {
+        status = network.endpoint?.status === "pending" ? "接入点 · 待确认" : network.online ? "接入点 · 已连接" : "接入点 · 未连接";
+    }
+    const dockSide = edgeDock?.side() || "off";
+    const dockMode = snap.edgeDockMode || "autoHide";
+    const fingerprint = `${status}|${syncInfo.label}|${dockSide}|${dockMode}|${appearance?.alwaysOnTop}|${appearance?.macBackdrop}`;
+    if (trayStatus === fingerprint)
+        return;
+    trayStatus = fingerprint;
+    tray.setToolTip(`QLEX · ${status} · ${syncInfo.label}`);
+    const backdropSubmenu = [
+        { label: "经典毛玻璃 (HUD Vibrancy)", type: "radio", checked: appearance.macBackdrop === "vibrancy", click: () => { const next = store.setAppearance({ macBackdrop: "vibrancy", systemGlass: true }); applyAllNativeMaterials(next.appearance); broadcastState(next); } },
+        ...(LIQUID_GLASS_SUPPORTED ? [
+            { label: "macOS 液态玻璃 (Liquid Glass)", type: "radio", checked: appearance.macBackdrop === "liquid-glass", click: () => { const next = store.setAppearance({ macBackdrop: "liquid-glass", systemGlass: true }); applyAllNativeMaterials(next.appearance); broadcastState(next); } },
+            { label: "清透液态玻璃 (Clear Glass)", type: "radio", checked: appearance.macBackdrop === "liquid-glass-clear", click: () => { const next = store.setAppearance({ macBackdrop: "liquid-glass-clear", systemGlass: true }); applyAllNativeMaterials(next.appearance); broadcastState(next); } },
+        ] : []),
+    ];
+    const menu = electron_1.Menu.buildFromTemplate([
+        { label: "打开 QLEX", click: () => { showWindow(); } },
+        { label: "打开用量大屏看板", click: () => { openDashboardWindow("activity"); } },
+        { label: `立即同步（${syncInfo.label}）`, click: () => { void runUnifiedSync(); } },
+        { label: status, enabled: false },
+        { type: "separator" },
+        { label: "窗口置顶", type: "checkbox", checked: Boolean(appearance?.alwaysOnTop), click: () => {
+            const next = store.setAppearance({ alwaysOnTop: !store.snapshot().appearance?.alwaysOnTop });
+            applyAllNativeMaterials(next.appearance);
+            broadcastState(next);
+        } },
+        { label: "毛玻璃材质", submenu: backdropSubmenu },
+        { label: "侧边吸附", submenu: [
+            { label: "关闭", type: "radio", checked: dockSide === "off", click: () => applyEdgeDock("off") },
+            { label: "左侧", type: "radio", checked: dockSide === "left", click: () => applyEdgeDock("left") },
+            { label: "右侧", type: "radio", checked: dockSide === "right", click: () => applyEdgeDock("right") },
+            { type: "separator" },
+            { label: "鼠标悬浮弹出（默认）", type: "radio", checked: dockMode === "autoHide", click: () => applyEdgeDockMode("autoHide") },
+            { label: "始终停靠显示", type: "radio", checked: dockMode === "always", click: () => applyEdgeDockMode("always") },
+        ] },
+        { type: "separator" },
+        { label: "退出 QLEX", click: () => electron_1.app.quit() },
+    ]);
+    tray.setContextMenu(menu);
+}
+
+async function changeRole(operation) {
+    if (changingRole)
+        throw new Error("设备角色正在切换，请稍候。");
+    changingRole = true;
+    try {
+        await operation();
+        return broadcastState(store.snapshot().configured ? store.snapshot() : store.configure());
+    }
+    finally {
+        changingRole = false;
+    }
+}
+
+async function discoveredDirectory(directory) {
+    const { today, week, history } = usage.snapshot();
+    const reports = [today, week, ...Object.values(history)];
+    if (!store.snapshot().configured || typeof directory !== "string" ||
+        !reports.some(report => report?.projects.some(project => project.directory === directory)))
+        throw new Error("该工作区已不在采集结果中，请刷新项目列表。");
+    return node_fs_1.promises.realpath(directory).catch(() => {
+        throw new Error("该工作区目录在本机不可用。");
+    });
+}
+
+async function requireDirectory(directory) {
+    if (!(await node_fs_1.promises.stat(directory).catch(() => undefined))?.isDirectory())
+        throw new Error("无法访问项目目录，请检查目录位置或磁盘连接。");
+}
+
+async function openDirectory(directory) {
+    await requireDirectory(directory);
+    if (await electron_1.shell.openPath(directory))
+        throw new Error("无法打开项目目录，请检查系统权限。");
+    return desktopState();
+}
+
+function isMainOrDashboardSender(event) {
+    if (event.sender === window?.webContents && event.senderFrame?.url === uiUrl) return "main";
+    if (event.sender === dashboardWindow?.webContents && event.senderFrame?.url.startsWith(dashboardUrl)) return "dashboard";
+    return null;
+}
+
+function registerHandlers() {
+    const sharedHandlers = {
+        "qlex:state": () => desktopState(),
+        "qlex:sync-now": () => runUnifiedSync(),
+        "qlex:native-material": (_value, event) => {
+            const target = event.sender === dashboardWindow?.webContents ? dashboardWindow : window;
+            return target && !target.isDestroyed() ? getNativeMaterialState(target) : null;
+        },
+        "qlex:update-appearance": (patch) => {
+            const next = store.setAppearance(patch);
+            applyAllNativeMaterials(next.appearance);
+            return broadcastState(next);
+        },
+        "qlex:window-minimize": (_value, event) => {
+            const target = event.sender === dashboardWindow?.webContents ? dashboardWindow : window;
+            target?.minimize();
+        },
+        "qlex:window-close": (_value, event) => {
+            const target = event.sender === dashboardWindow?.webContents ? dashboardWindow : window;
+            target?.close();
+        },
+        "qlex:window-toggle-pin": () => {
+            const next = store.setAppearance({ alwaysOnTop: !store.snapshot().appearance?.alwaysOnTop });
+            applyAllNativeMaterials(next.appearance);
+            return broadcastState(next);
+        },
+        "qlex:open-dashboard": (tab) => {
+            openDashboardWindow(tab);
+            return desktopState();
+        },
+        "qlex:refresh-usage": async () => { await usage.refresh(); return broadcastState(); },
+        "qlex:usage-period": async (days) => {
+            try {
+                await usage.history(days);
+                return broadcastState();
+            } catch {
+                throw new Error("无法读取这个时间范围的本机用量。");
+            }
+        },
+    };
+
+    const mainOnlyHandlers = {
+        "qlex:set-edge-dock": applyEdgeDock,
+        "qlex:set-edge-dock-mode": applyEdgeDockMode,
+        "qlex:set-skill-sync": async (enabled) => {
+            store.setSkillSync(enabled);
+            if (enabled) {
+                skills.scanLocal(store.snapshot().localSkillNamespaces);
+                void skills.refresh(pairing, store.snapshot().localSkillNamespaces);
+            }
+            return broadcastState();
+        },
+        "qlex:set-skill-namespaces": (namespaces) => {
+            const next = store.setLocalSkillNamespaces(namespaces);
+            skills.scanLocal(next.localSkillNamespaces);
+            return broadcastState(next);
+        },
+        "qlex:sync-local-skills": async () => {
+            const snap = store.snapshot();
+            skills.syncLocal(snap.localSkillNamespaces);
+            if (snap.skillSyncEnabled && pairing.view().mode === "endpoint") {
+                await skills.refresh(pairing, snap.localSkillNamespaces);
+            }
+            return broadcastState();
+        },
+        "qlex:resolve-skill-conflict": (input) => {
+            const snap = store.snapshot();
+            const result = skills.resolveConflict(input?.name, input?.sourceNs, snap.localSkillNamespaces);
+            return { result, state: broadcastState() };
+        },
+        "qlex:resolve-all-skill-conflicts": (strategy) => {
+            const snap = store.snapshot();
+            const result = skills.resolveAllConflicts(strategy || "latest", snap.localSkillNamespaces);
+            return { result, state: broadcastState() };
+        },
+        "qlex:open-skill-backup-dir": async () => {
+            const dir = skills.snapshot().backupRoot;
+            node_fs_1.mkdirSync(dir, { recursive: true });
+            await electron_1.shell.openPath(dir);
+            return desktopState();
+        },
+        "qlex:open-skill-dir": async (namespace) => {
+            const info = skills.snapshot().namespaces?.[namespace];
+            if (!info?.path) throw new Error("未知的技能目录。");
+            node_fs_1.mkdirSync(info.path, { recursive: true });
+            await electron_1.shell.openPath(info.path);
+            return desktopState();
+        },
+        "qlex:compress-memory": async () => {
+            await memoryArchive.compressNow();
+            return broadcastState();
+        },
+        "qlex:read-memory-archive": (input) => memoryArchive.readEntry(input?.kind, input?.key),
+        "qlex:memory-recall": (input) => memoryArchive.recall(input?.query || "", input || {}),
+        "qlex:memory-retain": (input) => {
+            const result = memoryArchive.retain(input || {});
+            return { result, state: broadcastState() };
+        },
+        "qlex:memory-reflect": (input) => {
+            const result = memoryArchive.reflect(input || {});
+            return { result, state: broadcastState() };
+        },
+        "qlex:memory-graph": (input) => memoryArchive.graphQuery(input || {}),
+        "qlex:memory-browse": (input) => memoryArchive.browse(input?.uri || "qlex://", input?.level || "L1"),
+        "qlex:memory-forget": (input) => {
+            const result = memoryArchive.forget(input?.id, input || {});
+            return { result, state: broadcastState() };
+        },
+        "qlex:install-memory-skill": () => {
+            const snap = store.snapshot();
+            const result = installMemorySkill({ namespaces: snap.localSkillNamespaces });
+            skills.scanLocal(snap.localSkillNamespaces);
+            return { result, state: broadcastState() };
+        },
+        "qlex:memory-skill-status": () => getMemorySkillStatus({ namespaces: store.snapshot().localSkillNamespaces }),
+        "qlex:choose-memory-dir": async () => {
+            if (!window) throw new Error("窗口未就绪");
+            const result = await electron_1.dialog.showOpenDialog(window, { properties: ["openDirectory", "createDirectory"] });
+            if (result.canceled || !result.filePaths[0]) return desktopState();
+            const next = store.setMemoryArchiveDir((0, node_fs_1.realpathSync)(result.filePaths[0]));
+            memoryArchive.reloadIndex();
+            await memoryArchive.compressNow();
+            return broadcastState(next);
+        },
+        "qlex:open-memory-dir": async () => {
+            const dir = store.snapshot().memoryArchiveDir;
+            node_fs_1.mkdirSync(dir, { recursive: true });
+            await electron_1.shell.openPath(dir);
+            return desktopState();
+        },
+        "qlex:open-memory-file": async (input) => {
+            const entry = memoryArchive.readEntry(input?.kind, input?.key);
+            await electron_1.shell.openPath(entry.mdPath);
+            return desktopState();
+        },
+        "qlex:set-memory-auto": (enabled) => broadcastState(store.setMemoryAutoCompress(enabled)),
+        "qlex:configure-local": () => broadcastState(store.configure()),
+        "qlex:enable-center": () => changeRole(() => pairing.start()),
+        "qlex:join-center": (code) => changeRole(() => pairing.join(code)),
+        "qlex:use-local": () => changeRole(() => pairing.useLocal()),
+        "qlex:refresh-pairing": async () => { await pairing.refresh(); return broadcastState(); },
+        "qlex:create-invite": (host) => {
+            electron_1.clipboard.writeText(pairing.createInvite(host));
+            return desktopState();
+        },
+        "qlex:approve-device": (id) => { pairing.decide(id, true); return broadcastState(); },
+        "qlex:remove-device": (id) => { pairing.decide(id, false); return broadcastState(); },
+        "qlex:keep-running": (enabled) => {
+            if (typeof enabled !== "boolean")
+                throw new Error("无效的后台运行设置");
+            return broadcastState(store.setKeepRunning(enabled));
+        },
+        "qlex:add-discovered-project": async (directory) => {
+            const resolved = await discoveredDirectory(directory);
+            await requireDirectory(resolved);
+            return broadcastState(store.addProject(resolved));
+        },
+        "qlex:open-discovered-project": async (directory) => openDirectory(await discoveredDirectory(directory)),
+        "qlex:open-project": (id) => openDirectory(store.projectById(id).directory),
+        "qlex:rename-project": (input) => broadcastState(store.renameProject(input?.id, input?.name)),
+        "qlex:remove-project": async (id) => {
+            const { name } = store.projectById(id);
+            const options = {
+                type: "question",
+                message: "将项目移出列表？",
+                detail: `可以随时重新添加「${name}」的目录。`,
+                buttons: ["取消", "移出列表"],
+                defaultId: 0,
+                cancelId: 0,
+            };
+            const { response } = await electron_1.dialog.showMessageBox(window, options);
+            if (response === 1)
+                return broadcastState(store.removeProject(id));
+            return desktopState();
+        },
+        "qlex:open-memory": () => electron_1.shell.openExternal("http://127.0.0.1:43150/"),
+        "qlex:choose-project": async () => {
+            if (!window || !store.snapshot().configured)
+                throw new Error("请先完成首次设置");
+            const result = await electron_1.dialog.showOpenDialog(window, { properties: ["openDirectory"] });
+            if (result.canceled || !result.filePaths[0])
+                return desktopState();
+            return broadcastState(store.addProject((0, node_fs_1.realpathSync)(result.filePaths[0])));
+        },
+    };
+
+    const dockHandlers = {
+        "qlex:dock-state": () => {
+            const { today, quotas } = usage.snapshot();
+            const { mode, online, endpoint, peers } = pairing.view();
+            const sk = skills.snapshot();
+            const mem = memoryArchive.snapshot();
+            return {
+                ...edgeDock.presentation(),
+                appearance: store.snapshot().appearance,
+                syncStatus: computeSyncSummary(),
+                today: today && { total: today.total, totals: today.totals },
+                quotas,
+                skills: {
+                    uniqueSkills: sk.uniqueSkills,
+                    missingLinks: sk.missingLinks,
+                    localSynced: sk.localSynced,
+                    conflicts: sk.conflicts,
+                },
+                memory: {
+                    archiveDir: mem.archiveDir,
+                    counts: mem.counts,
+                    cognitive: mem.cognitive,
+                    compressionRatio: mem.compressionRatio,
+                    lastRun: mem.lastRun,
+                    latestDaily: mem.items?.daily?.[0] || null,
+                    skill: getMemorySkillStatus({ namespaces: store.snapshot().localSkillNamespaces }),
+                },
+                sync: {
+                    mode, online, center: endpoint?.name, status: endpoint?.status,
+                    paired: peers.filter(peer => peer.status === "connected").length,
+                    attachedOnline: peers.filter(peer => peer.online).length,
+                    pending: peers.filter(peer => peer.status === "pending").length,
+                    name: (0, node_os_1.hostname)(), projects: store.snapshot().projects.length,
+                },
+            };
+        },
+        "qlex:dock-pin": (value) => edgeDock.pin(value),
+        "qlex:dock-dismiss": () => edgeDock.dismiss(),
+        "qlex:dock-sync": async () => { await runUnifiedSync(); return dockHandlers["qlex:dock-state"](); },
+        "qlex:dock-compress-memory": async () => { await memoryArchive.compressNow(); broadcastState(); return dockHandlers["qlex:dock-state"](); },
+        "qlex:dock-open": (page) => edgeDock.openDashboard(["usage", "limits", "memory", "sessions", "projects", "devices", "overview"].includes(page) ? page : "overview"),
+    };
+
+    for (const [channel, handler] of Object.entries(dockHandlers)) {
+        electron_1.ipcMain.handle(channel, (event, value) => {
+            const surface = edgeDock.surface(event.sender);
+            if (!surface || event.senderFrame?.url !== dockUrl + "?surface=" + surface)
+                throw new Error("QLEX IPC source rejected");
+            return handler(value);
+        });
+    }
+    for (const [channel, handler] of Object.entries(sharedHandlers)) {
+        electron_1.ipcMain.handle(channel, (event, value) => {
+            if (!isMainOrDashboardSender(event))
+                throw new Error("QLEX IPC source rejected");
+            return handler(value, event);
+        });
+    }
+    for (const [channel, handler] of Object.entries(mainOnlyHandlers)) {
+        electron_1.ipcMain.handle(channel, (event, value) => {
+            if (isMainOrDashboardSender(event) !== "main")
+                throw new Error("QLEX IPC source rejected");
+            return handler(value, event);
+        });
+    }
+}
+
+async function smokeTest(created) {
+    try {
+        const result = await created.webContents.executeJavaScript(`
+      (async () => {
+        const before = await window.qlex.getState();
+        document.querySelector('[data-action="continue"]').click();
+        for (let count = 0; count < 100 && !document.querySelector('#viewSwitcher .view-switcher-current'); count++) {
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        const after = await window.qlex.getState();
+        const memState = await window.qlex.compressMemory();
+        return {
+          before: before.configured,
+          after: after.configured,
+          edgeDockMode: after.edgeDockMode,
+          dailyArchives: memState.memoryArchive.counts.daily,
+          weeklyArchives: memState.memoryArchive.counts.weekly,
+          monthlyArchives: memState.memoryArchive.counts.monthly,
+        };
+      })()
+    `);
+        node_assert_1.strict.equal(result.before, false);
+        node_assert_1.strict.equal(result.after, true);
+        node_assert_1.strict.equal(result.edgeDockMode, "autoHide");
+        node_assert_1.strict.ok(result.dailyArchives >= 1);
+        node_assert_1.strict.ok(result.weeklyArchives >= 1);
+        node_assert_1.strict.ok(result.monthlyArchives >= 1);
+        console.log("QLEX smoke passed:", JSON.stringify(result));
+        electron_1.app.quit();
+    }
+    catch (error) {
+        console.error(error);
+        electron_1.app.exit(1);
+    }
+}
+
+if (!smoke && !electron_1.app.requestSingleInstanceLock()) {
+    electron_1.app.quit();
+}
+else {
+    electron_1.app.on("second-instance", () => { if (electron_1.app.isReady() && store) showWindow(); });
+    electron_1.app.on("activate", () => { if (store) showWindow(); });
+    electron_1.app.on("before-quit", () => { quitting = true; });
+    electron_1.app.on("will-quit", () => {
+        clearTimeout(persistBoundsTimer);
+        pairing?.stop();
+        edgeDock?.close();
+        if (smokeDirectory)
+            (0, node_fs_1.rmSync)(smokeDirectory, { recursive: true, force: true });
+    });
+    electron_1.app.on("window-all-closed", () => {
+        const hasVisibleAppWindow = [window, dashboardWindow].some(w => w && !w.isDestroyed());
+        if (!hasVisibleAppWindow && (!tray || !store.snapshot().keepRunning))
+            electron_1.app.quit();
+    });
+    void electron_1.app.whenReady().then(() => {
+        store = new state_1.LocalStore((0, node_path_1.join)(electron_1.app.getPath("userData"), "state.json"));
+        usage = createUsageCollector();
+        skills = createSkillSync(electron_1.app.getPath("userData"));
+        skills.scanLocal(store.snapshot().localSkillNamespaces);
+        memoryArchive = createMemoryArchiver({
+            getArchiveDir: () => store.snapshot().memoryArchiveDir,
+            getProjects: () => store.snapshot().projects,
+            getUsageSnapshot: () => usage.snapshot(),
+        });
+        pairing = new pairing_1.DevicePairing(store, undefined, skills);
+        edgeDock = createEdgeDock({
+            BrowserWindow: electron_1.BrowserWindow,
+            screen: electron_1.screen,
+            uiPath: dockPath,
+            preload: (0, node_path_1.join)(__dirname, "preload.js"),
+            panel: navigateDashboard,
+            getMaterialOptions: () => nativeMaterialOptions(store.snapshot().appearance, false),
+            prefersReducedMotion: () => process.platform === "darwin" &&
+                electron_1.systemPreferences.getUserDefault("reduceMotion", "boolean"),
+            onError: (error) => console.warn("QLEX Edge Dock unavailable", error.message),
+        });
+
+        electron_1.nativeTheme.on("updated", () => applyAllNativeMaterials(store.snapshot().appearance));
+
+        if (!smoke) {
+            for (const event of ["display-added", "display-removed", "display-metrics-changed"])
+                electron_1.screen.on(event, edgeDock.reposition);
+            void usage.refresh().then(() => {
+                if (store.snapshot().memoryAutoCompress !== false) {
+                    return memoryArchive.compressNow().then(() => broadcastState());
+                }
+            }).catch(console.warn);
+            setInterval(() => void usage.refresh().catch(console.warn), 300_000).unref();
+            setInterval(() => {
+                if (store.snapshot().skillSyncEnabled) void skills.refresh(pairing, store.snapshot().localSkillNamespaces);
+            }, 60_000).unref();
+            // Auto daily/weekly/monthly memory compression every 30 minutes
+            setInterval(() => {
+                if (store.snapshot().memoryAutoCompress !== false) {
+                    void memoryArchive.compressNow().then(() => broadcastState()).catch(console.warn);
+                }
+            }, 1_800_000).unref();
+        }
+        try {
+            createTray();
+        }
+        catch (error) {
+            console.warn("QLEX tray unavailable", error);
+        }
+        registerHandlers();
+        showWindow();
+        if (!smoke && ["left", "right"].includes(store.snapshot().edgeDock))
+            edgeDock.apply(store.snapshot().edgeDock, window, store.snapshot().edgeDockMode);
+        if (pairing.view().mode === "center")
+            void pairing.start().then(updateTray, updateTray);
+        const refresh = () => {
+            if (!changingRole)
+                void pairing.refresh().then(updateTray).catch(console.warn);
+        };
+        refresh();
+        if (!smoke && store.snapshot().skillSyncEnabled) {
+            try {
+                installMemorySkill({ namespaces: store.snapshot().localSkillNamespaces });
+                skills.scanLocal(store.snapshot().localSkillNamespaces);
+            } catch (err) {
+                console.warn("QLEX memory skill install warning:", err?.message || err);
+            }
+            void pairing.refresh().then(() => skills.refresh(pairing, store.snapshot().localSkillNamespaces)).catch(console.warn);
+        }
+        setInterval(refresh, 10_000).unref();
+    }).catch((error) => {
+        console.error(error);
+        if (!smoke)
+            electron_1.dialog.showErrorBox("QLEX 无法启动", "无法读取或保存本机工作台配置。请检查 QLEX 应用数据目录。");
+        electron_1.app.exit(1);
+    });
+}

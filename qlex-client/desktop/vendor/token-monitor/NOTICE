@@ -1,0 +1,12 @@
+Third-Party Notice
+==================
+
+This directory contains native macOS glass material, vibrancy mask, window
+visibility, and Edge Dock geometry/shape modules vendored from:
+
+  Token Monitor (https://github.com/Javis603/token-monitor)
+  Copyright (c) Javis
+  Licensed under the MIT License (see LICENSE in this directory).
+
+UI icons under desktop/ui/icons/ and the frosted glass design tokens / layout
+system under desktop/ui/ are adapted from Token Monitor under the MIT License.

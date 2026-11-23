@@ -1,0 +1,17 @@
+{
+  "name": "qlex",
+  "version": "0.1.9-memory.2",
+  "private": true,
+  "description": "QLEX desktop workspace — native frosted glass client with cognitive memory framework (Mem0/Hindsight/memU/Cognee/Graphiti/OpenViking), universal qlex-memory Agent Skill, and visual skill conflict resolver",
+  "author": "QLEX",
+  "main": "desktop/src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "electron . --qlex-smoke",
+    "build:mac": "bash scripts/build-macos-app.sh"
+  },
+  "dependencies": {
+    "koffi": "^3.3.5",
+    "node-forge": "1.4.3"
+  }
+}

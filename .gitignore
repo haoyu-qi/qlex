@@ -47,3 +47,6 @@ logs/
 
 .memory/
 integrations/hermes/**/config.json
+installers/
+generated_images/
+qlex-client/node_modules/
