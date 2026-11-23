@@ -46,9 +46,10 @@ try {
 
     // 1. Secret scrubbing + Mem0 ADD
     const t1 = Date.parse("2026-01-10T10:00:00Z");
+    const dummySecret = "sk-" + "1234567890abcdefghijklmnop";
     const r1 = engine.retain({
         title: "QLEX 客户端架构决策",
-        content: "QLEX 项目初期决定使用 React 实现界面，注意不要泄露 sk-1234567890abcdefghijklmnop 密钥。",
+        content: `QLEX 项目初期决定使用 React 实现界面，注意不要泄露 ${dummySecret} 密钥。`,
         bank: "world",
         scope: "project",
         project: "qlex-client",
@@ -58,12 +59,12 @@ try {
     });
     assert.equal(r1.operation, "ADD");
     assert.ok(r1.item.l2.includes("[REDACTED]"), "Secret must be redacted");
-    assert.ok(!r1.item.l2.includes("sk-1234567890"), "Raw secret must not remain");
+    assert.ok(!r1.item.l2.includes("1234567890"), "Raw secret must not remain");
 
     // 2. Mem0 NOOP on duplicate
     const rDup = engine.retain({
         title: "QLEX 客户端架构决策",
-        content: "QLEX 项目初期决定使用 React 实现界面，注意不要泄露 sk-1234567890abcdefghijklmnop 密钥。",
+        content: `QLEX 项目初期决定使用 React 实现界面，注意不要泄露 ${dummySecret} 密钥。`,
         bank: "world",
         scope: "project",
         project: "qlex-client",

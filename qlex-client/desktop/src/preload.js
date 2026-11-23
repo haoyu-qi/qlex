@@ -73,8 +73,7 @@ electron_1.contextBridge.exposeInMainWorld("qlex", {
     approveDevice: (id) => electron_1.ipcRenderer.invoke("qlex:approve-device", id),
     removeDevice: (id) => electron_1.ipcRenderer.invoke("qlex:remove-device", id),
 
-    // Projects & external WorkContext memory
-    openMemory: () => electron_1.ipcRenderer.invoke("qlex:open-memory"),
+    // Projects
     chooseProject: () => electron_1.ipcRenderer.invoke("qlex:choose-project"),
     addDiscoveredProject: (directory) => electron_1.ipcRenderer.invoke("qlex:add-discovered-project", directory),
     openDiscoveredProject: (directory) => electron_1.ipcRenderer.invoke("qlex:open-discovered-project", directory),

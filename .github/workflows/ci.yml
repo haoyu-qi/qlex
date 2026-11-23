@@ -33,3 +33,4 @@ jobs:
         with:
           node-version: '22'
       - run: node --test tests/test_web_token.mjs
+      - run: node qlex-client/scripts/test-memory-framework.mjs

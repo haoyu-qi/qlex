@@ -1437,8 +1437,6 @@ document.addEventListener("click", (event) => {
             void window.qlex.openDashboard("activity");
         } else if (action === "open-dashboard-trends") {
             void window.qlex.openDashboard("trends");
-        } else if (action === "open-memory") {
-            void window.qlex.openMemory().catch(() => notify("无法打开 WorkContext 记忆页面"));
         } else if (action === "add-project") {
             void runAction(btn, () => window.qlex.chooseProject());
         } else if (action === "add-discovered-project") {

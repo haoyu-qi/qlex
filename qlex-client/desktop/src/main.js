@@ -653,7 +653,6 @@ function registerHandlers() {
                 return broadcastState(store.removeProject(id));
             return desktopState();
         },
-        "qlex:open-memory": () => electron_1.shell.openExternal("http://127.0.0.1:43150/"),
         "qlex:choose-project": async () => {
             if (!window || !store.snapshot().configured)
                 throw new Error("请先完成首次设置");
