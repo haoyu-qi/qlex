@@ -5,10 +5,10 @@ const path = require("node:path");
 const { homedir } = require("node:os");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
+const { collectAllNative, SOURCES } = require("./collectors");
 
 const exec = promisify(execFile);
 const clients = ["antigravity", "antigravity-cli", "antigravity-extension", "codex", "claude", "hermes", "dsh"];
-const sources = ["antigravity", "codex", "claude", "hermes", "dsh"];
 const group = client => client.startsWith("antigravity") ? "antigravity" : client;
 const number = value => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
 
@@ -20,10 +20,10 @@ function directories(directory) {
     }
 }
 
-function engine(home, env, platform = process.platform, arch = process.arch) {
+function findTokscaleBin(home, env, platform = process.platform, arch = process.arch) {
     const variant = platform === "win32" ? "win32-" + arch : platform + "-" + arch;
     const executable = platform === "win32" ? "tokscale.exe" : "tokscale";
-    const resources = "app.asar.unpacked/node_modules/@tokscale/" + "cli-" + variant + "/bin/" + executable;
+    const resources = "app.asar.unpacked/node_modules/@tokscale/cli-" + variant + "/bin/" + executable;
     const candidates = [
         env.QLEX_TOKSCALE_PATH,
         platform === "darwin" && path.join("/Applications/Token Monitor.app/Contents/Resources", resources),
@@ -32,20 +32,7 @@ function engine(home, env, platform = process.platform, arch = process.arch) {
         path.join(home, ".local/bin", executable),
         "/opt/homebrew/bin/tokscale",
     ];
-    return candidates.find(file => typeof file === "string" && path.isAbsolute(file) && fs.existsSync(file)) || executable;
-}
-
-function dshHome(home, env) {
-    const candidates = [
-        env.DSH_HOME,
-        path.join(home, "Library/Application Support/@deepseek-ai/dsh-desktop/harness"),
-        path.join(home, "Library/Application Support/dsh-desktop/harness"),
-        env.APPDATA && path.join(env.APPDATA, "dsh-desktop/harness"),
-        env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, "dsh-desktop/harness"),
-        path.join(home, ".dsh"),
-        path.join(home, ".DSH"),
-    ];
-    return candidates.find(item => item && directories(path.join(item, "sessions")).some(entry => entry.isDirectory()));
+    return candidates.find(file => typeof file === "string" && path.isAbsolute(file) && fs.existsSync(file)) || null;
 }
 
 function reportSummary(report) {
@@ -55,7 +42,7 @@ function reportSummary(report) {
     }
     const workspaceByKey = new Map(workspaces.map(row => [row.workspaceKey, row]));
     const activity = new Map(activityRows.map(row => [row.client + ":" + row.sessionId, number(row.lastActiveMs)]));
-    const totals = Object.fromEntries(sources.map(source => [source, { tokens: 0, sessions: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }]));
+    const totals = Object.fromEntries(SOURCES.map(source => [source, { tokens: 0, sessions: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }]));
     const projectByPath = new Map();
     const sessions = new Map();
     for (const row of entries) {
@@ -97,6 +84,45 @@ function reportSummary(report) {
     };
 }
 
+function mergeReports(nativeRep, extraRep) {
+    if (!extraRep) return nativeRep;
+    if (!nativeRep) return extraRep;
+    const totals = {};
+    for (const src of SOURCES) {
+        const a = nativeRep.totals?.[src] || { tokens: 0, sessions: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+        const b = extraRep.totals?.[src] || { tokens: 0, sessions: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+        totals[src] = a.tokens >= b.tokens ? { ...a } : { ...b };
+    }
+    const projMap = new Map();
+    for (const p of [...(extraRep.projects || []), ...(nativeRep.projects || [])]) {
+        const prev = projMap.get(p.directory);
+        if (!prev || p.tokens > prev.tokens) {
+            projMap.set(p.directory, {
+                ...p,
+                sources: [...new Set([...(prev?.sources || []), ...(p.sources || [])])],
+                lastActive: Math.max(prev?.lastActive || 0, p.lastActive || 0),
+            });
+        }
+    }
+    const sessMap = new Map();
+    for (const s of [...(extraRep.sessions || []), ...(nativeRep.sessions || [])]) {
+        const k = `${s.source}:${s.id}`;
+        const prev = sessMap.get(k);
+        if (!prev || s.tokens > prev.tokens) sessMap.set(k, s);
+    }
+    const dailyMap = new Map();
+    for (const d of extraRep.daily || []) dailyMap.set(d.date, d.tokens);
+    for (const d of nativeRep.daily || []) dailyMap.set(d.date, Math.max(dailyMap.get(d.date) || 0, d.tokens));
+
+    return {
+        total: Object.values(totals).reduce((sum, x) => sum + x.tokens, 0),
+        totals,
+        projects: [...projMap.values()].sort((a, b) => b.lastActive - a.lastActive || b.tokens - a.tokens),
+        sessions: [...sessMap.values()].sort((a, b) => b.lastActive - a.lastActive),
+        daily: [...dailyMap.entries()].map(([date, tokens]) => ({ date, tokens })).sort((a, b) => a.date.localeCompare(b.date)),
+    };
+}
+
 function recentRollouts(directory, depth = 4) {
     if (!depth) return [];
     return directories(directory).sort((a, b) => b.name.localeCompare(a.name)).slice(0, 12).flatMap(entry => {
@@ -133,43 +159,36 @@ async function codexQuota(home, env) {
                             })),
                         };
                     }
-                } catch { /* Ignore a partial line. */ }
+                } catch { /* Ignore partial line. */ }
             }
-        } catch { /* A removed or unreadable rollout can be skipped. */ }
+        } catch { /* Skip unreadable rollout. */ }
         finally { await handle?.close(); }
     }));
     return results.filter(Boolean).sort((a, b) => b.time - a.time)[0] || null;
 }
 
-function createUsageCollector({ home = homedir(), env = process.env, run = exec } = {}) {
-    let state = { phase: "loading", today: null, week: null, history: {}, quotas: {}, time: 0 };
+function createUsageCollector({ home = homedir(), env = process.env, run = exec, cachePath = "", getCustomPaths = () => ({}) } = {}) {
+    let state = {
+        phase: "loading",
+        engine: "native",
+        today: null,
+        week: null,
+        history: {},
+        quotas: {},
+        diagnostics: {},
+        time: 0,
+    };
+    let lastNative = null;
     let running;
 
-    async function localReport(period, graph = false) {
-        const bin = engine(home, env);
-        const homeDsh = dshHome(home, env);
-        const options = {
-            cwd: home, env: { ...env, ...(homeDsh ? { DSH_HOME: homeDsh } : {}) },
-            timeout: 45_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true,
-        };
-        const common = ["--offline", "--no-spinner", "-c", clients.join(","), "--home", home];
-        const args = graph ? ["graph", ...common] :
-            [...common, "--json", "--group-by", "client,workspace,session,model"];
-        const { stdout } = await run(bin, [...args, ...period], options);
-        return JSON.parse(stdout);
-    }
-
-    async function collect(period) {
-        return reportSummary(await localReport(period));
-    }
-
-    async function dailyTotals(period) {
+    async function optionalTokscale(period) {
+        const bin = findTokscaleBin(home, env);
+        if (!bin) return null;
         try {
-            const graph = await localReport(period, true);
-            if (!Array.isArray(graph.contributions)) return null;
-            return graph.contributions.filter(row => /^\d{4}-\d{2}-\d{2}$/.test(row?.date))
-                .map(row => ({ date: row.date, tokens: number(row.totals?.tokens) }))
-                .sort((a, b) => a.date.localeCompare(b.date));
+            const common = ["--offline", "--no-spinner", "-c", clients.join(","), "--home", home];
+            const args = [...common, "--json", "--group-by", "client,workspace,session,model", ...period];
+            const { stdout } = await run(bin, args, { cwd: home, env, timeout: 20_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
+            return reportSummary(JSON.parse(stdout));
         } catch {
             return null;
         }
@@ -177,41 +196,55 @@ function createUsageCollector({ home = homedir(), env = process.env, run = exec 
 
     async function history(days) {
         if (![30, 90].includes(days)) throw new Error("请选择有效的用量时间范围。");
+        if (!lastNative) await refresh();
+        const nativeWindow = lastNative?.windowReport ? lastNative.windowReport(days) : null;
         const since = new Date();
         since.setDate(since.getDate() - (days - 1));
-        const date = [since.getFullYear(), String(since.getMonth() + 1).padStart(2, "0"),
-            String(since.getDate()).padStart(2, "0")].join("-");
-        const period = ["--since", date];
-        const [report, daily] = await Promise.all([collect(period), dailyTotals(period)]);
-        state = { ...state, history: { ...state.history, [days]: { ...report, daily } } };
+        const date = [since.getFullYear(), String(since.getMonth() + 1).padStart(2, "0"), String(since.getDate()).padStart(2, "0")].join("-");
+        const extra = await optionalTokscale(["--since", date]);
+        const merged = mergeReports(nativeWindow, extra);
+        state = { ...state, history: { ...state.history, [days]: merged } };
         return state;
     }
 
     function refresh() {
         if (running) return running;
         running = (async () => {
-            const results = await Promise.allSettled([
-                collect(["--today"]),
-                collect(["--week"]),
-                codexQuota(home, env),
-                dailyTotals(["--week"]),
+            const customPaths = getCustomPaths?.() || {};
+            const [nativeRes, quotaRes, extraToday, extraWeek] = await Promise.all([
+                collectAllNative({ home, env, cachePath, days: 90, customPaths }),
+                codexQuota(home, env).catch(() => null),
+                optionalTokscale(["--today"]),
+                optionalTokscale(["--week"]),
             ]);
-            const [today, week, codex, trend] = results;
-            const daily = trend.status === "fulfilled" ? trend.value : null;
-            const ok = today.status === "fulfilled" && week.status === "fulfilled";
-            const hasMissingEngine = results.slice(0, 2).some(item => item.reason?.code === "ENOENT");
-            state = { ...state,
-                phase: ok ? "ready" : hasMissingEngine ? "missing-engine" : "partial",
-                today: today.status === "fulfilled" ? today.value : state.today,
-                week: week.status === "fulfilled" ? { ...week.value, daily } : state.week,
-                quotas: { codex: codex.status === "fulfilled" ? codex.value : null },
-                time: ok ? Date.now() : state.time,
+            lastNative = nativeRes;
+            const today = mergeReports(nativeRes.today, extraToday);
+            const week = mergeReports(nativeRes.week, extraWeek);
+            const hasExtra = Boolean(extraToday || extraWeek);
+            state = {
+                ...state,
+                phase: "ready",
+                engine: hasExtra ? "native+tokscale" : "native",
+                today,
+                week,
+                quotas: { codex: quotaRes },
+                diagnostics: nativeRes.diagnostics,
+                time: Date.now(),
             };
             return state;
-        })().finally(() => { running = undefined; });
+        })().catch(err => {
+            state = { ...state, phase: "partial", error: err?.message || "采集部分异常" };
+            return state;
+        }).finally(() => { running = undefined; });
         return running;
     }
-    return { refresh, history, snapshot: () => state };
+
+    return {
+        refresh,
+        history,
+        getTopicsByDate: () => lastNative?.topicsByDate || new Map(),
+        snapshot: () => state,
+    };
 }
 
 exports.createUsageCollector = createUsageCollector;

@@ -27,6 +27,13 @@ fi
 rm -rf "$STAGE_DIR" "$APP_OUT"
 mkdir -p "$STAGE_DIR/node_modules" "$OUT_DIR" "$INSTALLERS_DIR"
 
+# Build embedded Tailscale tsnet Go SDK sidecar if Go is available and binary missing
+TSNET_BIN="$ROOT/desktop/bin/qlex-tsnet-darwin-arm64"
+if [[ ! -f "$TSNET_BIN" && -d "$ROOT/tsnet-sidecar" ]] && command -v go >/dev/null 2>&1; then
+  mkdir -p "$ROOT/desktop/bin"
+  (cd "$ROOT/tsnet-sidecar" && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o "$TSNET_BIN" .)
+fi
+
 # Copy application source
 cp "$ROOT/package.json" "$STAGE_DIR/package.json"
 cp -R "$ROOT/desktop" "$STAGE_DIR/desktop"
@@ -49,8 +56,8 @@ cp -R "$KOFFI_SRC" "$STAGE_DIR/node_modules/koffi"
 ditto "$TEMPLATE_APP" "$APP_OUT"
 rm -rf "$APP_OUT/Contents/Resources/app.asar" "$APP_OUT/Contents/Resources/app.asar.unpacked"
 
-# Pack app.asar with koffi unpacked so native .node addon loads cleanly
-npx --yes @electron/asar pack "$STAGE_DIR" "$APP_OUT/Contents/Resources/app.asar" --unpack="**/node_modules/koffi/**"
+# Pack app.asar with koffi & embedded tsnet binary unpacked so native binaries execute cleanly
+npx --yes @electron/asar pack "$STAGE_DIR" "$APP_OUT/Contents/Resources/app.asar" --unpack="{**/node_modules/koffi/**,**/desktop/bin/**}"
 
 # Compute exact asar header SHA-256 for ElectronAsarIntegrity and update Info.plist
 ASAR_HASH="$(node -e "

@@ -130,6 +130,12 @@ function render() {
             list.append(row("本机设备", "单机模式", name));
         }
         list.append(row("本机 Skills", `${data.skills?.uniqueSkills ?? 0} 项`, data.skills?.missingLinks ? `${data.skills.missingLinks} 项待同步对齐` : "各工具已对齐"));
+        if (data.sync?.tailscaleOnline) {
+            list.append(row("Tailscale 内网", data.sync.tailscaleIp || "在线", data.sync.discoveredCount ? `发现 ${data.sync.discoveredCount} 台 QLEX 中心` : "自动穿透就绪"));
+        }
+        if (data.updater?.phase === "available" || data.updater?.phase === "ready") {
+            list.append(row("版本更新推送", data.updater.latestVersion, data.updater.phase === "ready" ? "已校验待安装" : "可下载更新"));
+        }
         list.append(row("登记项目", `${projects} 个`));
 
         quickAction.hidden = false;

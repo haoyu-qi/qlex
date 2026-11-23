@@ -21,6 +21,7 @@ const DEFAULT_SKILL_NAMESPACES = Object.freeze(["agents", "codex", "claude", "he
 const VALID_THEMES = new Set(["default", "obsidian", "porcelain"]);
 const VALID_BACKDROPS = new Set(["vibrancy", "liquid-glass", "liquid-glass-clear"]);
 const VALID_DOCK_MODES = new Set(["autoHide", "always"]);
+const VALID_UPDATE_CHANNELS = new Set(["beta", "stable"]);
 
 function clamp(value, min, max, fallback) {
     const num = Number(value);
@@ -78,6 +79,9 @@ const defaultState = () => ({
     localSkillNamespaces: [...DEFAULT_SKILL_NAMESPACES],
     memoryArchiveDir: defaultMemoryDir(),
     memoryAutoCompress: true,
+    updateChannel: "beta",
+    autoCheckUpdates: true,
+    collectorPaths: {},
     projects: [],
     appearance: { ...DEFAULT_APPEARANCE },
 });
@@ -104,6 +108,9 @@ class LocalStore {
                     ? value.memoryArchiveDir.trim()
                     : defaultMemoryDir(),
                 memoryAutoCompress: typeof value.memoryAutoCompress === "boolean" ? value.memoryAutoCompress : true,
+                updateChannel: VALID_UPDATE_CHANNELS.has(value.updateChannel) ? value.updateChannel : "beta",
+                autoCheckUpdates: typeof value.autoCheckUpdates === "boolean" ? value.autoCheckUpdates : true,
+                collectorPaths: value.collectorPaths && typeof value.collectorPaths === "object" && !Array.isArray(value.collectorPaths) ? value.collectorPaths : {},
                 appearance: normalizeAppearance(value.appearance),
                 ...(normalizeBounds(value.windowBounds) ? { windowBounds: normalizeBounds(value.windowBounds) } : {}),
             };
@@ -172,6 +179,21 @@ class LocalStore {
     setMemoryAutoCompress(enabled) {
         if (typeof enabled !== "boolean") throw new Error("无效的记忆自动压缩设置。");
         return this.update({ memoryAutoCompress: enabled });
+    }
+    setUpdateChannel(channel) {
+        if (!VALID_UPDATE_CHANNELS.has(channel)) throw new Error("无效的更新通道设置。");
+        return this.update({ updateChannel: channel });
+    }
+    setAutoCheckUpdates(enabled) {
+        if (typeof enabled !== "boolean") throw new Error("无效的自动更新检查设置。");
+        return this.update({ autoCheckUpdates: enabled });
+    }
+    setCollectorPath(source, dir) {
+        if (!["codex", "claude", "antigravity", "hermes", "dsh"].includes(source)) throw new Error("未知的采集源。");
+        const next = { ...(this.state.collectorPaths || {}) };
+        if (!dir || !String(dir).trim()) delete next[source];
+        else next[source] = (0, node_path_1.resolve)(String(dir).trim());
+        return this.update({ collectorPaths: next });
     }
     projectById(id) {
         const project = typeof id === "string" && this.state.projects.find((entry) => entry.id === id);

@@ -12,7 +12,10 @@ const { createUsageCollector } = require("./usage");
 const { createSkillSync } = require("./skill-sync");
 const { createMemoryArchiver } = require("./memory-archive");
 const { installMemorySkill, getMemorySkillStatus } = require("./memory-skill");
+const { createTailscaleManager } = require("./tailscale");
+const { createUpdater } = require("./updater");
 const { createEdgeDock } = require("./edge-dock");
+const APP_VERSION = require("../../package.json").version;
 const {
     attachNativeMaterialVisibility,
     syncNativeMaterialVisibility,
@@ -43,6 +46,8 @@ let pairing;
 let usage;
 let skills;
 let memoryArchive;
+let tailscale;
+let updater;
 let edgeDock;
 let changingRole = false;
 let syncRunning = null;
@@ -147,10 +152,13 @@ function desktopState(state = store.snapshot()) {
     updateTray();
     return {
         ...local,
+        version: APP_VERSION,
         usage: usage.snapshot(),
         skills: skills.snapshot(),
         memoryArchive: memoryArchive.snapshot(),
         memorySkill: getMemorySkillStatus({ namespaces: local.localSkillNamespaces }),
+        tailscale: tailscale ? tailscale.snapshot() : null,
+        updater: updater ? updater.snapshot() : null,
         syncStatus: computeSyncSummary(),
         pairing: pairing.view(),
         deviceName: (0, node_os_1.hostname)(),
@@ -614,6 +622,55 @@ function registerHandlers() {
             return desktopState();
         },
         "qlex:set-memory-auto": (enabled) => broadcastState(store.setMemoryAutoCompress(enabled)),
+        "qlex:set-collector-path": async (input) => {
+            store.setCollectorPath(input?.source, input?.dir);
+            await usage.refresh();
+            return broadcastState();
+        },
+        "qlex:tailscale-scan": async () => {
+            await tailscale.refreshAndDiscover();
+            return broadcastState();
+        },
+        "qlex:tailscale-start-embedded": (input) => {
+            tailscale.startEmbedded(input || {});
+            return broadcastState();
+        },
+        "qlex:tailscale-stop-embedded": () => {
+            tailscale.stopEmbedded();
+            return broadcastState();
+        },
+        "qlex:tailscale-open-auth": async () => {
+            const url = tailscale.snapshot().authURL;
+            if (!url) throw new Error("当前没有待打开的 Tailscale 登录链接。");
+            await electron_1.shell.openExternal(url);
+            return desktopState();
+        },
+        "qlex:update-check": async (force) => {
+            await updater.checkForUpdates({ force: Boolean(force) });
+            return broadcastState();
+        },
+        "qlex:update-download": async () => {
+            await updater.downloadUpdate();
+            return broadcastState();
+        },
+        "qlex:update-install": async () => {
+            const file = updater.snapshot().downloadedFile;
+            if (!file || !node_fs_1.existsSync(file)) throw new Error("未找到已校验的安装包，请先下载更新。");
+            const err = await electron_1.shell.openPath(file);
+            if (err) throw new Error("无法拉起安装程序：" + err);
+            return desktopState();
+        },
+        "qlex:update-open-release": async () => {
+            const url = updater.snapshot().latest?.htmlUrl || "https://github.com/haoyu-qi/workcontext/releases";
+            await electron_1.shell.openExternal(url);
+            return desktopState();
+        },
+        "qlex:set-update-channel": async (channel) => {
+            const next = store.setUpdateChannel(channel);
+            await updater.checkForUpdates({ force: true });
+            return broadcastState(next);
+        },
+        "qlex:set-auto-updates": (enabled) => broadcastState(store.setAutoCheckUpdates(enabled)),
         "qlex:configure-local": () => broadcastState(store.configure()),
         "qlex:enable-center": () => changeRole(() => pairing.start()),
         "qlex:join-center": (code) => changeRole(() => pairing.join(code)),
@@ -696,7 +753,14 @@ function registerHandlers() {
                     attachedOnline: peers.filter(peer => peer.online).length,
                     pending: peers.filter(peer => peer.status === "pending").length,
                     name: (0, node_os_1.hostname)(), projects: store.snapshot().projects.length,
+                    tailscaleOnline: Boolean(tailscale?.snapshot().online),
+                    tailscaleIp: tailscale?.snapshot().self?.ip || "",
+                    discoveredCount: tailscale?.snapshot().discoveredCenters?.length || 0,
                 },
+                updater: updater ? {
+                    phase: updater.snapshot().phase,
+                    latestVersion: updater.snapshot().latest?.version || "",
+                } : null,
             };
         },
         "qlex:dock-pin": (value) => edgeDock.pin(value),
@@ -776,6 +840,7 @@ else {
     electron_1.app.on("will-quit", () => {
         clearTimeout(persistBoundsTimer);
         pairing?.stop();
+        tailscale?.stop();
         edgeDock?.close();
         if (smokeDirectory)
             (0, node_fs_1.rmSync)(smokeDirectory, { recursive: true, force: true });
@@ -786,16 +851,49 @@ else {
             electron_1.app.quit();
     });
     void electron_1.app.whenReady().then(() => {
-        store = new state_1.LocalStore((0, node_path_1.join)(electron_1.app.getPath("userData"), "state.json"));
-        usage = createUsageCollector();
-        skills = createSkillSync(electron_1.app.getPath("userData"));
+        const userDataDir = electron_1.app.getPath("userData");
+        store = new state_1.LocalStore((0, node_path_1.join)(userDataDir, "state.json"));
+        usage = createUsageCollector({
+            cachePath: (0, node_path_1.join)(userDataDir, "collector-cache.json"),
+            getCustomPaths: () => store.snapshot().collectorPaths,
+        });
+        skills = createSkillSync(userDataDir);
         skills.scanLocal(store.snapshot().localSkillNamespaces);
         memoryArchive = createMemoryArchiver({
             getArchiveDir: () => store.snapshot().memoryArchiveDir,
             getProjects: () => store.snapshot().projects,
             getUsageSnapshot: () => usage.snapshot(),
+            getTopicsByDate: () => usage.getTopicsByDate(),
         });
-        pairing = new pairing_1.DevicePairing(store, undefined, skills);
+        tailscale = createTailscaleManager({
+            dataDir: userDataDir,
+            getCenterInfo: () => {
+                const v = pairing?.view();
+                return v ? { mode: v.mode, online: v.online, port: v.port, deviceId: store.snapshot().deviceId, version: APP_VERSION } : null;
+            },
+            onChange: () => { if (window && !window.isDestroyed()) broadcastState(); },
+        });
+        updater = createUpdater({
+            currentVersion: APP_VERSION,
+            getChannel: () => store.snapshot().updateChannel || "beta",
+            onChange: () => { if (window && !window.isDestroyed()) broadcastState(); },
+            onUpdateFound: (latest) => {
+                try {
+                    if (!smoke && electron_1.Notification?.isSupported?.()) {
+                        const n = new electron_1.Notification({
+                            title: `发现 QLEX 新版本 ${latest.version}`,
+                            body: latest.prerelease ? "Beta 更新通道已推送新版本，点击打开下载。" : "正式版更新已就绪，点击打开下载。",
+                        });
+                        n.on("click", () => { showWindow(); });
+                        n.show();
+                    }
+                } catch { /* ignore notification errors */ }
+            },
+        });
+        pairing = new pairing_1.DevicePairing(store, undefined, skills, () => {
+            const ts = tailscale.snapshot();
+            return [ts.self?.dnsName, ts.self?.ip].filter(Boolean);
+        });
         edgeDock = createEdgeDock({
             BrowserWindow: electron_1.BrowserWindow,
             screen: electron_1.screen,
@@ -813,12 +911,15 @@ else {
         if (!smoke) {
             for (const event of ["display-added", "display-removed", "display-metrics-changed"])
                 electron_1.screen.on(event, edgeDock.reposition);
+            tailscale.startLanDiscovery();
+            void tailscale.refreshAndDiscover().catch(console.warn);
             void usage.refresh().then(() => {
                 if (store.snapshot().memoryAutoCompress !== false) {
                     return memoryArchive.compressNow().then(() => broadcastState());
                 }
             }).catch(console.warn);
             setInterval(() => void usage.refresh().catch(console.warn), 300_000).unref();
+            setInterval(() => void tailscale.refreshAndDiscover().catch(console.warn), 45_000).unref();
             setInterval(() => {
                 if (store.snapshot().skillSyncEnabled) void skills.refresh(pairing, store.snapshot().localSkillNamespaces);
             }, 60_000).unref();
@@ -828,6 +929,13 @@ else {
                     void memoryArchive.compressNow().then(() => broadcastState()).catch(console.warn);
                 }
             }, 1_800_000).unref();
+            // Auto check updates on startup (after 12s) and every 6 hours
+            setTimeout(() => {
+                if (store.snapshot().autoCheckUpdates !== false) void updater.checkForUpdates().catch(console.warn);
+            }, 12_000).unref();
+            setInterval(() => {
+                if (store.snapshot().autoCheckUpdates !== false) void updater.checkForUpdates().catch(console.warn);
+            }, 6 * 3_600_000).unref();
         }
         try {
             createTray();

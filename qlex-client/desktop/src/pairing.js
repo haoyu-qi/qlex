@@ -38,7 +38,6 @@ const node_crypto_1 = require("node:crypto");
 const node_https_1 = require("node:https");
 const node_net_1 = require("node:net");
 const node_os_1 = require("node:os");
-const forge = __importStar(require("node-forge"));
 const port = 46271;
 const lifetime = 10 * 60 * 1000;
 const deviceLimit = 50;
@@ -48,6 +47,7 @@ const secret = () => (0, node_crypto_1.randomBytes)(32).toString("base64url");
 const digest = (value) => (0, node_crypto_1.createHash)("sha256").update(value).digest("hex");
 const deviceName = () => (0, node_os_1.hostname)().slice(0, 100);
 function makeCenter(id) {
+    const forge = __importStar(require("node-forge"));
     const keys = (0, node_crypto_1.generateKeyPairSync)("rsa", {
         modulusLength: 2048, publicKeyEncoding: { type: "spki", format: "pem" },
         privateKeyEncoding: { type: "pkcs8", format: "pem" },
@@ -68,19 +68,37 @@ function makeCenter(id) {
     cert.sign(forge.pki.privateKeyFromPem(keys.privateKey), forge.md.sha256.create());
     return { cert: forge.pki.certificateToPem(cert), key: keys.privateKey, peers: [] };
 }
-function addresses() {
-    return [...new Set(Object.values((0, node_os_1.networkInterfaces)()).flatMap((entries) => (entries ?? []).filter((entry) => !entry.internal && entry.family === "IPv4").map((entry) => entry.address)))];
+function isTailscaleIPv4(ip) {
+    const m = typeof ip === "string" && ip.match(/^100\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (!m) return false;
+    const oct = Number(m[1]);
+    return oct >= 64 && oct <= 127;
+}
+function isValidHost(host) {
+    if (typeof host !== "string" || !host || host.length > 253) return false;
+    if ((0, node_net_1.isIPv4)(host)) return true;
+    // Allow MagicDNS (*.ts.net) and standard RFC-1123 hostnames
+    return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(host);
+}
+function addresses(extraHosts = []) {
+    const localIps = Object.values((0, node_os_1.networkInterfaces)()).flatMap((entries) => (entries ?? []).filter((entry) => !entry.internal && entry.family === "IPv4").map((entry) => entry.address));
+    const all = [...new Set([...extraHosts.filter(isValidHost), ...localIps])];
+    // Prioritize Tailscale (100.x & *.ts.net) ahead of LAN addresses
+    return all.sort((a, b) => {
+        const score = h => (h.endsWith(".ts.net") ? 0 : isTailscaleIPv4(h) ? 1 : 2);
+        return score(a) - score(b);
+    });
 }
 function readInvite(code) {
     if (typeof code !== "string")
         throw new Error("请粘贴中心生成的配对邀请。");
     const trimmed = code.trim();
-    if (!/^QLEX1\.[A-Za-z0-9_-]{1,4096}$/.test(trimmed))
+    if (!/^QLEX[12]\.[A-Za-z0-9_-]{1,4096}$/.test(trimmed))
         throw new Error("配对邀请格式无效。");
     let invite;
     try {
         invite = JSON.parse(Buffer.from(trimmed.slice(6), "base64url").toString("utf8"));
-        if (!(0, node_net_1.isIPv4)(invite.host) || !Number.isInteger(invite.port) || invite.port < 1 ||
+        if (!isValidHost(invite.host) || !Number.isInteger(invite.port) || invite.port < 1 ||
             invite.port > 65535 || !secretPattern.test(invite.token) || typeof invite.cert !== "string" ||
             !Number.isSafeInteger(invite.expiresAt))
             throw new Error();
@@ -161,21 +179,28 @@ class DevicePairing {
     refreshing;
     starting = false;
     startError;
-    constructor(store, listenPort = port, skillSync) {
+    constructor(store, listenPort = port, skillSync, getExtraHosts = () => []) {
         this.store = store;
         this.listenPort = listenPort;
         this.skillSync = skillSync;
+        this.getExtraHosts = getExtraHosts;
     }
     get config() {
         return this.store.snapshot().pairing ?? { mode: "local" };
     }
     view() {
         const config = this.config;
+        const hostList = config.mode === "center" ? addresses(this.getExtraHosts?.() || []) : [];
         return {
             mode: config.mode,
             online: config.mode === "center" ? Boolean(this.server?.listening) : this.endpointOnline,
             error: this.startError,
-            addresses: config.mode === "center" ? addresses() : [],
+            addresses: hostList,
+            addressEntries: hostList.map(h => ({
+                host: h,
+                kind: (h.endsWith(".ts.net") || isTailscaleIPv4(h)) ? "tailscale" : "lan",
+                label: h.endsWith(".ts.net") ? `${h} (Tailscale MagicDNS)` : isTailscaleIPv4(h) ? `${h} (Tailscale)` : `${h} (局域网)`,
+            })),
             port: this.serverPort(),
             peers: config.mode === "center" ? config.center?.peers.filter(({ status }) => status !== "rejected")
                 .map(({ id, name, status, credentialHash }) => ({ id, name, status,
@@ -256,7 +281,8 @@ class DevicePairing {
         return address && typeof address === "object" ? address.port : this.listenPort;
     }
     createInvite(host) {
-        if (!this.server?.listening || typeof host !== "string" || !addresses().includes(host)) {
+        const allowed = addresses(this.getExtraHosts?.() || []);
+        if (!this.server?.listening || typeof host !== "string" || !allowed.includes(host)) {
             throw new Error("请先启动中心，并选择本机可用的网络地址。");
         }
         const center = this.config.center;
@@ -340,6 +366,22 @@ class DevicePairing {
     }
     async handle(req, res) {
         try {
+            if (req.method === "GET" && req.url === "/qlex/v1/discover") {
+                const config = this.config;
+                if (config.mode !== "center") {
+                    reply(res, 404, {});
+                    return;
+                }
+                reply(res, 200, {
+                    app: "QLEX",
+                    mode: "center",
+                    deviceId: this.store.snapshot().deviceId,
+                    name: deviceName(),
+                    port: this.serverPort(),
+                    os: process.platform,
+                });
+                return;
+            }
             const join = req.url === "/qlex/v1/join";
             const leave = req.url === "/qlex/v1/leave";
             const skills = req.url === "/qlex/v1/skills";
@@ -406,3 +448,6 @@ class DevicePairing {
     }
 }
 exports.DevicePairing = DevicePairing;
+exports.isValidHost = isValidHost;
+exports.isTailscaleIPv4 = isTailscaleIPv4;
+exports.addresses = addresses;

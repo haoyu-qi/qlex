@@ -12,8 +12,8 @@ function readJsonSafe(filePath, fallback) {
     }
 }
 
-function createMemoryArchiver({ getArchiveDir, getProjects, getUsageSnapshot, home = homedir() }) {
-    const engine = createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnapshot, home });
+function createMemoryArchiver({ getArchiveDir, getProjects, getUsageSnapshot, getTopicsByDate, home = homedir() }) {
+    const engine = createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnapshot, getTopicsByDate, home });
     let state = {
         phase: "idle",
         archiveDir: getArchiveDir(),

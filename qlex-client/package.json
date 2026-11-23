@@ -1,8 +1,8 @@
 {
   "name": "qlex",
-  "version": "0.1.9-memory.2",
+  "version": "0.2.0-beta.1",
   "private": true,
-  "description": "QLEX desktop workspace — native frosted glass client with cognitive memory framework (Mem0/Hindsight/memU/Cognee/Graphiti/OpenViking), universal qlex-memory Agent Skill, and visual skill conflict resolver",
+  "description": "QLEX desktop workspace — native multi-agent collector, embedded Tailscale tsnet SDK, Beta/Stable update push channel, cognitive memory engine, and universal qlex-memory Agent Skill",
   "author": "QLEX",
   "main": "desktop/src/main.js",
   "scripts": {

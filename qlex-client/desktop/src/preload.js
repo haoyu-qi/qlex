@@ -34,9 +34,24 @@ electron_1.contextBridge.exposeInMainWorld("qlex", {
     onDockPresentation: (handler) => electron_1.ipcRenderer.on("qlex:dock-presentation", (_, value) => handler(value)),
     dockOpen: (page) => electron_1.ipcRenderer.invoke("qlex:dock-open", page),
 
-    // Usage & quotas
+    // Usage, quotas & collector diagnostics
     refreshUsage: () => electron_1.ipcRenderer.invoke("qlex:refresh-usage"),
     usagePeriod: (days) => electron_1.ipcRenderer.invoke("qlex:usage-period", days),
+    setCollectorPath: (source, dir) => electron_1.ipcRenderer.invoke("qlex:set-collector-path", { source, dir }),
+
+    // Tailscale SDK & Auto-Discovery
+    tailscaleScan: () => electron_1.ipcRenderer.invoke("qlex:tailscale-scan"),
+    tailscaleStartEmbedded: (input) => electron_1.ipcRenderer.invoke("qlex:tailscale-start-embedded", input),
+    tailscaleStopEmbedded: () => electron_1.ipcRenderer.invoke("qlex:tailscale-stop-embedded"),
+    tailscaleOpenAuth: () => electron_1.ipcRenderer.invoke("qlex:tailscale-open-auth"),
+
+    // Version Download & Update Push Channel
+    updateCheck: (force) => electron_1.ipcRenderer.invoke("qlex:update-check", force),
+    updateDownload: () => electron_1.ipcRenderer.invoke("qlex:update-download"),
+    updateInstall: () => electron_1.ipcRenderer.invoke("qlex:update-install"),
+    updateOpenRelease: () => electron_1.ipcRenderer.invoke("qlex:update-open-release"),
+    setUpdateChannel: (channel) => electron_1.ipcRenderer.invoke("qlex:set-update-channel", channel),
+    setAutoUpdates: (enabled) => electron_1.ipcRenderer.invoke("qlex:set-auto-updates", enabled),
 
     // Skills sync (local multi-tool + center/endpoint + conflict resolution)
     setSkillSync: (enabled) => electron_1.ipcRenderer.invoke("qlex:set-skill-sync", enabled),

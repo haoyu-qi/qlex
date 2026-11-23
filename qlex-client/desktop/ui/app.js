@@ -368,10 +368,74 @@ function renderSettings() {
       </div>
     `;
 
+    const diag = state.usage?.diagnostics || {};
+    const collectorBody = `
+      <div class="settings-note">采集引擎：<strong>${escapeHtml(state.usage?.engine || "native")}</strong>（已摆脱外部 Token Monitor 强依赖，原生覆盖 5 大工具）</div>
+      <div class="diag-list">
+        ${Object.entries(SOURCE_NAMES).map(([key, label]) => {
+            const d = diag[key] || { status: "empty", filesScanned: 0, sessionsFound: 0 };
+            const statusText = d.status === "ok" ? "正常" : d.status === "missing" ? "未安装" : "无记录";
+            return `<div class="diag-row">
+              <div style="min-width:0">
+                <div style="font-weight:600;color:var(--text)">${label}</div>
+                <div class="row-subtitle">${d.sessionsFound || 0} 会话 · ${d.filesScanned || 0} 文件</div>
+              </div>
+              <span class="diag-badge ${d.status || "empty"}">${statusText}</span>
+            </div>`;
+        }).join("")}
+      </div>
+      <div class="row-actions-inline">
+        <button type="button" class="glass-btn sm primary" data-action="refresh-usage">⟳ 立即重新采集</button>
+      </div>
+    `;
+
+    const upd = state.updater || { phase: "idle", currentVersion: state.version || "0.2.0-beta.1", channel: state.updateChannel || "beta" };
+    const updSummary = upd.phase === "available" ? `新版本 ${upd.latest?.version || ""}`
+        : upd.phase === "ready" ? "已就绪 · 待安装"
+        : upd.phase === "downloading" ? `下载 ${upd.progress || 0}%`
+        : `v${upd.currentVersion || state.version || ""}`;
+    const updateBody = `
+      <div class="settings-item">
+        <span class="settings-item-title">当前版本</span>
+        <span class="row-value">v${escapeHtml(upd.currentVersion || state.version || "0.2.0-beta.1")}</span>
+      </div>
+      <div class="settings-item">
+        <span class="settings-item-title">更新推送通道</span>
+        <select id="updateChannelSelect" class="glass-select">
+          <option value="beta" ${(state.updateChannel || "beta") === "beta" ? "selected" : ""}>Beta 尝鲜版</option>
+          <option value="stable" ${state.updateChannel === "stable" ? "selected" : ""}>Stable 正式版</option>
+        </select>
+      </div>
+      <div class="settings-item">
+        <span class="settings-item-title">自动检查并推送新版本</span>
+        <input id="autoUpdatesInput" class="settings-switch" type="checkbox" ${state.autoCheckUpdates !== false ? "checked" : ""} />
+      </div>
+      ${upd.phase === "downloading" || upd.phase === "verifying" ? `
+        <div class="settings-note">${upd.phase === "verifying" ? "正在校验 SHA-256…" : `正在下载 ${escapeHtml(upd.latest?.assetName || "")} (${upd.progress || 0}%)`}</div>
+        <div class="update-progress-track"><div class="update-progress-fill" style="width:${upd.progress || 0}%"></div></div>
+      ` : upd.phase === "available" && upd.latest ? `
+        <div class="settings-note">发现新版本 <strong>${escapeHtml(upd.latest.version)}</strong>（${upd.latest.prerelease ? "Beta" : "Stable"}）${upd.latest.expectedSha256 ? " · 支持 SHA-256 校验" : ""}</div>
+      ` : upd.phase === "ready" ? `
+        <div class="settings-note" style="color:var(--success)">✓ 安装包已下载并通过 SHA-256 校验，点击下方按钮立即安装。</div>
+      ` : upd.phase === "error" ? `
+        <div class="settings-note" style="color:var(--red)">${escapeHtml(upd.error || "检查更新失败")}</div>
+      ` : upd.phase === "up-to-date" ? `
+        <div class="settings-note">当前已是最新${(state.updateChannel || "beta") === "beta" ? " Beta " : " "}版本。</div>
+      ` : ""}
+      <div class="row-actions-inline">
+        <button type="button" class="glass-btn sm" data-action="update-check">${upd.phase === "checking" ? "检查中…" : "检查更新"}</button>
+        ${upd.phase === "available" ? `<button type="button" class="glass-btn sm primary" data-action="update-download">↓ 下载更新</button>` : ""}
+        ${upd.phase === "ready" ? `<button type="button" class="glass-btn sm primary" data-action="update-install">⚡ 立即安装</button>` : ""}
+        <button type="button" class="glass-btn sm" data-action="update-open-release">发布页 ↗</button>
+      </div>
+    `;
+
     settingsPanel.innerHTML =
         section("appearance", "外观与毛玻璃", "icons/settings/appearance.svg", backdropLabel, appearanceBody) +
         section("window", "窗口与侧边吸附", "icons/settings/window.svg", `${dockSummary} · ${state.edgeDockMode === "always" ? "常驻" : "悬停"}`, windowBody) +
-        section("sync", "技能同步与记忆归档", "icons/settings/sync.svg", ROLES[net.mode], syncBody);
+        section("sync", "技能同步与记忆归档", "icons/settings/sync.svg", ROLES[net.mode], syncBody) +
+        section("collectors", "本地 Agent 日志采集诊断", "icons/views/status.svg", state.usage?.engine || "native", collectorBody) +
+        section("updates", "版本下载与更新推送", "icons/views/trends.svg", updSummary, updateBody);
 }
 
 function renderHome() {
@@ -409,8 +473,22 @@ function renderHome() {
     const c = mem.counts || { daily: 0, weekly: 0, monthly: 0 };
     const cog = mem.cognitive || { activeItems: 0, entities: 0, activeEdges: 0, reflectionsCount: 0 };
     const memSkill = state.memorySkill || { installedCount: 0, totalCount: 6 };
+    const upd = state.updater;
+    const updateBannerHtml = upd && (upd.phase === "available" || upd.phase === "downloading" || upd.phase === "ready") ? `
+      <div class="update-banner">
+        <div class="row-head">
+          <span class="row-title" style="color:var(--accent)">✦ ${upd.phase === "ready" ? `新版本 ${escapeHtml(upd.latest?.version || "")} 已校验就绪` : `推送新版本 ${escapeHtml(upd.latest?.version || "")}`}</span>
+          ${upd.phase === "ready"
+              ? `<button type="button" class="glass-btn sm primary" data-action="update-install">立即安装</button>`
+              : upd.phase === "downloading"
+                  ? `<span class="row-cost">${upd.progress || 0}%</span>`
+                  : `<button type="button" class="glass-btn sm primary" data-action="update-download">下载更新</button>`}
+        </div>
+        ${upd.phase === "downloading" ? `<div class="update-progress-track"><div class="update-progress-fill" style="width:${upd.progress || 0}%"></div></div>` : ""}
+      </div>
+    ` : "";
 
-    homePanel.innerHTML = `
+    homePanel.innerHTML = updateBannerHtml + `
       <div class="home-module">
         <div class="home-module-head" data-jump-view="devices">
           <span class="home-module-label">同步与本机 SKILLS</span>
@@ -946,8 +1024,11 @@ function renderDevices() {
 
     let actionHtml = "";
     if (isCenter) {
-        const choices = (net.addresses || []).map(addr =>
-            `<option value="${escapeHtml(addr)}" ${addr === invitationAddress ? "selected" : ""}>${escapeHtml(addr)}:${net.port}</option>`
+        const entries = net.addressEntries?.length
+            ? net.addressEntries
+            : (net.addresses || []).map(addr => ({ host: addr, label: addr }));
+        const choices = entries.map(e =>
+            `<option value="${escapeHtml(e.host)}" ${e.host === invitationAddress ? "selected" : ""}>${escapeHtml(e.label)}:${net.port}</option>`
         ).join("");
         actionHtml = `
           <div class="row-detail-drawer">
@@ -1060,7 +1141,46 @@ function renderDevices() {
       </div>
     `;
 
-    mainListPanel.innerHTML = skillsSection + `
+    const ts = state.tailscale || { mode: "unavailable", online: false, self: {}, tailnetPeers: [], discoveredCenters: [] };
+    const tsBadge = ts.mode === "system" && ts.online ? "系统 Tailscale 在线"
+        : ts.mode === "embedded" && ts.online ? "内嵌 tsnet SDK 在线"
+        : ts.embeddedRunning ? (ts.authURL ? "等待登录" : "启动中…")
+        : "未连接";
+    const tsSection = `
+      <div class="row">
+        <div class="row-head">
+          <span class="row-title">Tailscale 内网穿透与自动发现</span>
+          <span class="row-cost">${tsBadge}</span>
+        </div>
+        <div class="row-subtitle">${ts.self?.ip ? `本机 Tailnet：${escapeHtml(ts.self.ip)}${ts.self.dnsName ? ` · ${escapeHtml(ts.self.dnsName)}` : ""}` : "支持接管本机 Tailscale 或启动内嵌 Go tsnet SDK（免装 VPN 客户端）"}</div>
+        <div class="row-actions-inline">
+          <button type="button" class="glass-btn sm primary" data-action="tailscale-scan">⟳ 扫描内网设备</button>
+          ${ts.embeddedRunning
+              ? `<button type="button" class="glass-btn sm danger" data-action="tailscale-stop-embedded">停止内嵌 SDK</button>`
+              : ts.embeddedAvailable
+                  ? `<button type="button" class="glass-btn sm" data-action="tailscale-start-embedded">启动内嵌 tsnet SDK</button>`
+                  : ""}
+          ${ts.authURL ? `<button type="button" class="glass-btn sm primary" data-action="tailscale-open-auth">浏览器登录 ↗</button>` : ""}
+        </div>
+        ${(ts.discoveredCenters || []).length ? `
+          <div class="diag-list" style="margin-top:4px">
+            ${ts.discoveredCenters.map(p => `
+              <div class="ts-peer-card">
+                <div style="min-width:0">
+                  <div class="row-title">${escapeHtml(p.name)}</div>
+                  <div class="row-subtitle">${escapeHtml(p.dnsName || p.host)}:${p.port} · ${p.latencyMs}ms</div>
+                </div>
+                <span class="diag-badge ok">${p.transport === "lan" ? "局域网" : p.transport === "tailscale-direct" ? "TS 直连" : `TS 中继${p.relay ? `(${p.relay})` : ""}`}</span>
+              </div>
+            `).join("")}
+          </div>
+        ` : (ts.tailnetPeers || []).filter(p => p.online).length ? `
+          <div class="row-subtitle">Tailnet 在线节点 ${(ts.tailnetPeers || []).filter(p => p.online).length} 台（未发现已开启中心的 QLEX 节点）</div>
+        ` : ""}
+      </div>
+    `;
+
+    mainListPanel.innerHTML = skillsSection + tsSection + `
       <div class="sync-map">
         <div class="sync-node ${hubTone}">
           <span class="sync-node-icon">
@@ -1433,6 +1553,24 @@ document.addEventListener("click", (event) => {
         } else if (action === "close-memory-preview") {
             memoryPreview = null;
             renderMemoryArchiveView();
+        } else if (action === "refresh-usage") {
+            void runAction(btn, () => window.qlex.refreshUsage(), { success: "5 大工具日志已重新采集" });
+        } else if (action === "tailscale-scan") {
+            void runAction(btn, () => window.qlex.tailscaleScan(), { success: "Tailscale 与局域网扫描完成" });
+        } else if (action === "tailscale-start-embedded") {
+            void runAction(btn, () => window.qlex.tailscaleStartEmbedded({}), { success: "已启动内嵌 Tailscale tsnet SDK" });
+        } else if (action === "tailscale-stop-embedded") {
+            void runAction(btn, () => window.qlex.tailscaleStopEmbedded(), { success: "已停止内嵌 tsnet SDK" });
+        } else if (action === "tailscale-open-auth") {
+            void window.qlex.tailscaleOpenAuth();
+        } else if (action === "update-check") {
+            void runAction(btn, () => window.qlex.updateCheck(true), { success: "更新检查完成" });
+        } else if (action === "update-download") {
+            void runAction(btn, () => window.qlex.updateDownload(), { success: "更新下载并校验完成" });
+        } else if (action === "update-install") {
+            void runAction(btn, () => window.qlex.updateInstall());
+        } else if (action === "update-open-release") {
+            void window.qlex.updateOpenRelease();
         } else if (action === "open-dashboard") {
             void window.qlex.openDashboard("activity");
         } else if (action === "open-dashboard-trends") {
@@ -1560,6 +1698,10 @@ document.addEventListener("change", (event) => {
         void runAction(el, () => window.qlex.setSkillSync(el.checked));
     } else if (el.id === "memoryAutoInput") {
         void runAction(el, () => window.qlex.setMemoryAutoCompress(el.checked));
+    } else if (el.id === "updateChannelSelect") {
+        void runAction(el, () => window.qlex.setUpdateChannel(el.value));
+    } else if (el.id === "autoUpdatesInput") {
+        void runAction(el, () => window.qlex.setAutoUpdates(el.checked));
     } else if (el.id === "sessionSourceFilter") {
         sessionSource = el.value;
         sessionLimit = 80;

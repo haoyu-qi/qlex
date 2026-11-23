@@ -595,7 +595,7 @@ function rollupRecords(kind, key, days) {
 /**
  * Create a Cognitive Memory Engine bound to a root directory (works in Electron & standalone CLI)
  */
-function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnapshot, home = homedir() } = {}) {
+function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnapshot, getTopicsByDate, home = homedir() } = {}) {
     const resolveRoot = () => (typeof getArchiveDir === "function" ? getArchiveDir() : resolveDefaultMemoryDir(home));
 
     function pathsOf(root = resolveRoot()) {
@@ -1734,6 +1734,20 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         cache.ingestedHashes ||= {};
 
         const { byDate: topicsByDate, hits, misses, resources } = extractHistoryTopicsByDate(home, cache);
+        // Merge unified multi-agent topics from native collectors (Codex rollouts, Claude projects, Antigravity T3, Hermes, DSH)
+        if (typeof getTopicsByDate === "function") {
+            const extraTopics = getTopicsByDate();
+            if (extraTopics instanceof Map) {
+                for (const [date, entries] of extraTopics.entries()) {
+                    let list = topicsByDate.get(date);
+                    if (!list) { list = []; topicsByDate.set(date, list); }
+                    for (const e of entries) {
+                        if (list.length >= 30) break;
+                        if (!list.some(x => x.text === e.text)) list.push(e);
+                    }
+                }
+            }
+        }
         const usageSnap = typeof getUsageSnapshot === "function" ? (getUsageSnapshot() || {}) : {};
         const todayKey = localDateKey();
 

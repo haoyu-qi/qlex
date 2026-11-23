@@ -1,0 +1,25 @@
+name: qlex-release-check
+on:
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: read
+jobs:
+  verify-qlex:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Verify embedded Go tsnet sidecar compiles
+        working-directory: qlex-client/tsnet-sidecar
+        run: CGO_ENABLED=0 go build -o /tmp/qlex-tsnet .
+      - name: Run QLEX unit & integration tests
+        run: |
+          node qlex-client/scripts/test-memory-framework.mjs
+          node qlex-client/scripts/test-v020-features.mjs
