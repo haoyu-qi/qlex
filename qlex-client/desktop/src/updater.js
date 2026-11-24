@@ -195,19 +195,27 @@ function createUpdater({ currentVersion, repo = DEFAULT_REPO, cacheDir, getChann
                     const platKey = `${process.platform}-${process.arch}`;
                     const plat = manifest.assets?.[platKey];
                     if (plat && (plat.pkgUrl || plat.zipUrl)) {
-                        const url = plat.pkgUrl || plat.zipUrl;
+                        const rawUrl = plat.pkgUrl || plat.zipUrl;
+                        const fileName = path.basename(rawUrl);
+                        // Always prefer the real GitHub Release asset browser_download_url matching this filename
+                        // so a mismatched manifest tag can never cause HTTP 404.
+                        const matchedAsset = assets.find(a => a.name === fileName)
+                            || assets.find(a => a.name.includes(archTag) && a.name.endsWith(".pkg"))
+                            || assets.find(a => a.name.includes(archTag) && a.name.endsWith(".zip"));
+                        const url = matchedAsset?.browser_download_url || rawUrl;
+                        const isZip = url.endsWith(".zip");
                         return {
                             version: manifest.version || extractAppVersionFromRelease(release),
-                            tag: manifest.tag || release.tag_name,
+                            tag: release.tag_name || manifest.tag,
                             title: release.name || `QLEX ${manifest.version}`,
                             notes: manifest.notes || release.body || "",
                             publishedAt: manifest.publishedAt || release.published_at,
                             prerelease: Boolean(release.prerelease || manifest.channel === "beta"),
                             htmlUrl: release.html_url,
-                            assetName: path.basename(url),
+                            assetName: matchedAsset?.name || fileName,
                             assetUrl: url,
-                            assetSize: plat.size || 0,
-                            expectedSha256: (plat.sha256 || "").toLowerCase(),
+                            assetSize: matchedAsset?.size || (isZip ? plat.zipSize : plat.size) || 0,
+                            expectedSha256: ((isZip ? plat.zipSha256 : plat.sha256) || "").toLowerCase(),
                         };
                     }
                 }
