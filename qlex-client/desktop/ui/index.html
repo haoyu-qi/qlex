@@ -12,98 +12,86 @@
 </head>
 <body>
   <main id="shell" class="shell" tabindex="-1">
-    <header class="titlebar">
-      <div>
-        <div class="app-title">
-          <img class="app-logo" src="../../docs/assets/brand/logo.png" alt="" />
-          <span class="app-title-text">QLEX</span>
-          <span id="liveDot" class="live-dot" title="本机状态"></span>
-          <button id="rolePill" class="role-pill hidden" type="button" title="查看设备与同步状态">本机</button>
+    <!-- Top Draggable Titlebar (Mole / CleanMyMac inspired spacious header) -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="traffic-lights" aria-label="窗口控制">
+          <button id="closeButton" class="tl-dot close" type="button" title="关闭窗口"></button>
+          <button id="minButton" class="tl-dot min" type="button" title="最小化"></button>
+          <button id="pinButton" class="tl-dot pin" type="button" title="窗口置顶"></button>
+        </div>
+        <div class="brand-cluster">
+          <img class="brand-logo" src="../../docs/assets/brand/logo.png" alt="" />
+          <span class="brand-name">QLEX</span>
+          <span id="liveDot" class="live-dot" title="节点状态"></span>
+          <button id="rolePill" class="role-badge hidden" type="button" title="切换到 L · 互联与穿透">本机</button>
         </div>
       </div>
 
-      <div class="title-controls">
-        <nav id="periodTabs" class="tabs" aria-label="统计周期">
-          <span class="tab-indicator" aria-hidden="true"></span>
-          <button class="tab" type="button" data-period="1" data-slot="0">今日</button>
-          <button class="tab active" type="button" data-period="7" data-slot="1">7天</button>
-          <button class="tab" type="button" data-period="30" data-slot="2">30天</button>
-        </nav>
-        <div class="actions-hotspot" aria-label="窗口控制"></div>
-        <div class="window-actions">
-          <button id="pinButton" class="icon-button" type="button" title="置顶窗口">⇧</button>
-          <button id="dashButton" class="icon-button" type="button" title="打开大屏看板">◫</button>
-          <button id="minButton" class="icon-button" type="button" title="最小化">−</button>
-          <button id="closeButton" class="icon-button" type="button" title="关闭">×</button>
+      <div class="topbar-center">
+        <div id="topbarStatusPill" class="topbar-status-pill hidden">
+          <span id="topbarStatusDot" class="status-pulse"></span>
+          <span id="topbarStatusText">同步总览</span>
         </div>
+      </div>
+
+      <div class="topbar-right">
+        <button id="syncStatusBtn" class="sync-pill hidden" type="button" title="立即执行全量双向同步">
+          <span id="syncRingGlyph" class="sync-ring-glyph" aria-hidden="true"></span>
+          <span id="syncStatusText" class="sync-status-text">立即同步</span>
+        </button>
+        <button id="updatePillBtn" class="version-pill" type="button" title="版本与更新通道">
+          <span id="updatePillDot" class="version-dot"></span>
+          <span id="updatePillText">v0.3.0</span>
+        </button>
       </div>
     </header>
 
-    <section id="onboardingPanel" class="onboarding-panel hidden"></section>
+    <!-- Main Body: Left Q-L-E-X Vertical Rail + Right Spacious Stage -->
+    <div id="workspaceFrame" class="workspace-frame">
+      <aside id="qlexRail" class="qlex-rail hidden" aria-label="QLEX 核心导航">
+        <nav class="qlex-rail-core">
+          <button class="qlex-rail-btn active" type="button" data-rail="Q" title="Q · QLEX Core（中枢总览与同步核心）">
+            <span class="rail-letter">Q</span>
+            <span class="rail-name">总览</span>
+          </button>
+          <button class="qlex-rail-btn" type="button" data-rail="L" title="L · Link（中心/接入点与 Tailscale 内网穿透）">
+            <span class="rail-letter">L</span>
+            <span class="rail-name">互联</span>
+          </button>
+          <button class="qlex-rail-btn" type="button" data-rail="E" title="E · Engram（认知记忆引擎、图谱与召回）">
+            <span class="rail-letter">E</span>
+            <span class="rail-name">记忆</span>
+          </button>
+          <button class="qlex-rail-btn" type="button" data-rail="X" title="X · eXtensions（跨端项目同步与 6 工具 Skills）">
+            <span class="rail-letter">X</span>
+            <span class="rail-name">工程</span>
+            <span id="railXBadge" class="rail-badge hidden"></span>
+          </button>
+        </nav>
 
-    <section id="settingsPanel" class="settings-panel hidden"></section>
+        <div class="qlex-rail-aux">
+          <button id="insightsNavBtn" class="rail-aux-btn" type="button" data-rail="insights" title="辅助洞察：Agent 用量、订阅额度与历史会话">
+            <span class="mask-icon" style="-webkit-mask-image:url('icons/views/trends.svg');mask-image:url('icons/views/trends.svg')"></span>
+            <span>洞察</span>
+          </button>
+          <button id="settingsButton" class="rail-aux-btn" type="button" data-rail="settings" title="外观、毛玻璃、侧边吸附、采集与更新设置">
+            <span class="mask-icon" style="-webkit-mask-image:url('icons/actions/settings.svg');mask-image:url('icons/actions/settings.svg')"></span>
+            <span>设置</span>
+          </button>
+        </div>
+      </aside>
 
-    <section id="hubPanel" class="hub-panel hidden"></section>
-
-    <section id="totalPanel" class="total-panel hidden">
-      <div class="label-row">
-        <span id="totalLabel">近 7 天 TOKEN</span>
-        <span id="usageUpdated">正在采集…</span>
-      </div>
-      <div class="total-number-row">
-        <div id="totalTokens" class="total-number">0</div>
-        <div id="totalCompact" class="total-compact"></div>
-      </div>
-      <div class="total-cost-row">
-        <div id="totalSubline" class="cost">—</div>
-        <button id="searchToggleBtn" class="inline-tool-btn hidden" type="button" title="搜索筛选">
-          <span class="mask-icon" style="-webkit-mask-image:url('icons/actions/search.svg');mask-image:url('icons/actions/search.svg')"></span>
-        </button>
-      </div>
-    </section>
-
-    <div id="viewBackRow" class="view-back-row hidden">
-      <button id="backButton" type="button" class="back-home-button">
-        <span class="mask-icon" style="-webkit-mask-image:url('icons/actions/arrow-left.svg');mask-image:url('icons/actions/arrow-left.svg')"></span>
-        <span id="backButtonLabel">返回首页</span>
-      </button>
-      <div id="viewHeaderActions"></div>
+      <section id="stageHost" class="stage-host">
+        <div id="onboardingPanel" class="stage-view onboarding-stage hidden"></div>
+        <div id="qStage" class="stage-view q-stage hidden"></div>
+        <div id="lStage" class="stage-view split-stage hidden"></div>
+        <div id="eStage" class="stage-view split-stage hidden"></div>
+        <div id="xStage" class="stage-view split-stage hidden"></div>
+        <div id="insightsStage" class="stage-view insights-stage hidden"></div>
+        <div id="settingsStage" class="stage-view settings-stage hidden"></div>
+      </section>
     </div>
-
-    <div id="searchHost" class="search-host hidden">
-      <div class="search-input-wrap">
-        <span class="mask-icon" style="-webkit-mask-image:url('icons/actions/search.svg');mask-image:url('icons/actions/search.svg');color:var(--muted)"></span>
-        <input id="searchInput" type="search" autocomplete="off" spellcheck="false" placeholder="搜索项目或目录…" />
-      </div>
-      <select id="sessionSourceFilter" class="search-select hidden" aria-label="筛选工具"></select>
-    </div>
-
-    <section id="homePanel" class="home-panel hidden"></section>
-    <section id="mainListPanel" class="breakdown hidden"></section>
-    <section id="limitsPanel" class="limits-panel hidden"></section>
-    <section id="trendsPanel" class="trends-panel hidden"></section>
-
-    <footer id="footer" class="footer hidden">
-      <div id="viewSwitcher" class="view-switcher">
-        <button id="viewSwitcherCurrent" class="view-switcher-current" type="button">
-          <span id="viewSwitcherIcon" class="mask-icon" style="width:14px;height:14px"></span>
-          <span id="viewSwitcherLabel" class="view-switcher-label">同步总览</span>
-        </button>
-        <button id="viewSwitcherDisclosure" class="view-switcher-disclosure" type="button" aria-label="切换视图"></button>
-        <div id="viewSwitcherMenu" class="view-switcher-menu hidden" role="menu"></div>
-      </div>
-
-      <button id="syncStatusBtn" class="sync-status-btn" type="button" title="点击同步本机技能、用量与记忆归档">
-        <span id="syncRingGlyph" class="sync-ring-glyph" aria-hidden="true"></span>
-        <span id="syncStatusText" class="sync-status-text">立即同步</span>
-      </button>
-
-      <div id="utilityActions" class="utility-actions">
-        <button id="settingsButton" class="icon-button settings-icon-button" type="button" title="设置与毛玻璃外观">
-          <span class="mask-icon" style="-webkit-mask-image:url('icons/actions/settings.svg');mask-image:url('icons/actions/settings.svg')"></span>
-        </button>
-      </div>
-    </footer>
 
     <div id="notice" class="notice hidden" role="status"></div>
   </main>

@@ -1,45 +1,30 @@
 "use strict";
 
+/* QLEX v0.3 Widescreen Controller — Q / L / E / X Vertical Rail + Orbital Core */
+
 const shell = document.querySelector("#shell");
+const closeButton = document.querySelector("#closeButton");
+const minButton = document.querySelector("#minButton");
+const pinButton = document.querySelector("#pinButton");
 const liveDot = document.querySelector("#liveDot");
 const rolePill = document.querySelector("#rolePill");
-const periodTabs = document.querySelector("#periodTabs");
-const onboardingPanel = document.querySelector("#onboardingPanel");
-const settingsPanel = document.querySelector("#settingsPanel");
-const hubPanel = document.querySelector("#hubPanel");
-const totalPanel = document.querySelector("#totalPanel");
-const totalLabel = document.querySelector("#totalLabel");
-const usageUpdated = document.querySelector("#usageUpdated");
-const totalTokensEl = document.querySelector("#totalTokens");
-const totalCompactEl = document.querySelector("#totalCompact");
-const totalSubline = document.querySelector("#totalSubline");
-const searchToggleBtn = document.querySelector("#searchToggleBtn");
-const viewBackRow = document.querySelector("#viewBackRow");
-const backButton = document.querySelector("#backButton");
-const backButtonLabel = document.querySelector("#backButtonLabel");
-const viewHeaderActions = document.querySelector("#viewHeaderActions");
-const searchHost = document.querySelector("#searchHost");
-const searchInput = document.querySelector("#searchInput");
-const sessionSourceFilter = document.querySelector("#sessionSourceFilter");
-const homePanel = document.querySelector("#homePanel");
-const mainListPanel = document.querySelector("#mainListPanel");
-const limitsPanel = document.querySelector("#limitsPanel");
-const trendsPanel = document.querySelector("#trendsPanel");
-const footer = document.querySelector("#footer");
-const viewSwitcher = document.querySelector("#viewSwitcher");
-const viewSwitcherCurrent = document.querySelector("#viewSwitcherCurrent");
-const viewSwitcherIcon = document.querySelector("#viewSwitcherIcon");
-const viewSwitcherLabel = document.querySelector("#viewSwitcherLabel");
-const viewSwitcherDisclosure = document.querySelector("#viewSwitcherDisclosure");
-const viewSwitcherMenu = document.querySelector("#viewSwitcherMenu");
+const topbarStatusPill = document.querySelector("#topbarStatusPill");
+const topbarStatusDot = document.querySelector("#topbarStatusDot");
+const topbarStatusText = document.querySelector("#topbarStatusText");
 const syncStatusBtn = document.querySelector("#syncStatusBtn");
 const syncRingGlyph = document.querySelector("#syncRingGlyph");
 const syncStatusText = document.querySelector("#syncStatusText");
-const settingsButton = document.querySelector("#settingsButton");
-const pinButton = document.querySelector("#pinButton");
-const dashButton = document.querySelector("#dashButton");
-const minButton = document.querySelector("#minButton");
-const closeButton = document.querySelector("#closeButton");
+const updatePillBtn = document.querySelector("#updatePillBtn");
+const updatePillText = document.querySelector("#updatePillText");
+const qlexRail = document.querySelector("#qlexRail");
+const railXBadge = document.querySelector("#railXBadge");
+const onboardingPanel = document.querySelector("#onboardingPanel");
+const qStage = document.querySelector("#qStage");
+const lStage = document.querySelector("#lStage");
+const eStage = document.querySelector("#eStage");
+const xStage = document.querySelector("#xStage");
+const insightsStage = document.querySelector("#insightsStage");
+const settingsStage = document.querySelector("#settingsStage");
 const noticeEl = document.querySelector("#notice");
 
 const SOURCE_NAMES = {
@@ -49,36 +34,30 @@ const SOURCE_NAMES = {
     hermes: "Hermes",
     dsh: "DSH",
 };
-const ROLES = { local: "本机", center: "中心点", endpoint: "接入点" };
-const PERIODS = { 1: "今日", 7: "近 7 天", 30: "近 30 天", 90: "近 90 天" };
-const VIEWS = [
-    { id: "home", label: "同步总览", icon: "icons/views/home.svg" },
-    { id: "memory", label: "记忆同步", icon: "icons/views/status.svg" },
-    { id: "projects", label: "项目同步", icon: "icons/views/project.svg" },
-    { id: "devices", label: "中心与接入点", icon: "icons/views/device.svg" },
-    { id: "sessions", label: "会话记录", icon: "icons/views/session.svg" },
-    { id: "usage", label: "用量统计（辅助）", icon: "icons/views/tool.svg" },
-    { id: "limits", label: "额度监控（辅助）", icon: "icons/views/limits.svg" },
-    { id: "trends", label: "用量趋势（辅助）", icon: "icons/views/trends.svg" },
-];
+const ROLES = { local: "单机模式", center: "中心点", endpoint: "接入点" };
+const PERIODS = { 1: "今日", 7: "近 7 天", 30: "近 30 天" };
+const SECTION_LABELS = {
+    Q: "Q · 中枢总览",
+    L: "L · 互联与穿透",
+    E: "E · 记忆与图谱",
+    X: "X · 项目与技能",
+    insights: "辅助洞察 · 用量与会话",
+    settings: "工作台设置",
+};
 
 let state = null;
-let view = "home";
-let settingsOpen = false;
-let openSettingsSection = "appearance";
+let activeSection = "Q"; // "Q" | "L" | "E" | "X" | "insights" | "settings"
+let insightsTab = "usage"; // "usage" | "limits" | "sessions" | "trends"
 let period = 7;
 let busy = false;
 let refreshing = false;
 let joining = false;
 let invitationAddress = "";
-let expandedSource = "";
-let projectDetail = "";
 let projectQuery = "";
 let editingProject = "";
+let projectDetail = "";
 let sessionSource = "";
-let sessionProject = "";
-let sessionLimit = 80;
-let searchVisible = false;
+let sessionLimit = 60;
 let memoryCategory = "daily";
 let memoryPreview = null;
 let memoryRecallQuery = "";
@@ -87,15 +66,12 @@ let memoryRecallResult = null;
 let memoryRetainOpen = false;
 let noticeTimer = null;
 let pendingDestination = null;
-let displayedTotal = 0;
-let numberAnimFrame = null;
+let lastAppearanceFp = "";
+let lastMaterialFp = "";
 
-const escapeHtml = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const fmtNum = (v) => v == null ? "—" : new Intl.NumberFormat("zh-CN").format(v);
-const fmtCompact = (v) => {
-    if (v == null || v < 1000) return "";
-    return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(v);
-};
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const fmtNum = (v) => v == null ? "—" : new Intl.NumberFormat("zh-CN").format(Math.round(v));
+const fmtCompact = (v) => v == null || v < 1000 ? String(v || 0) : new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(v);
 const fmtBytes = (b) => {
     if (!b) return "0 B";
     if (b < 1024) return `${b} B`;
@@ -103,7 +79,24 @@ const fmtBytes = (b) => {
     return `${(b / (1024 * 1024)).toFixed(2)} MB`;
 };
 const fmtTime = (v) => v ? new Date(v).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
+const fmtShortTime = (v) => v ? new Date(v).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : "待同步";
+const cleanHost = (h) => String(h || "").replace(/\.local$/i, "");
 const sourceColor = (src) => window.QlexTheme?.SOURCE_COLORS?.[src] || "var(--blue)";
+const projectName = (dir) => {
+    const clean = String(dir || "").replace(/[\\/]+$/, "");
+    const parts = clean.split(/[\\/]/).filter(Boolean);
+    return parts[parts.length - 1] || clean || "未命名工作区";
+};
+
+function patchHtml(el, html) {
+    if (!el || el.__qlexHtml === html) return;
+    el.__qlexHtml = html;
+    el.innerHTML = html;
+}
+
+function setVisible(el, visible) {
+    if (el) el.classList.toggle("hidden", !visible);
+}
 
 function notify(text, duration = 3200) {
     clearTimeout(noticeTimer);
@@ -126,380 +119,127 @@ function selectedReport() {
     return state.usage.history?.[period] || state.usage.week;
 }
 
-function usageNotice() {
-    if (state?.usage?.phase === "missing-engine") return "未检测到 Tokscale";
-    if (state?.usage?.phase === "partial") return "部分采集";
-    if (!state?.usage?.time) return "正在采集…";
-    return fmtTime(state.usage.time);
-}
+function computeHealth(st) {
+    let score = 100;
+    const net = st.pairing || { mode: "local" };
+    const sk = st.skills || {};
+    const ts = st.tailscale || {};
+    const mem = st.memoryArchive || {};
+    const ms = st.memorySkill || {};
 
-function projectName(directory) {
-    return state?.projects?.find(p => p.directory === directory)?.name
-        || (selectedReport()?.projects || []).find(p => p.directory === directory)?.name
-        || directory.split(/[\\/]/).filter(Boolean).at(-1)
-        || directory;
-}
+    if (st.syncStatus?.phase === "error") score -= 22;
+    if (sk.conflicts > 0) score -= Math.min(20, sk.conflicts * 5);
+    if (sk.missingLinks > 0) score -= Math.min(8, Math.ceil(sk.missingLinks / 10));
+    if (net.mode !== "local" && !net.online) score -= 18;
+    if (net.mode === "center" && (net.peers || []).some(p => p.status === "pending")) score -= 4;
+    if ((ms.installedCount || 0) < (ms.totalCount || 6)) score -= 6;
+    if ((mem.counts?.daily || 0) === 0 && (mem.cognitive?.activeItems || 0) === 0) score -= 5;
+    if (!ts.online) score -= 3;
 
-let lastSyncPhase = "idle";
-let lastOdoStr = "";
-let stretchTimer = null;
-let lastAppearanceFp = "";
-let lastMaterialFp = "";
-
-function patchHtml(el, html) {
-    if (!el) return;
-    if (el.__qlexHtml === html) return;
-    const prevScroll = el.scrollTop;
-    el.__qlexHtml = html;
-    el.innerHTML = html;
-    if (prevScroll > 0) el.scrollTop = prevScroll;
-}
-
-function animateTotalNumber(target) {
-    if (target == null || !Number.isFinite(target)) {
-        totalTokensEl.textContent = "—";
-        totalCompactEl.textContent = "";
-        lastOdoStr = "";
-        return;
-    }
-    const formatted = fmtNum(target);
-    totalCompactEl.textContent = fmtCompact(target);
-    if (formatted === lastOdoStr) return;
-
-    // #29 Odometer: build vertical 0-9 reel for each digit; roll smoothly when length matches
-    const chars = [...formatted];
-    const existingSlots = [...totalTokensEl.children];
-    const sameShape = existingSlots.length === chars.length &&
-        chars.every((ch, i) => (/\d/.test(ch) ? existingSlots[i].classList.contains("odo-slot") : existingSlots[i].textContent === ch));
-
-    if (!sameShape) {
-        totalTokensEl.innerHTML = chars.map(ch => {
-            if (!/\d/.test(ch)) return `<span class="odo-sep">${escapeHtml(ch)}</span>`;
-            const digits = "0123456789".split("").map(d => `<span>${d}</span>`).join("");
-            return `<span class="odo-slot"><span class="odo-reel" style="transform:translateY(-${Number(ch) * 1.08}em)">${digits}</span></span>`;
-        }).join("");
-    } else {
-        chars.forEach((ch, i) => {
-            if (/\d/.test(ch)) {
-                const reel = existingSlots[i].querySelector(".odo-reel");
-                if (reel) reel.style.transform = `translateY(-${Number(ch) * 1.08}em)`;
-            }
-        });
-    }
-    displayedTotal = target;
-    lastOdoStr = formatted;
+    score = Math.max(40, Math.min(100, score));
+    const phase = st.syncStatus?.phase === "syncing" ? "syncing"
+        : score >= 90 ? "ok"
+        : score >= 75 ? "warn" : "error";
+    const label = phase === "syncing" ? "双向同步中"
+        : score >= 94 ? "状态极佳"
+        : score >= 82 ? "运行良好"
+        : sk.conflicts > 0 ? `存在 ${sk.conflicts} 项技能冲突` : "建议检查连接";
+    return { score, phase, label };
 }
 
 function syncGlyphSvg(phase) {
     if (phase === "syncing") {
-        // #31 Eclipse Half rotating orbital arc
-        return `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-opacity="0.18" stroke-width="2"/><circle class="sync-eclipse-arc" cx="12" cy="12" r="8"/></svg>`;
+        return `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-opacity="0.2" stroke-width="2"/><circle class="sync-eclipse-arc" cx="12" cy="12" r="8"/></svg>`;
     }
     if (phase === "synced") {
-        // #21 Download Ring completion checkmark pop
-        return `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-opacity="0.28" stroke-width="1.8"/><path class="sync-check-path" d="M7.5 12.4 10.6 15.4 16.8 9"/></svg>`;
+        return `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-opacity="0.3" stroke-width="1.8"/><path d="M7.5 12.4 10.6 15.4 16.8 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
     }
-    if (phase === "pending" || phase === "conflict") {
+    if (phase === "conflict" || phase === "pending") {
         return `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8v4.5M12 15.8h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
-    }
-    if (phase === "error") {
-        return `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9.5 9.5l5 5m0-5-5 5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>`;
     }
     return `<svg viewBox="0 0 24 24"><path d="M19 8a7.5 7.5 0 0 0-12-1L4 10m0 0V5m0 5h5m-4 6a7.5 7.5 0 0 0 12 1l3-3m0 0v5m0-5h-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 }
 
-function updateLiveDotAndSyncButton() {
-    const net = state.pairing;
+function updateTopbarAndRail() {
+    const net = state.pairing || { mode: "local", peers: [] };
+    const st = state.syncStatus || { phase: "idle", label: "立即同步", detail: "" };
+    const sk = state.skills || {};
+    const upd = state.updater || {};
+
     liveDot.classList.remove("live", "pending");
-    if (net.mode === "center") {
-        liveDot.classList.add(net.online ? "live" : "pending");
-        liveDot.title = net.online ? "中心点在线" : "中心点未启动";
-    } else if (net.mode === "endpoint") {
-        liveDot.classList.add(net.endpoint?.status === "connected" && net.online ? "live" : "pending");
-        liveDot.title = net.endpoint?.status === "pending" ? "等待中心确认" : net.online ? "已连接中心" : "中心暂不可达";
-    } else {
-        liveDot.classList.add("live");
-        liveDot.title = "仅在本机运行";
-    }
-    rolePill.classList.toggle("hidden", !state.configured);
-    rolePill.textContent = ROLES[net.mode] || "本机";
+    if (net.mode === "center") liveDot.classList.add(net.online ? "live" : "pending");
+    else if (net.mode === "endpoint") liveDot.classList.add(net.online && net.endpoint?.status === "connected" ? "live" : "pending");
+    else liveDot.classList.add("live");
+
+    setVisible(rolePill, state.configured);
+    rolePill.textContent = ROLES[net.mode] || "单机模式";
     pinButton.classList.toggle("active", Boolean(state.appearance?.alwaysOnTop));
 
-    // #21/#31 Stateful sync pill button
-    const st = state.syncStatus || { phase: "idle", label: "立即同步", detail: "" };
-    const justCompleted = lastSyncPhase === "syncing" && st.phase === "synced";
-    lastSyncPhase = st.phase;
-    syncStatusBtn.className = `sync-status-btn phase-${st.phase}${justCompleted ? " just-synced" : ""}`;
+    setVisible(topbarStatusPill, state.configured);
+    topbarStatusText.textContent = SECTION_LABELS[activeSection] || "Q · 中枢总览";
+    topbarStatusDot.className = `status-pulse${st.phase === "syncing" ? " syncing" : (sk.conflicts > 0 || (net.mode !== "local" && !net.online)) ? " warn" : ""}`;
+
+    setVisible(syncStatusBtn, state.configured);
+    syncStatusBtn.className = `sync-pill phase-${st.phase}`;
     syncStatusBtn.disabled = st.phase === "syncing";
-    if (syncRingGlyph) syncRingGlyph.innerHTML = syncGlyphSvg(st.phase);
+    syncRingGlyph.innerHTML = syncGlyphSvg(st.phase);
     syncStatusText.textContent = st.label || "立即同步";
-    syncStatusBtn.title = st.detail || "点击同步本机技能、配对与记忆归档";
+    syncStatusBtn.title = st.detail || "立即执行全量双向同步";
+
+    const hasUpdate = upd.phase === "available" || upd.phase === "ready";
+    updatePillBtn.classList.toggle("has-update", hasUpdate);
+    updatePillText.textContent = upd.phase === "ready"
+        ? `安装 ${upd.latest?.version || ""}`
+        : upd.phase === "available"
+            ? `更新 ${upd.latest?.version || ""}`
+            : `v${state.version || "0.3.0"}`;
+
+    setVisible(qlexRail, state.configured);
+    for (const btn of qlexRail.querySelectorAll("[data-rail]")) {
+        btn.classList.toggle("active", btn.dataset.rail === activeSection);
+    }
+    const xAlerts = (sk.conflicts || 0) + (state.remoteProjects?.length || 0);
+    setVisible(railXBadge, xAlerts > 0);
+    if (xAlerts > 0) railXBadge.textContent = String(xAlerts);
 }
 
+/* ---- Onboarding ---- */
 function renderOnboarding() {
-    onboardingPanel.innerHTML = `
-      <div class="onboarding-hero">
-        <img src="../../docs/assets/brand/logo.png" alt="" />
-        <div>
-          <h1>欢迎使用 QLEX</h1>
-          <small>跨设备记忆同步 · 项目同步 · 中心点 / 接入点工作台</small>
+    patchHtml(onboardingPanel, `
+      <div class="onboarding-card">
+        <div style="display:flex;align-items:center;gap:12px">
+          <img src="../../docs/assets/brand/logo.png" alt="" style="width:42px;height:42px;border-radius:11px" />
+          <div>
+            <h1 style="margin:0;font-size:20px;color:var(--number)">欢迎使用 QLEX</h1>
+            <div class="muted-note">Q 总览 · L 互联 · E 记忆 · X 工程 — 多端 AI 工作台互联中枢</div>
+          </div>
         </div>
-      </div>
-      <div class="mode-list">
-        <label class="mode-option">
-          <input type="radio" name="mode" value="center" checked />
-          <span><strong>设为中心点（推荐主力机 / Mac mini）</strong><small>启动加密 HTTPS 同步中心，接纳其他电脑接入，双向同步记忆、项目目录与本机 Skills。</small></span>
-        </label>
-        <label class="mode-option">
-          <input type="radio" name="mode" value="endpoint" />
-          <span><strong>作为接入点加入中心</strong><small>通过一次性配对邀请或 Tailscale 内网直连加入中心，与中心双向同步记忆与项目。</small></span>
-        </label>
-        <label class="mode-option">
-          <input type="radio" name="mode" value="local" />
-          <span><strong>暂仅本机使用</strong><small>先在本机运行认知记忆引擎、项目工作区与 6 工具 Skills 对齐，随时可切换为中心点或接入点。</small></span>
-        </label>
-      </div>
-      <div id="onboardingInviteBox" class="hidden">
-        <textarea id="invite" class="glass-textarea" maxlength="4200" spellcheck="false" placeholder="在中心设备复制配对邀请后粘贴到这里…"></textarea>
-      </div>
-      <div style="display:flex;justify-content:flex-end;margin-top:4px">
-        <button class="glass-btn primary" type="button" data-action="continue">开始使用</button>
-      </div>
-    `;
-}
-
-function renderSettings() {
-    const a = state.appearance || {};
-    const net = state.pairing;
-    const mem = state.memoryArchive || {};
-    const presetItems = Object.values(window.QlexTheme.PRESETS);
-    const isGlass = a.macBackdrop === "liquid-glass" || a.macBackdrop === "liquid-glass-clear";
-    const tintVal = a.macBackdrop === "liquid-glass-clear" ? (a.macClearGlassTint ?? 35) : (a.macGlassTint ?? 0);
-
-    const section = (id, title, icon, summary, body) => {
-        const expanded = openSettingsSection === id;
-        return `<div class="settings-group">
-          <button class="settings-section-toggle" type="button" data-settings-section="${id}" aria-expanded="${expanded}">
-            <span class="settings-section-heading">
-              <span class="mask-icon" style="-webkit-mask-image:url('${icon}');mask-image:url('${icon}')"></span>
-              <span>${title}</span>
-            </span>
-            <span class="settings-section-meta">
-              <span>${escapeHtml(summary)}</span>
-              <span class="mask-icon" style="width:11px;height:11px;transform:${expanded ? "rotate(180deg)" : "none"};-webkit-mask-image:url('icons/actions/chevron-down.svg');mask-image:url('icons/actions/chevron-down.svg')"></span>
-            </span>
-          </button>
-          <div class="settings-section-details ${expanded ? "" : "hidden"}">${body}</div>
-        </div>`;
-    };
-
-    const backdropLabel = a.macBackdrop === "liquid-glass" ? "液态玻璃" : a.macBackdrop === "liquid-glass-clear" ? "清透液态玻璃" : "经典毛玻璃";
-    const appearanceBody = `
-      <div class="settings-item-col">
-        <span class="settings-item-title">界面主题配色</span>
-        <div class="theme-swatches">
-          ${presetItems.map(p => `
-            <button type="button" class="theme-swatch ${a.themePreset === p.id ? "active" : ""}" data-theme-preset="${p.id}">
-              <span class="theme-swatch-dot" style="background:${p.bg};box-shadow:inset 0 0 0 2px ${p.accent}"></span>
-              <span>${p.name}</span>
-            </button>
-          `).join("")}
+        <div class="item-list">
+          <label class="mode-option">
+            <input type="radio" name="mode" value="center" checked />
+            <span><strong>设为中心点（推荐主力机 / Mac mini）</strong><small>启动自签 TLS 同步中心，生成一次性邀请码，双向同步记忆、项目目录与 6 工具 Skills。</small></span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="mode" value="endpoint" />
+            <span><strong>作为接入点加入中心</strong><small>粘贴中心设备的一次性配对邀请，或通过 Tailscale 内网直连加入。</small></span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="mode" value="local" />
+            <span><strong>暂仅本机使用</strong><small>先在本机运行认知记忆引擎、项目工作区与 6 工具 Skills 一致化，随时可在「L 互联」中切换。</small></span>
+          </label>
         </div>
-      </div>
-      <div class="settings-item">
-        <span class="settings-item-title">系统毛玻璃材质</span>
-        <input id="systemGlassInput" class="settings-switch" type="checkbox" ${a.systemGlass !== false ? "checked" : ""} />
-      </div>
-      ${state.platform === "darwin" ? `
-        <div class="settings-item">
-          <span class="settings-item-title">macOS 背景材质</span>
-          <select id="macBackdropSelect" class="glass-select" ${a.systemGlass === false ? "disabled" : ""}>
-            <option value="vibrancy" ${a.macBackdrop === "vibrancy" ? "selected" : ""}>经典毛玻璃 (HUD)</option>
-            ${state.liquidGlassSupported ? `
-              <option value="liquid-glass" ${a.macBackdrop === "liquid-glass" ? "selected" : ""}>液态玻璃 (Liquid Glass)</option>
-              <option value="liquid-glass-clear" ${a.macBackdrop === "liquid-glass-clear" ? "selected" : ""}>清透液态玻璃 (Clear)</option>
-            ` : ""}
-          </select>
+        <div id="onboardingInviteBox" class="hidden">
+          <textarea id="invite" class="glass-textarea" maxlength="4200" spellcheck="false" placeholder="在中心设备复制配对邀请后粘贴到这里…"></textarea>
         </div>
-      ` : ""}
-      ${isGlass && a.systemGlass !== false ? `
-        <div class="settings-item-col">
-          <div style="display:flex;justify-content:space-between"><span class="settings-item-title">液态玻璃染色深度</span><span class="settings-note" id="tintValueLabel">${tintVal}%</span></div>
-          <input id="glassTintRange" class="glass-range" type="range" min="0" max="85" value="${tintVal}" />
+        <div style="display:flex;justify-content:flex-end">
+          <button class="q-primary-cta" style="min-width:150px;height:36px" type="button" data-action="continue">进入 QLEX 工作台</button>
         </div>
-      ` : `
-        <div class="settings-item-col">
-          <div style="display:flex;justify-content:space-between"><span class="settings-item-title">毛玻璃不透明度</span><span class="settings-note" id="opacityValueLabel">${a.glassOpacity ?? 68}%</span></div>
-          <input id="glassOpacityRange" class="glass-range" type="range" min="20" max="100" value="${a.glassOpacity ?? 68}" />
-        </div>
-      `}
-    `;
-
-    const dockSummary = state.edgeDock === "left" ? "左侧" : state.edgeDock === "right" ? "右侧" : "关闭";
-    const windowBody = `
-      <div class="settings-item">
-        <span class="settings-item-title">侧边吸附位置</span>
-        <select id="edgeDockSelect" class="glass-select">
-          <option value="off" ${!state.edgeDock || state.edgeDock === "off" ? "selected" : ""}>关闭</option>
-          <option value="left" ${state.edgeDock === "left" ? "selected" : ""}>屏幕左侧</option>
-          <option value="right" ${state.edgeDock === "right" ? "selected" : ""}>屏幕右侧</option>
-        </select>
-      </div>
-      <div class="settings-item">
-        <span class="settings-item-title">侧边吸附弹出方式</span>
-        <select id="edgeDockModeSelect" class="glass-select">
-          <option value="autoHide" ${state.edgeDockMode !== "always" ? "selected" : ""}>鼠标悬浮弹出（默认）</option>
-          <option value="always" ${state.edgeDockMode === "always" ? "selected" : ""}>始终停靠显示</option>
-        </select>
-      </div>
-      <div class="settings-item">
-        <span class="settings-item-title">窗口置顶显示</span>
-        <input id="alwaysOnTopInput" class="settings-switch" type="checkbox" ${a.alwaysOnTop ? "checked" : ""} />
-      </div>
-      <div class="settings-item">
-        <span class="settings-item-title">关闭窗口后后台常驻</span>
-        <input id="keepRunningInput" class="settings-switch" type="checkbox" ${state.keepRunning && state.trayAvailable ? "checked" : ""} ${state.trayAvailable ? "" : "disabled"} />
-      </div>
-      <div class="settings-note">默认收起为屏幕边缘细条，鼠标悬浮其上自动弹出毛玻璃轨道与快览气泡，移开自动收回。</div>
-    `;
-
-    const syncBody = `
-      <div class="settings-item">
-        <span class="settings-item-title">自动同步 Skills</span>
-        <input id="skillSyncInput" class="settings-switch" type="checkbox" ${state.skillSyncEnabled ? "checked" : ""} />
-      </div>
-      <div class="settings-item">
-        <span class="settings-item-title">每日/周/月记忆自动压缩</span>
-        <input id="memoryAutoInput" class="settings-switch" type="checkbox" ${state.memoryAutoCompress !== false ? "checked" : ""} />
-      </div>
-      <div class="memory-path-line">归档目录：${escapeHtml(mem.archiveDir || state.memoryArchiveDir || "")}</div>
-      <div class="row-actions-inline">
-        <button type="button" class="glass-btn sm" data-action="choose-memory-dir">更改归档目录</button>
-        <button type="button" class="glass-btn sm" data-action="open-memory-dir">打开目录 ↗</button>
-        <button type="button" class="glass-btn sm" data-jump-view="devices">技能与设备 ↗</button>
-      </div>
-    `;
-
-    const diag = state.usage?.diagnostics || {};
-    const collectorBody = `
-      <div class="settings-note">采集引擎：<strong>${escapeHtml(state.usage?.engine || "native")}</strong>（已摆脱外部 Token Monitor 强依赖，原生覆盖 5 大工具）</div>
-      <div class="diag-list">
-        ${Object.entries(SOURCE_NAMES).map(([key, label]) => {
-            const d = diag[key] || { status: "empty", filesScanned: 0, sessionsFound: 0 };
-            const statusText = d.status === "ok" ? "正常" : d.status === "missing" ? "未安装" : "无记录";
-            return `<div class="diag-row">
-              <div style="min-width:0">
-                <div style="font-weight:600;color:var(--text)">${label}</div>
-                <div class="row-subtitle">${d.sessionsFound || 0} 会话 · ${d.filesScanned || 0} 文件</div>
-              </div>
-              <span class="diag-badge ${d.status || "empty"}">${statusText}</span>
-            </div>`;
-        }).join("")}
-      </div>
-      <div class="row-actions-inline">
-        <button type="button" class="glass-btn sm primary" data-action="refresh-usage">⟳ 立即重新采集</button>
-      </div>
-    `;
-
-    const upd = state.updater || { phase: "idle", currentVersion: state.version || "0.2.0-beta.1", channel: state.updateChannel || "beta" };
-    const updSummary = upd.phase === "available" ? `新版本 ${upd.latest?.version || ""}`
-        : upd.phase === "ready" ? "已就绪 · 待安装"
-        : upd.phase === "downloading" ? `下载 ${upd.progress || 0}%`
-        : `v${upd.currentVersion || state.version || ""}`;
-    const updateBody = `
-      <div class="settings-item">
-        <span class="settings-item-title">当前版本</span>
-        <span class="row-value">v${escapeHtml(upd.currentVersion || state.version || "0.2.0-beta.1")}</span>
-      </div>
-      <div class="settings-item">
-        <span class="settings-item-title">更新推送通道</span>
-        <select id="updateChannelSelect" class="glass-select">
-          <option value="beta" ${(state.updateChannel || "beta") === "beta" ? "selected" : ""}>Beta 尝鲜版</option>
-          <option value="stable" ${state.updateChannel === "stable" ? "selected" : ""}>Stable 正式版</option>
-        </select>
-      </div>
-      <div class="settings-item">
-        <span class="settings-item-title">自动检查并推送新版本</span>
-        <input id="autoUpdatesInput" class="settings-switch" type="checkbox" ${state.autoCheckUpdates !== false ? "checked" : ""} />
-      </div>
-      ${upd.phase === "downloading" || upd.phase === "verifying" ? `
-        <div class="settings-note">${upd.phase === "verifying" ? "正在校验 SHA-256…" : `正在下载 ${escapeHtml(upd.latest?.assetName || "")} (${upd.progress || 0}%)`}</div>
-        <div class="update-progress-track"><div class="update-progress-fill" style="width:${upd.progress || 0}%"></div></div>
-      ` : upd.phase === "available" && upd.latest ? `
-        <div class="settings-note">发现新版本 <strong>${escapeHtml(upd.latest.version)}</strong>（${upd.latest.prerelease ? "Beta" : "Stable"}）${upd.latest.expectedSha256 ? " · 支持 SHA-256 校验" : ""}</div>
-      ` : upd.phase === "ready" ? `
-        <div class="settings-note" style="color:var(--success)">✓ 安装包已下载并通过 SHA-256 校验，点击下方按钮立即安装。</div>
-      ` : upd.phase === "error" ? `
-        <div class="settings-note" style="color:var(--red)">${escapeHtml(upd.error || "检查更新失败")}</div>
-      ` : upd.phase === "up-to-date" ? `
-        <div class="settings-note">当前已是最新${(state.updateChannel || "beta") === "beta" ? " Beta " : " "}版本。</div>
-      ` : ""}
-      <div class="row-actions-inline">
-        <button type="button" class="glass-btn sm" data-action="update-check">${upd.phase === "checking" ? "检查中…" : "检查更新"}</button>
-        ${upd.phase === "available" ? `<button type="button" class="glass-btn sm primary" data-action="update-download">↓ 下载更新</button>` : ""}
-        ${upd.phase === "ready" ? `<button type="button" class="glass-btn sm primary" data-action="update-install">⚡ 立即安装</button>` : ""}
-        <button type="button" class="glass-btn sm" data-action="update-open-release">发布页 ↗</button>
-      </div>
-    `;
-
-    settingsPanel.innerHTML =
-        section("appearance", "外观与毛玻璃", "icons/settings/appearance.svg", backdropLabel, appearanceBody) +
-        section("window", "窗口与侧边吸附", "icons/settings/window.svg", `${dockSummary} · ${state.edgeDockMode === "always" ? "常驻" : "悬停"}`, windowBody) +
-        section("sync", "技能同步与记忆归档", "icons/settings/sync.svg", ROLES[net.mode], syncBody) +
-        section("collectors", "本地 Agent 日志采集诊断", "icons/views/status.svg", state.usage?.engine || "native", collectorBody) +
-        section("updates", "版本下载与更新推送", "icons/views/trends.svg", updSummary, updateBody);
-}
-
-function renderSyncHubHeader() {
-    const net = state.pairing;
-    const ts = state.tailscale || {};
-    const mem = state.memoryArchive || {};
-    const cog = mem.cognitive || { activeItems: 0, entities: 0, activeEdges: 0 };
-    const boundCount = (state.projects || []).length;
-    const remoteCount = (state.remoteProjects || []).length;
-    const connectedPeers = (net.peers || []).filter(p => p.status === "connected").length;
-    const onlinePeers = (net.peers || []).filter(p => p.online).length;
-
-    const cleanPeerName = (net.endpoint?.name || "中心").replace(/\.local$/i, "");
-    const headline = net.mode === "center"
-        ? (net.online ? "中心点 · 运行中" : "中心点 · 未启动")
-        : net.mode === "endpoint"
-            ? (net.endpoint?.status === "pending" ? "接入点 · 等待确认" : net.online ? `接入点 · ${cleanPeerName}` : "接入点 · 离线缓存")
-            : "单机模式 · 可设为中心或接入";
-
-    const subAddr = ts.online && ts.self?.ip
-        ? `Tailscale ${ts.self.ip}${ts.self.dnsName ? ` · ${ts.self.dnsName}` : ""}`
-        : net.mode === "center" ? `监听端口 ${net.port} · 等待接入设备` : `设备：${(state.deviceName || "").replace(/\.local$/i, "")}`;
-
-    patchHtml(hubPanel, `
-      <div class="hub-head-row">
-        <div class="hub-role-headline" title="${escapeHtml(headline)}">${escapeHtml(headline)}</div>
-        ${view === "devices"
-            ? `<button type="button" class="glass-btn sm" data-jump-view="home">返回总览</button>`
-            : `<button type="button" class="glass-btn sm" data-jump-view="devices">${net.mode === "local" ? "设为中心 / 加入" : "节点管理 ›"}</button>`}
-      </div>
-      <div class="row-subtitle">${escapeHtml(subAddr)}</div>
-      <div class="hub-kpi-grid">
-        <button type="button" class="hub-kpi-card" data-jump-view="memory">
-          <span>同步记忆</span>
-          <strong>${fmtNum(cog.activeItems || 0)}</strong>
-          <small>${cog.entities || 0} 实体 · ${cog.activeEdges || 0} 边</small>
-        </button>
-        <button type="button" class="hub-kpi-card" data-jump-view="projects">
-          <span>同步项目</span>
-          <strong>${boundCount}${remoteCount ? `+${remoteCount}` : ""}</strong>
-          <small>${remoteCount ? `${remoteCount} 待绑定` : "跨端已对齐"}</small>
-        </button>
-        <button type="button" class="hub-kpi-card" data-jump-view="devices">
-          <span>${net.mode === "center" ? "接入节点" : "穿透网络"}</span>
-          <strong>${net.mode === "center" ? `${onlinePeers}/${connectedPeers}` : (ts.online ? "TS" : ROLES[net.mode])}</strong>
-          <small>${ts.online ? "Tailscale 在线" : (net.online ? "连接正常" : "本机就绪")}</small>
-        </button>
       </div>
     `);
 }
 
-function buildHomeSyncTrendHtml() {
+/* ---- 7-Day Compact Trend Chart for Q Stage ---- */
+function buildQTrendSvg() {
     const memDaily = state.memoryArchive?.items?.daily || [];
     const memMap = new Map(memDaily.map(item => [item.key, Number(item.rawBytes || item.compressedBytes || 0)]));
     const usageDaily = state.usage?.week?.daily || state.usage?.history?.[7]?.daily || [];
@@ -510,286 +250,332 @@ function buildHomeSyncTrendHtml() {
     const days = Array.from({ length: 7 }, (_, idx) => {
         const d = new Date(end.getFullYear(), end.getMonth(), end.getDate() - (6 - idx));
         const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-        const memVal = memMap.get(key) || 0;
-        const tokVal = usageMap.get(key) ?? (idx === 6 ? todayTotal : 0);
-        return { key, short: key.slice(5), memVal, tokVal };
+        return { key, short: key.slice(5), memVal: memMap.get(key) || 0, tokVal: usageMap.get(key) ?? (idx === 6 ? todayTotal : 0) };
     });
 
     const maxMem = Math.max(1, ...days.map(d => d.memVal));
     const maxTok = Math.max(1, ...days.map(d => d.tokVal));
-    const activeMemDays = days.filter(d => d.memVal > 0).length;
-    const activeWorkDays = days.filter(d => d.tokVal > 0).length;
+    const W = 240, H = 52, top = 6, base = 46, plotH = base - top, step = W / 7, barW = 12;
 
-    const W = 280;
-    const H = 74;
-    const padTop = 8;
-    const baseY = 66;
-    const plotH = baseY - padTop;
-    const step = W / 7;
-    const barW = 14;
-
-    const barsSvg = days.map((d, i) => {
+    const bars = days.map((d, i) => {
         const cx = step * (i + 0.5);
-        const bh = d.memVal > 0 ? Math.max(5, Math.round((d.memVal / maxMem) * (plotH * 0.85))) : 2;
-        const y = baseY - bh;
-        const op = d.memVal > 0 ? 0.72 : 0.16;
-        return `<rect x="${(cx - barW / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${barW}" height="${bh.toFixed(1)}" rx="3" fill="var(--accent)" fill-opacity="${op}"><title>${d.key} · 记忆归档 ${fmtBytes(d.memVal)}</title></rect>`;
+        const bh = d.memVal > 0 ? Math.max(4, Math.round((d.memVal / maxMem) * (plotH * 0.85))) : 2;
+        return `<rect x="${(cx - barW / 2).toFixed(1)}" y="${(base - bh).toFixed(1)}" width="${barW}" height="${bh}" rx="2.5" fill="var(--accent)" fill-opacity="${d.memVal > 0 ? 0.72 : 0.16}"><title>${d.key} · 记忆 ${fmtBytes(d.memVal)}</title></rect>`;
     }).join("");
 
     const pts = days.map((d, i) => {
         const x = step * (i + 0.5);
-        const ratio = d.tokVal > 0 ? Math.max(0.08, d.tokVal / maxTok) : 0;
-        const y = baseY - ratio * (plotH * 0.92);
-        return { x, y, d };
+        const ratio = d.tokVal > 0 ? Math.max(0.1, d.tokVal / maxTok) : 0;
+        return { x, y: base - ratio * (plotH * 0.9), d };
     });
-    const linePath = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
-    const areaPath = `${linePath} L${pts[pts.length - 1].x.toFixed(1)} ${baseY} L${pts[0].x.toFixed(1)} ${baseY} Z`;
-    const dotsSvg = pts.map(p =>
-        `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${p.d.tokVal > 0 ? 2.7 : 1.7}" fill="var(--blue)" stroke="rgba(var(--glass-rgb),0.9)" stroke-width="1"><title>${p.d.key} · 活动量 ${fmtNum(p.d.tokVal)}</title></circle>`
-    ).join("");
-
-    const lastSyncTs = Math.max(state.syncStatus?.time || 0, state.pairing?.syncMeta?.lastMemorySync?.time || 0, state.memoryArchive?.lastRun || 0);
-    const lastSyncLabel = lastSyncTs ? `最近 ${new Date(lastSyncTs).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : "近 7 天";
+    const line = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+    const dots = pts.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${p.d.tokVal > 0 ? 2.4 : 1.5}" fill="var(--blue)"><title>${p.d.key} · 活动 ${fmtNum(p.d.tokVal)}</title></circle>`).join("");
 
     return `
-      <div class="home-module">
-        <div class="home-module-head" data-jump-view="trends">
-          <span class="home-module-label">同步活动趋势</span>
-          <span class="home-module-meta">近 7 天 · 记忆 ${activeMemDays}日 / 活跃 ${activeWorkDays}日 ›</span>
-        </div>
-        <div class="home-trend-card">
-          <svg class="home-trend-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="近 7 天同步活动趋势图">
-            <defs>
-              <linearGradient id="qlexTrendArea" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="var(--blue)" stop-opacity="0.28"/>
-                <stop offset="100%" stop-color="var(--blue)" stop-opacity="0.01"/>
-              </linearGradient>
-            </defs>
-            <line x1="0" y1="${padTop}" x2="${W}" y2="${padTop}" stroke="rgba(232,238,244,0.08)" stroke-width="1"/>
-            <line x1="0" y1="${(padTop + baseY) / 2}" x2="${W}" y2="${(padTop + baseY) / 2}" stroke="rgba(232,238,244,0.08)" stroke-width="1"/>
-            <line x1="0" y1="${baseY}" x2="${W}" y2="${baseY}" stroke="rgba(232,238,244,0.14)" stroke-width="1"/>
-            ${barsSvg}
-            <path d="${areaPath}" fill="url(#qlexTrendArea)"/>
-            <path d="${linePath}" fill="none" stroke="var(--blue)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-            ${dotsSvg}
-          </svg>
-          <div class="home-trend-axis">
-            ${days.map(d => `<span>${d.short}</span>`).join("")}
-          </div>
-          <div class="home-trend-legend">
-            <div class="home-trend-legend-items">
-              <span class="home-trend-legend-item"><i class="home-trend-swatch" style="background:var(--accent)"></i>记忆归档</span>
-              <span class="home-trend-legend-item"><i class="home-trend-swatch line" style="background:var(--blue)"></i>工作活跃度</span>
-            </div>
-            <span>${escapeHtml(lastSyncLabel)}</span>
-          </div>
-        </div>
-      </div>
+      <svg class="q-trend-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <line x1="0" y1="${base}" x2="${W}" y2="${base}" stroke="rgba(232,238,244,0.12)" stroke-width="1"/>
+        ${bars}
+        <path d="${line}" fill="none" stroke="var(--blue)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+        ${dots}
+      </svg>
+      <div class="q-trend-axis">${days.map(d => `<span>${d.short}</span>`).join("")}</div>
     `;
 }
 
-function renderHome() {
-    const net = state.pairing;
+/* ---- Q Stage: QLEX Core (Orbital Sync Hub) ---- */
+function renderQStage() {
+    const net = state.pairing || { mode: "local", peers: [] };
     const ts = state.tailscale || {};
     const sk = state.skills || {};
     const mem = state.memoryArchive || {};
-    const st = state.syncStatus || { phase: "idle", label: "待同步" };
-    const syncDotColor = st.phase === "synced" ? "var(--success)"
-        : st.phase === "syncing" ? "var(--blue)"
-        : st.phase === "error" ? "var(--red)" : "var(--orange)";
-
-    const c = mem.counts || { daily: 0, weekly: 0, monthly: 0 };
-    const cog = mem.cognitive || { activeItems: 0, entities: 0, activeEdges: 0, reflectionsCount: 0 };
-    const memSkill = state.memorySkill || { installedCount: 0, totalCount: 6 };
-    const projects = state.projects || [];
+    const cog = mem.cognitive || { activeItems: 0, entities: 0, activeEdges: 0 };
+    const ms = state.memorySkill || { installedCount: 0, totalCount: 6 };
+    const st = state.syncStatus || { phase: "idle", label: "立即同步", time: 0 };
+    const health = computeHealth(state);
+    const connectedPeers = (net.peers || []).filter(p => p.status === "connected").length;
+    const onlinePeers = (net.peers || []).filter(p => p.online).length;
+    const boundProjects = state.projects || [];
     const remoteProjects = state.remoteProjects || [];
-    const syncMeta = net.syncMeta || {};
-    const upd = state.updater;
-    const updateBannerHtml = upd && (upd.phase === "available" || upd.phase === "downloading" || upd.phase === "ready") ? `
-      <div class="update-banner">
-        <div class="row-head">
-          <span class="row-title" style="color:var(--accent)">✦ ${upd.phase === "ready" ? `新版本 ${escapeHtml(upd.latest?.version || "")} 已校验就绪` : `推送新版本 ${escapeHtml(upd.latest?.version || "")}`}</span>
-          ${upd.phase === "ready"
-              ? `<button type="button" class="glass-btn sm primary" data-action="update-install">立即安装</button>`
-              : upd.phase === "downloading"
-                  ? `<span class="row-cost">${upd.progress || 0}%</span>`
-                  : `<button type="button" class="glass-btn sm primary" data-action="update-download">下载更新</button>`}
+
+    const roleHeadline = net.mode === "center"
+        ? `中心点 · ${net.online ? "运行中" : "未启动"}`
+        : net.mode === "endpoint"
+            ? `接入点 · ${net.online ? `已连 ${cleanHost(net.endpoint?.name || "中心")}` : "离线缓存"}`
+            : `本机中枢 · ${health.label}`;
+
+    const isSyncing = st.phase === "syncing";
+    const orbTone = health.phase === "warn" || health.phase === "error" ? "warn" : "";
+
+    patchHtml(qStage, `
+      <section class="q-hero">
+        <div class="q-orbit-stage ${isSyncing ? "syncing" : ""}">
+          <div class="q-orbit-ring outer">
+            <span class="q-satellite" title="${ts.online ? `Tailscale ${ts.self?.ip || ""}` : "内网发现"}"></span>
+          </div>
+          <div class="q-orbit-ring inner">
+            <span class="q-satellite accent" title="跨 Agent 技能 ${ms.installedCount}/${ms.totalCount}"></span>
+          </div>
+          <button type="button" class="q-core-orb ${orbTone}" data-action="sync-now" title="点击立即执行双向同步">
+            <svg class="orb-grid" viewBox="0 0 140 140" aria-hidden="true">
+              <circle cx="70" cy="70" r="68" fill="none" stroke="white" stroke-width="0.7"/>
+              <ellipse cx="70" cy="70" rx="34" ry="68" fill="none" stroke="white" stroke-width="0.7"/>
+              <ellipse cx="70" cy="70" rx="68" ry="26" fill="none" stroke="white" stroke-width="0.7"/>
+              <line x1="2" y1="70" x2="138" y2="70" stroke="white" stroke-width="0.6"/>
+            </svg>
+            <span class="q-core-score">${health.score}</span>
+            <span class="q-core-tag">${esc(health.label)}</span>
+          </button>
         </div>
-        ${upd.phase === "downloading" ? `<div class="update-progress-track"><div class="update-progress-fill" style="width:${upd.progress || 0}%"></div></div>` : ""}
+
+        <div class="q-hero-title">${esc(roleHeadline)}</div>
+        <div class="q-hero-sub">
+          <span>${fmtNum(cog.activeItems || 0)} 条记忆 · ${sk.uniqueSkills ?? 0} 项技能 · ${ts.online ? `Tailscale ${esc(ts.self?.ip || "")}` : "局域网就绪"}</span>
+          <span>·</span>
+          ${sk.conflicts > 0
+              ? `<button type="button" class="q-inline-link" style="color:var(--orange)" data-rail="X">解决 ${sk.conflicts} 项技能冲突 ›</button>`
+              : net.mode === "center" && net.online
+                  ? `<button type="button" class="q-inline-link" data-action="copy-invite">复制一次性邀请码</button><span>·</span><button type="button" class="q-inline-link" data-action="invite">刷新链接</button>`
+                  : `<button type="button" class="q-inline-link" data-action="tailscale-scan">扫描内网节点</button>`}
+        </div>
+
+        <button type="button" class="q-primary-cta" data-action="sync-now" ${isSyncing ? "disabled" : ""}>
+          ${isSyncing ? "正在双向同步…" : "立即双向同步"}
+        </button>
+      </section>
+
+      <section class="q-bottom-grid">
+        <div class="q-tile" data-rail="L">
+          <div class="q-tile-head">
+            <span class="q-tile-kicker"><span class="q-tile-letter">L</span>互联穿透</span>
+            <span class="tag ${ts.online || net.online ? "ok" : "warn"}">${ts.online ? "TS 在线" : ROLES[net.mode]}</span>
+          </div>
+          <div class="q-tile-val">${net.mode === "center" ? `${onlinePeers}<small>/${connectedPeers} 节点</small>` : ts.online ? `${(ts.discoveredCenters || []).length}<small> 台中心</small>` : "就绪"}</div>
+          <div class="q-tile-sub">${esc(ts.self?.dnsName || cleanHost(state.deviceName))}</div>
+        </div>
+
+        <div class="q-tile" data-rail="E">
+          <div class="q-tile-head">
+            <span class="q-tile-kicker"><span class="q-tile-letter">E</span>记忆图谱</span>
+            <span class="tag ${ms.installedCount === ms.totalCount ? "ok" : "warn"}">技能 ${ms.installedCount}/${ms.totalCount}</span>
+          </div>
+          <div class="q-tile-val">${fmtNum(cog.activeItems || 0)}<small>条</small></div>
+          <div class="q-tile-sub">${cog.entities || 0} 实体 · ${cog.activeEdges || 0} 边 · 压缩 ${mem.compressionRatio ?? 0}%</div>
+        </div>
+
+        <div class="q-tile" data-rail="X">
+          <div class="q-tile-head">
+            <span class="q-tile-kicker"><span class="q-tile-letter">X</span>项目与技能</span>
+            <span class="tag ${sk.conflicts > 0 ? "warn" : "ok"}">${sk.conflicts > 0 ? `冲突 ${sk.conflicts}` : "已对齐"}</span>
+          </div>
+          <div class="q-tile-val">${boundProjects.length}<small>项目 · ${sk.uniqueSkills ?? 0}技能</small></div>
+          <div class="q-tile-sub">${remoteProjects.length ? `${remoteProjects.length} 个远端共享项目待绑定` : "跨设备工作区与 6 工具技能"}</div>
+        </div>
+
+        <div class="q-tile" data-rail="insights">
+          <div class="q-tile-head">
+            <span class="q-tile-kicker">同步活动趋势</span>
+            <span class="card-meta">${fmtShortTime(st.time)}</span>
+          </div>
+          ${buildQTrendSvg()}
+        </div>
+      </section>
+    `);
+}
+
+/* ---- L Stage: Link (Center/Endpoint, Invite, Tailscale Mesh) ---- */
+function renderLStage() {
+    const net = state.pairing || { mode: "local", peers: [] };
+    const ts = state.tailscale || { mode: "unavailable", online: false, self: {}, tailnetPeers: [], discoveredCenters: [] };
+    const isCenter = net.mode === "center";
+    const isEndpoint = net.mode === "endpoint";
+    const syncMeta = net.syncMeta || {};
+
+    let roleBody = "";
+    if (isCenter) {
+        const entries = net.addressEntries?.length ? net.addressEntries : (net.addresses || []).map(a => ({ host: a, label: a }));
+        if (!invitationAddress || !entries.some(e => e.host === invitationAddress)) {
+            invitationAddress = net.activeInvite?.host || entries[0]?.host || "";
+        }
+        const inv = net.activeInvite;
+        const remainMin = inv ? Math.max(1, Math.ceil((inv.expiresAt - Date.now()) / 60_000)) : 0;
+        roleBody = `
+          <div class="muted-note">选择供接入设备连接的本机地址（TLS 端口 ${net.port}）</div>
+          <select id="centerAddress" class="glass-select" ${entries.length ? "" : "disabled"}>
+            ${entries.length ? entries.map(e => `<option value="${esc(e.host)}" ${e.host === invitationAddress ? "selected" : ""}>${esc(e.label)}</option>`).join("") : "<option>无可用网络地址</option>"}
+          </select>
+          ${inv ? `
+            <div class="invite-box">
+              <div class="card-head">
+                <span class="card-title" style="font-size:12px">一次性邀请码 · #${esc(inv.shortToken)}</span>
+                <span class="tag ok">剩 ${remainMin} 分钟</span>
+              </div>
+              <div class="mono-line">接入地址：${esc(inv.host)}:${inv.port}</div>
+              <div class="invite-code-mono" title="${esc(inv.code)}">${esc(inv.code)}</div>
+              <div class="btn-grid-2">
+                <button type="button" class="glass-btn primary" data-action="copy-invite">复制邀请码</button>
+                <button type="button" class="glass-btn" data-action="invite">⟳ 刷新邀请链接</button>
+              </div>
+            </div>
+          ` : `
+            <div class="btn-row">
+              <button type="button" class="glass-btn primary" data-action="invite" ${entries.length && net.online ? "" : "disabled"}>生成并复制邀请码</button>
+              ${!net.online ? `<button type="button" class="glass-btn primary" data-action="enable-center">重试启动中心</button>` : ""}
+            </div>
+          `}
+          <div class="btn-row" style="justify-content:flex-end">
+            <button type="button" class="glass-btn sm danger" data-action="use-local">停止中心并切回单机</button>
+          </div>
+        `;
+    } else if (isEndpoint) {
+        roleBody = `
+          <div class="item-row">
+            <div class="item-main">
+              <span class="item-dot" style="background:${net.online ? "var(--success)" : "var(--orange)"}"></span>
+              <div class="item-text">
+                <div class="item-title">已连接中心：${esc(cleanHost(net.endpoint?.name || net.endpoint?.address || "中心节点"))}</div>
+                <div class="item-sub">${esc(net.endpoint?.address || "")}${net.endpoint?.status === "pending" ? ` · 核对码 ${esc(net.endpoint.check)}` : ""}</div>
+              </div>
+            </div>
+            <span class="tag ${net.online ? "ok" : "warn"}">${net.endpoint?.status === "pending" ? "待确认" : net.online ? "在线" : "离线"}</span>
+          </div>
+          <div class="btn-row">
+            <button type="button" class="glass-btn primary" data-action="sync-now">⟳ 立即双向同步</button>
+            <button type="button" class="glass-btn" data-action="refresh-pairing">刷新连接</button>
+            <button type="button" class="glass-btn danger" data-action="use-local">退出中心</button>
+          </div>
+        `;
+    } else {
+        roleBody = joining ? `
+          <textarea id="invite" class="glass-textarea" placeholder="粘贴中心设备生成的一次性配对邀请码…"></textarea>
+          <div class="btn-row">
+            <button type="button" class="glass-btn primary" data-action="submit-invite">提交配对请求</button>
+            <button type="button" class="glass-btn" data-action="cancel-join">取消</button>
+          </div>
+        ` : `
+          <div class="muted-note">当前处于单机模式。设为「中心点」可接纳其他 Mac/设备同步记忆与项目；或作为「接入点」加入已有中心。</div>
+          <div class="btn-row">
+            <button type="button" class="glass-btn primary" data-action="enable-center">设为中心点</button>
+            <button type="button" class="glass-btn" data-action="show-join">作为接入点加入</button>
+          </div>
+        `;
+    }
+
+    const peersHtml = isCenter ? `
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">已接入与待审批设备</span>
+          <span class="card-meta">${(net.peers || []).length} 台</span>
+        </div>
+        ${(net.peers || []).length ? `<div class="item-list">${net.peers.map(peer => `
+          <div class="item-row">
+            <div class="item-main">
+              <span class="item-dot" style="background:${peer.status === "pending" ? "var(--orange)" : peer.online ? "var(--success)" : "var(--muted)"}"></span>
+              <div class="item-text">
+                <div class="item-title">${esc(cleanHost(peer.name))}</div>
+                <div class="item-sub">${peer.status === "pending" ? `核对码 ${esc(peer.check)} · 等待批准` : peer.online ? "在线 · 双向同步已连通" : "离线"}</div>
+              </div>
+            </div>
+            <div class="btn-row">
+              ${peer.status === "pending" ? `<button type="button" class="glass-btn sm primary" data-action="approve" data-id="${esc(peer.id)}">批准</button>` : ""}
+              <button type="button" class="glass-btn sm danger" data-action="remove" data-id="${esc(peer.id)}">${peer.status === "pending" ? "拒绝" : "撤销"}</button>
+            </div>
+          </div>
+        `).join("")}</div>` : `<div class="empty-state" style="padding:14px 8px">暂无接入设备。复制左侧一次性邀请码到另一台电脑粘贴即可接入。</div>`}
       </div>
     ` : "";
 
-    const roleDesc = net.mode === "center"
-        ? `中心 :${net.port} · ${(net.peers || []).filter(p => p.status === "connected").length} 台已连`
-        : net.mode === "endpoint"
-            ? `接入点 · ${(net.endpoint?.name || net.endpoint?.address || "中心").replace(/\.local$/i, "")} (${net.online ? "在线" : "离线"})`
-            : "单机模式 · 点击设为中心点或作为接入点加入";
+    const tsBadge = ts.mode === "system" && ts.online ? "系统 Tailscale 在线"
+        : ts.mode === "embedded" && ts.online ? "内嵌 tsnet SDK 在线"
+        : ts.embeddedRunning ? (ts.authURL ? "等待浏览器登录" : "启动中…") : "未连接";
 
-    const projectRows = [
-        ...remoteProjects.slice(0, 2).map(rp => `
-          <div class="home-list-row" data-jump-view="projects">
-            <span class="home-dot" style="background:var(--orange)"></span>
-            <div class="home-list-main">
-              <span class="home-list-name">${escapeHtml(rp.name)} <small style="color:var(--orange)">(远端共享)</small></span>
-              <span class="home-list-sub">来自 ${escapeHtml(rp.originDevice || "中心")} · 待绑定本机目录</span>
+    patchHtml(lStage, `
+      <div class="stage-header">
+        <div class="stage-title-group">
+          <span class="stage-letter-pill">L</span>
+          <h2 class="stage-title">互联与穿透</h2>
+          <span class="stage-subtitle">中心点 / 接入点配对 · 一次性邀请码 · Tailscale 内网穿透与自动发现</span>
+        </div>
+        <div class="stage-actions">
+          <button type="button" class="glass-btn sm" data-action="tailscale-scan">⟳ 扫描内网设备</button>
+          <button type="button" class="glass-btn sm primary" data-action="sync-now">立即同步</button>
+        </div>
+      </div>
+
+      <div class="split-cols wide-left">
+        <div class="col-stack">
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">${esc(cleanHost(state.deviceName))} · ${ROLES[net.mode]}</span>
+              <span class="tag ${net.online || net.mode === "local" ? "ok" : "warn"}">${isCenter ? (net.online ? "运行中" : "未启动") : isEndpoint ? (net.online ? "已连接" : "离线") : "单机"}</span>
             </div>
-            <button type="button" class="glass-btn sm primary" data-bind-remote-project="${escapeHtml(rp.syncId)}">绑定</button>
+            ${roleBody}
           </div>
-        `),
-        ...projects.slice(0, 3).map(p => `
-          <div class="home-list-row" data-project-detail="${escapeHtml(p.directory)}">
-            <span class="home-dot" style="background:var(--accent)"></span>
-            <div class="home-list-main">
-              <span class="home-list-name">${escapeHtml(p.name)}</span>
-              <span class="home-list-sub">${escapeHtml(p.directory)}</span>
+          ${peersHtml}
+        </div>
+
+        <div class="col-stack">
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">Tailscale 内网穿透 & 内嵌 tsnet SDK</span>
+              <span class="tag ${ts.online ? "ok" : "warn"}">${tsBadge}</span>
             </div>
-            <button type="button" class="glass-btn sm" data-action="open-project" data-id="${escapeHtml(p.id)}">打开</button>
+            <div class="muted-note">
+              ${ts.self?.ip ? `本机 Tailnet：<strong>${esc(ts.self.ip)}</strong>${ts.self.dnsName ? ` · ${esc(ts.self.dnsName)}` : ""}` : "自动接管系统 Tailscale，或一键启动内嵌 Go tsnet SDK 免装客户端直连。"}
+            </div>
+            <div class="btn-row">
+              <button type="button" class="glass-btn sm primary" data-action="tailscale-scan">⟳ 扫描内网中心</button>
+              ${ts.embeddedRunning
+                  ? `<button type="button" class="glass-btn sm danger" data-action="tailscale-stop-embedded">停止内嵌 SDK</button>`
+                  : ts.embeddedAvailable
+                      ? `<button type="button" class="glass-btn sm" data-action="tailscale-start-embedded">启动内嵌 tsnet SDK</button>`
+                      : ""}
+              ${ts.authURL ? `<button type="button" class="glass-btn sm primary" data-action="tailscale-open-auth">浏览器登录 ↗</button>` : ""}
+            </div>
+            ${(ts.discoveredCenters || []).length ? `<div class="item-list">${ts.discoveredCenters.map(p => `
+              <div class="item-row">
+                <div class="item-text">
+                  <div class="item-title">${esc(p.name)}</div>
+                  <div class="item-sub">${esc(p.dnsName || p.host)}:${p.port} · ${p.latencyMs}ms</div>
+                </div>
+                <span class="tag ok">${p.transport === "lan" ? "局域网" : p.transport === "tailscale-direct" ? "TS 直连" : "TS 中继"}</span>
+              </div>
+            `).join("")}</div>` : `<div class="muted-note">Tailnet 在线节点 ${(ts.tailnetPeers || []).filter(p => p.online).length} 台</div>`}
           </div>
-        `),
-    ].join("") || `<div class="home-list-sub" style="padding:2px 6px">暂未绑定同步项目，点击右侧「+ 添加」登记工作区并跨设备共享。</div>`;
 
-    const centerQuickBtns = net.mode === "center" && net.online
-        ? `<div class="home-inline-actions">
-             <button type="button" class="glass-btn sm primary" data-action="copy-invite" title="复制当前一次性邀请码">复制邀请</button>
-             <button type="button" class="glass-btn sm" data-action="invite" title="重新生成并复制新邀请码">刷新</button>
-           </div>`
-        : `<button type="button" class="glass-btn sm" data-action="tailscale-scan">扫描</button>`;
-
-    patchHtml(homePanel, updateBannerHtml + `
-      <div class="home-module">
-        <div class="home-module-head" data-jump-view="devices">
-          <span class="home-module-label">中心点与接入点 · TAILSCALE</span>
-          <span class="home-module-meta">${ts.online ? "内网穿透在线" : escapeHtml(st.label)} ›</span>
-        </div>
-        <div class="home-list-row" data-jump-view="devices">
-          <span class="home-dot" style="background:${net.online || ts.online ? "var(--success)" : "var(--orange)"}"></span>
-          <div class="home-list-main">
-            <span class="home-list-name">${escapeHtml(roleDesc)}</span>
-            <span class="home-list-sub">${net.mode === "center" && net.activeInvite ? `邀请 #${escapeHtml(net.activeInvite.shortToken)} · ${escapeHtml(net.activeInvite.host)}:${net.activeInvite.port}` : ts.online ? `Tailscale ${escapeHtml(ts.self?.ip || "")} · 发现 ${(ts.discoveredCenters || []).length} 台中心` : "支持 Tailscale 内网穿透自动发现与加密配对"}</span>
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">同步元数据与节点信息</span>
+              <span class="card-meta">${state.platform === "darwin" ? "macOS" : state.platform}</span>
+            </div>
+            <div class="kpi-strip-3">
+              <div class="kpi-chip"><span>记忆同步</span><strong>${fmtShortTime(syncMeta.lastMemorySync?.time)}</strong></div>
+              <div class="kpi-chip"><span>项目同步</span><strong>${fmtShortTime(syncMeta.lastProjectsSync?.time)}</strong></div>
+              <div class="kpi-chip"><span>监听端口</span><strong>${net.port || 46271}</strong></div>
+            </div>
+            <div class="mono-line">本机标识：${esc(state.deviceName)}</div>
           </div>
-          ${centerQuickBtns}
-        </div>
-      </div>
-
-      <div class="home-module">
-        <div class="home-module-head" data-jump-view="memory">
-          <span class="home-module-label">记忆同步与跨 AGENT 召回</span>
-          <span class="home-module-meta">Agent 技能 ${memSkill.installedCount}/${memSkill.totalCount} ›</span>
-        </div>
-        <div class="home-list-row" data-jump-view="memory">
-          <span class="home-dot" style="background:var(--purple)"></span>
-          <div class="home-list-main">
-            <span class="home-list-name">记忆 ${cog.activeItems ?? 0} · 图谱 ${cog.entities ?? 0} 实体/${cog.activeEdges ?? 0} 边</span>
-            <span class="home-list-sub">${syncMeta.lastMemorySync ? `最近跨端同步 ${fmtTime(syncMeta.lastMemorySync.time)}` : `每日 ${c.daily} · 每周 ${c.weekly} · 每月 ${c.monthly} · 压缩率 ${mem.compressionRatio ?? 0}%`}</span>
-          </div>
-          <button type="button" class="glass-btn sm primary" data-action="sync-memory-now">同步</button>
-        </div>
-      </div>
-
-      <div class="home-module">
-        <div class="home-module-head" data-jump-view="projects">
-          <span class="home-module-label">项目同步与工作区</span>
-          <span class="home-module-meta">本机 ${projects.length} · 远端 ${remoteProjects.length} ›</span>
-        </div>
-        ${projectRows}
-      </div>
-
-      <div class="home-module">
-        <div class="home-module-head" data-jump-view="devices">
-          <span class="home-module-label">本机 SKILLS 技能同步</span>
-          <span class="home-module-meta">${sk.conflicts > 0 ? `冲突 ${sk.conflicts}` : `${sk.uniqueSkills ?? 0} 项`} ›</span>
-        </div>
-        <div class="home-list-row" data-jump-view="devices">
-          <span class="home-dot" style="background:${syncDotColor}"></span>
-          <div class="home-list-main">
-            <span class="home-list-name">6 大 AI 工具技能一致化</span>
-            <span class="home-list-sub">${sk.conflicts > 0 ? `发现 ${sk.conflicts} 项冲突，点此一键解决` : sk.missingLinks > 0 ? `${sk.missingLinks} 项待同步对齐` : "全部工具目录已对齐"}</span>
-          </div>
-          <button type="button" class="glass-btn sm" data-action="sync-local-skills">对齐</button>
-        </div>
-      </div>
-
-      ${buildHomeSyncTrendHtml()}
-
-      <div class="home-module">
-        <div class="quick-actions-row">
-          <button type="button" class="quick-chip" data-action="open-memory-dir">
-            <div><strong>记忆目录</strong><small>统一归档与图谱</small></div>
-            <span>↗</span>
-          </button>
-          <button type="button" class="quick-chip" data-jump-view="usage">
-            <div><strong>用量统计</strong><small>辅助工具监控</small></div>
-            <span>›</span>
-          </button>
         </div>
       </div>
     `);
 }
 
-function renderMemoryArchiveView() {
+/* ---- E Stage: Engram (Cognitive Memory Engine, Graph, Recall, Reader) ---- */
+function renderEStage() {
     const mem = state.memoryArchive || { counts: { daily: 0, weekly: 0, monthly: 0 }, items: { daily: [], weekly: [], monthly: [] } };
     const c = mem.counts || { daily: 0, weekly: 0, monthly: 0 };
-    const cog = mem.cognitive || { activeItems: 0, supersededItems: 0, entities: 0, activeEdges: 0, historicalEdges: 0, reflectionsCount: 0, banks: {} };
-    const memSkill = state.memorySkill || { installedCount: 0, upToDateCount: 0, totalCount: 6 };
-
-    if (memoryPreview) {
-        mainListPanel.innerHTML = `
-          <div class="row">
-            <div class="row-head">
-              <span class="row-title">${escapeHtml(memoryPreview.key)}</span>
-              <div class="row-actions-inline" style="margin:0">
-                ${memoryPreview.mdPath ? `<button type="button" class="glass-btn sm" data-action="open-memory-file" data-kind="${escapeHtml(memoryPreview.kind)}" data-key="${escapeHtml(memoryPreview.key)}">外部打开 ↗</button>` : ""}
-                <button type="button" class="glass-btn sm" data-action="close-memory-preview">返回</button>
-              </div>
-            </div>
-            <div class="row-subtitle">${memoryPreview.uri ? escapeHtml(memoryPreview.uri) : `原始 ${fmtBytes(memoryPreview.rawBytes)} → gzip ${fmtBytes(memoryPreview.compressedBytes)}`}</div>
-            <pre class="memory-preview-box">${escapeHtml(memoryPreview.content)}</pre>
-          </div>
-        `;
-        return;
-    }
-
-    const catOrder = ["daily", "weekly", "monthly", "graph", "reflections"];
-    const segIdx = Math.max(0, catOrder.indexOf(memoryCategory));
+    const cog = mem.cognitive || { activeItems: 0, supersededItems: 0, entities: 0, activeEdges: 0, historicalEdges: 0, reflectionsCount: 0 };
+    const ms = state.memorySkill || { installedCount: 0, totalCount: 6 };
     const list = mem.items?.[memoryCategory] || [];
 
-    const recallSection = `
-      <div class="row">
-        <div class="row-head">
-          <span class="row-title">记忆检索 · OpenViking 分层召回</span>
-          <div class="level-pills" role="group" aria-label="OpenViking 详情层级">
-            ${["L0", "L1", "L2"].map(lv => `<button type="button" class="level-pill ${memoryRecallLevel === lv ? "active" : ""}" data-mem-level="${lv}">${lv}</button>`).join("")}
-          </div>
-        </div>
-        <form id="memoryRecallForm" class="mem-search-bar">
-          <input id="memoryRecallInput" class="glass-input" type="search" value="${escapeHtml(memoryRecallQuery)}" placeholder="检索决策 / 偏好 / 经验 / 实体…" />
-          <button type="submit" class="glass-btn sm primary">检索</button>
-        </form>
-        ${memoryRecallResult ? `
-          <div class="row-subtitle">命中 ${memoryRecallResult.results.length}/${memoryRecallResult.totalMatched} 条（${memoryRecallResult.level}）${memoryRecallResult.graphContext?.length ? ` · 关联图谱边 ${memoryRecallResult.graphContext.length}` : ""}</div>
-          ${memoryRecallResult.results.length ? memoryRecallResult.results.slice(0, 8).map(r => `
-            <div class="mem-result-card" data-browse-uri="${escapeHtml(r.uri)}">
-              <div class="row-head">
-                <span class="row-title">${escapeHtml(r.title)}</span>
-                <span class="mem-badge accent">${escapeHtml(r.bank)} · ${r.score}</span>
-              </div>
-              <div class="mem-uri">${escapeHtml(r.uri)}</div>
-              <div class="mem-result-body">${escapeHtml(memoryRecallLevel === "L0" ? r.l0 : memoryRecallLevel === "L1" ? (r.l1 || r.l0) : (r.l2 || r.l1 || r.l0))}</div>
-            </div>
-          `).join("") : `<div class="row-subtitle">未检索到相关记忆，试试其他关键词或先点击「压缩归档」。</div>`}
-        ` : ""}
-      </div>
-    `;
-
-    const retainFormHtml = memoryRetainOpen ? `
-      <form id="memoryRetainForm" class="mem-retain-form">
-        <div class="row-head">
-          <span class="row-title">写入原子记忆 (Mem0 + Graphiti)</span>
+    const retainForm = memoryRetainOpen ? `
+      <form id="memoryRetainForm" class="card" style="background:rgba(var(--sunken-rgb),0.38)">
+        <div class="card-head">
+          <span class="card-title">写入原子记忆 (Mem0 + Graphiti)</span>
           <button type="button" class="glass-btn sm" data-action="toggle-retain-form">收起</button>
         </div>
         <input id="retainTitleInput" class="glass-input" placeholder="标题（可选，自动提取）" maxlength="90" />
         <textarea id="retainContentInput" class="glass-textarea" placeholder="记录偏好、架构决策、排错经验或变更（支持「从 A 改用 B」自动演进图谱）…" required></textarea>
-        <div class="mem-retain-row">
+        <div class="btn-grid-2">
           <select id="retainBankSelect" class="glass-select">
             <option value="">自动判别分区</option>
             <option value="world">world · 事实/决策</option>
@@ -798,356 +584,448 @@ function renderMemoryArchiveView() {
           </select>
           <input id="retainProjectInput" class="glass-input" placeholder="所属项目（可选）" maxlength="64" />
         </div>
-        <input id="retainFactKeyInput" class="glass-input" placeholder="Fact Key（可选，同 Key 新事实自动 SUPERSEDE 旧事实）" maxlength="64" />
-        <div class="row-actions-inline">
-          <button type="submit" class="glass-btn sm primary">保存并更新图谱</button>
-        </div>
+        <input id="retainFactKeyInput" class="glass-input" placeholder="Fact Key（同 Key 新事实自动 SUPERSEDE 旧事实）" maxlength="64" />
+        <div class="btn-row"><button type="submit" class="glass-btn sm primary">保存并更新图谱</button></div>
       </form>
     ` : "";
 
-    let tabBody = "";
-    if (memoryCategory === "graph") {
-        tabBody = `
-          <div class="row">
-            <div class="row-head">
-              <span class="row-title">双时态知识图谱 (Cognee + Graphiti)</span>
-              <span class="row-cost">${cog.entities} 实体 · ${cog.activeEdges} 边</span>
+    let rightPanelHtml = "";
+    if (memoryPreview) {
+        rightPanelHtml = `
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">${esc(memoryPreview.key)}</span>
+              <div class="btn-row">
+                ${memoryPreview.mdPath ? `<button type="button" class="glass-btn sm" data-action="open-memory-file" data-kind="${esc(memoryPreview.kind)}" data-key="${esc(memoryPreview.key)}">外部打开 ↗</button>` : ""}
+                <button type="button" class="glass-btn sm primary" data-action="close-memory-preview">返回列表</button>
+              </div>
             </div>
-            <div class="row-subtitle">历史演进边 ${cog.historicalEdges} 条 · 已替代记忆 ${cog.supersededItems} 条</div>
-            <div class="row-actions-inline">
-              <button type="button" class="glass-btn sm primary" data-read-memory="graph:graph">查看完整图谱与演进链</button>
-              <button type="button" class="glass-btn sm" data-read-memory="items:">浏览原子记忆</button>
-            </div>
-          </div>
-        `;
-    } else if (memoryCategory === "reflections") {
-        tabBody = `
-          <div class="row">
-            <div class="row-head">
-              <span class="row-title">反思洞察与心智模型 (Hindsight)</span>
-              <span class="row-cost">${cog.reflectionsCount || 0} 条</span>
-            </div>
-            <div class="row-subtitle">基于已有事实、偏好与演进链自动合成证据化观察与项目心智模型</div>
-            <div class="row-actions-inline">
-              <button type="button" class="glass-btn sm primary" data-action="reflect-memory">✦ 立即执行反思 (Reflect)</button>
-              <button type="button" class="glass-btn sm" data-read-memory="reflections:reflections">查看反思报告</button>
-            </div>
+            <div class="mono-line">${memoryPreview.uri ? esc(memoryPreview.uri) : `原始 ${fmtBytes(memoryPreview.rawBytes)} → gzip ${fmtBytes(memoryPreview.compressedBytes)}`}</div>
+            <pre class="reader-box">${esc(memoryPreview.content)}</pre>
           </div>
         `;
     } else {
-        tabBody = list.length ? list.map(item => `
-          <div class="row clickable" data-read-memory="${memoryCategory}:${escapeHtml(item.key)}">
-            <div class="row-head">
-              <div class="row-name">
-                <span class="home-dot" style="background:${memoryCategory === "daily" ? "var(--accent)" : memoryCategory === "weekly" ? "var(--blue)" : "var(--purple)"}"></span>
-                <div style="min-width:0">
-                  <div class="row-title">${escapeHtml(item.label)}</div>
-                  <div class="row-subtitle">${escapeHtml(item.sub)}</div>
+        let tabBody = "";
+        if (memoryCategory === "graph") {
+            tabBody = `
+              <div class="muted-note">双时态知识图谱（Cognee + Graphiti）：当前活跃实体 <strong>${cog.entities}</strong> 个、有效边 <strong>${cog.activeEdges}</strong> 条、历史演进边 <strong>${cog.historicalEdges}</strong> 条、已替代记忆 <strong>${cog.supersededItems}</strong> 条。</div>
+              <div class="btn-row">
+                <button type="button" class="glass-btn sm primary" data-read-memory="graph:graph">查看完整图谱与演进链</button>
+                <button type="button" class="glass-btn sm" data-read-memory="items:">浏览原子记忆</button>
+              </div>
+            `;
+        } else if (memoryCategory === "reflections") {
+            tabBody = `
+              <div class="muted-note">Hindsight 反思洞察：基于长期事实、用户偏好与演进链自动生成证据化观察报告（当前 ${cog.reflectionsCount || 0} 条）。</div>
+              <div class="btn-row">
+                <button type="button" class="glass-btn sm primary" data-action="reflect-memory">✦ 立即执行反思</button>
+                <button type="button" class="glass-btn sm" data-read-memory="reflections:reflections">阅读反思报告</button>
+              </div>
+            `;
+        } else {
+            tabBody = list.length ? `<div class="item-list" style="max-height:360px;overflow-y:auto">${list.slice(0, 30).map(item => `
+              <div class="item-row clickable" data-read-memory="${memoryCategory}:${esc(item.key)}">
+                <div class="item-main">
+                  <span class="item-dot" style="background:${memoryCategory === "daily" ? "var(--accent)" : memoryCategory === "weekly" ? "var(--blue)" : "var(--purple)"}"></span>
+                  <div class="item-text">
+                    <div class="item-title">${esc(item.label)}</div>
+                    <div class="item-sub">${esc(item.sub)}</div>
+                  </div>
                 </div>
+                <span class="card-meta">${fmtBytes(item.compressedBytes)}</span>
               </div>
-              <div class="row-metrics">
-                <div class="row-value">${fmtBytes(item.compressedBytes)}</div>
-                <div class="row-cost">.md + .gz</div>
-              </div>
+            `).join("")}</div>` : `<div class="empty-state">暂无该周期压缩归档，点击顶部「同步并压缩」即可自动生成。</div>`;
+        }
+
+        rightPanelHtml = `
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">分层归档 · 图谱 · 反思浏览器</span>
+              <span class="tag ok">压缩率 ${mem.compressionRatio ?? 0}%</span>
             </div>
-          </div>
-        `).join("") : `<div class="empty-state">暂无「${memoryCategory === "daily" ? "每日" : memoryCategory === "weekly" ? "每周" : "每月"}」压缩归档。<br/>点击上方「立即压缩归档」即可自动生成并归类保存。</div>`;
-    }
-
-    mainListPanel.innerHTML = `
-      <div class="row">
-        <div class="row-head">
-          <span class="row-title">QLEX 认知记忆引擎 v2</span>
-          <span class="row-cost">压缩率 ${mem.compressionRatio ?? 0}%</span>
-        </div>
-        <div class="mem-badge-row">
-          <span class="mem-badge">Mem0</span>
-          <span class="mem-badge">Hindsight</span>
-          <span class="mem-badge">memU</span>
-          <span class="mem-badge">Cognee</span>
-          <span class="mem-badge">Graphiti</span>
-          <span class="mem-badge">OpenViking</span>
-        </div>
-        <div class="mem-stat-pills">
-          <div class="mem-stat-chip"><span>活跃记忆</span><strong>${fmtNum(cog.activeItems || 0)}</strong></div>
-          <div class="mem-stat-chip"><span>图谱实体/边</span><strong>${fmtNum(cog.entities || 0)}/${fmtNum(cog.activeEdges || 0)}</strong></div>
-          <div class="mem-stat-chip"><span>Agent 技能</span><strong>${memSkill.installedCount}/${memSkill.totalCount}</strong></div>
-        </div>
-        <div class="memory-path-line">${escapeHtml(mem.archiveDir || state.memoryArchiveDir || "")}</div>
-        <div class="row-actions-inline">
-          <button type="button" class="glass-btn sm primary" data-action="sync-memory-now">${mem.phase === "compressing" ? "同步中…" : "⟳ 同步并压缩"}</button>
-          <button type="button" class="glass-btn sm" data-action="install-memory-skill">✦ 部署 Agent 技能</button>
-          <button type="button" class="glass-btn sm" data-action="toggle-retain-form">+ 写入记忆</button>
-          <button type="button" class="glass-btn sm" data-action="reflect-memory">反思</button>
-          <button type="button" class="glass-btn sm" data-action="open-memory-dir">目录 ↗</button>
-        </div>
-      </div>
-
-      ${retainFormHtml}
-      ${recallSection}
-
-      <div class="seg-pills seg-5" style="--seg-index:${segIdx}" role="tablist" aria-label="记忆归档分类">
-        <span class="seg-pill-indicator" aria-hidden="true"></span>
-        <button type="button" class="seg-pill ${memoryCategory === "daily" ? "active" : ""}" data-mem-cat="daily">日(${c.daily})</button>
-        <button type="button" class="seg-pill ${memoryCategory === "weekly" ? "active" : ""}" data-mem-cat="weekly">周(${c.weekly})</button>
-        <button type="button" class="seg-pill ${memoryCategory === "monthly" ? "active" : ""}" data-mem-cat="monthly">月(${c.monthly})</button>
-        <button type="button" class="seg-pill ${memoryCategory === "graph" ? "active" : ""}" data-mem-cat="graph">图谱</button>
-        <button type="button" class="seg-pill ${memoryCategory === "reflections" ? "active" : ""}" data-mem-cat="reflections">反思</button>
-      </div>
-
-      ${tabBody}
-    `;
-}
-
-function renderUsageList() {
-    const report = selectedReport();
-    const entries = Object.entries(SOURCE_NAMES)
-        .map(([key, label]) => ({
-            key,
-            label,
-            stats: report?.totals?.[key] || { tokens: 0, sessions: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        }))
-        .sort((a, b) => b.stats.tokens - a.stats.tokens);
-    const maxTokens = Math.max(1, ...entries.map(e => e.stats.tokens));
-
-    mainListPanel.innerHTML = entries.map(({ key, label, stats }) => {
-        const pct = Math.round((stats.tokens / maxTokens) * 100);
-        const expanded = expandedSource === key;
-        return `<div class="row clickable" data-toggle-source="${key}">
-          <div class="row-head">
-            <div class="row-name">
-              <span class="home-dot" style="background:${sourceColor(key)}"></span>
-              <div style="min-width:0">
-                <div class="row-title">${label}</div>
-                <div class="row-subtitle">${fmtNum(stats.sessions)} 次会话</div>
-              </div>
+            <div class="seg-bar">
+              <button type="button" class="seg-btn ${memoryCategory === "daily" ? "active" : ""}" data-mem-cat="daily">日(${c.daily})</button>
+              <button type="button" class="seg-btn ${memoryCategory === "weekly" ? "active" : ""}" data-mem-cat="weekly">周(${c.weekly})</button>
+              <button type="button" class="seg-btn ${memoryCategory === "monthly" ? "active" : ""}" data-mem-cat="monthly">月(${c.monthly})</button>
+              <button type="button" class="seg-btn ${memoryCategory === "graph" ? "active" : ""}" data-mem-cat="graph">图谱</button>
+              <button type="button" class="seg-btn ${memoryCategory === "reflections" ? "active" : ""}" data-mem-cat="reflections">反思</button>
             </div>
-            <div class="row-metrics">
-              <div class="row-value">${fmtNum(stats.tokens)}</div>
-              <div class="row-cost">${fmtCompact(stats.tokens) || "tok"}</div>
-            </div>
-          </div>
-          <div class="bar"><div class="bar-fill" style="width:${pct}%;background:${sourceColor(key)}"></div></div>
-          ${expanded ? `<div class="row-detail-drawer">
-            <div class="detail-kv-grid">
-              <div>输入 <strong>${fmtNum(stats.input)}</strong></div>
-              <div>输出 <strong>${fmtNum(stats.output)}</strong></div>
-              <div>缓存读 <strong>${fmtNum(stats.cacheRead)}</strong></div>
-              <div>缓存写 <strong>${fmtNum(stats.cacheWrite)}</strong></div>
-            </div>
-            <div class="row-actions-inline">
-              <button type="button" class="glass-btn sm" data-session-source="${key}">查看该工具会话 →</button>
-            </div>
-          </div>` : ""}
-        </div>`;
-    }).join("");
-}
-
-function renderLimits() {
-    const codex = state.usage?.quotas?.codex;
-    if (!codex?.windows?.length) {
-        limitsPanel.innerHTML = `<div class="empty-state">暂无本机订阅额度数据。<br/>使用 Codex 后会自动从本机 rollout 日志采集剩余额度。</div>`;
-        return;
-    }
-    // #30 Tide Progress liquid wave orbs + detailed reset captions
-    limitsPanel.innerHTML = `
-      <div class="limit-head">
-        <div class="limit-name"><span class="home-dot" style="background:${sourceColor("codex")}"></span>Codex 订阅窗口</div>
-        <span class="limit-meta">采样于 ${fmtTime(codex.time)}</span>
-      </div>
-      <div class="tide-orbs-grid">
-        ${codex.windows.map(w => {
-            const expired = w.resetsAt && w.resetsAt <= Date.now();
-            const rem = expired ? 100 : Math.max(0, Math.min(100, Math.round(100 - w.used)));
-            const cls = rem <= 15 ? "danger" : rem <= 35 ? "warn" : "";
-            return `<div class="tide-card">
-              <div class="tide-orb ${cls}" style="--tide-pct:${rem}%">
-                <div class="tide-wave-wrap">
-                  <svg class="tide-wave-svg" viewBox="0 0 120 12" preserveAspectRatio="none">
-                    <path d="M0 6 Q 15 0, 30 6 T 60 6 T 90 6 T 120 6 V 12 H 0 Z"/>
-                  </svg>
-                </div>
-                <span class="tide-pct-label">${expired ? "100%" : `${rem}%`}</span>
-              </div>
-              <strong style="font-size:0.6875rem">${w.minutes ? `${fmtNum(w.minutes)} 分钟窗口` : "当前周期"}</strong>
-              <span class="limit-meta">${expired ? "窗口已重置" : w.resetsAt ? `重置 ${fmtTime(w.resetsAt)}` : "剩余额度"}</span>
-            </div>`;
-        }).join("")}
-      </div>
-    `;
-}
-
-function renderProjects() {
-    if (projectDetail) {
-        const pathEsc = escapeHtml(projectDetail);
-        const proj = (selectedReport()?.projects || []).find(p => p.directory === projectDetail);
-        const managed = state.projects.find(p => p.directory === projectDetail);
-        mainListPanel.innerHTML = `
-          <div class="row">
-            <div class="row-title" style="font-size:0.875rem;font-weight:600">${escapeHtml(projectName(projectDetail))}</div>
-            <div class="row-subtitle" style="white-space:normal;overflow-wrap:anywhere">${pathEsc}</div>
-            <div class="detail-kv-grid" style="margin-top:6px">
-              <div>${PERIODS[period]} Token <strong>${fmtNum(proj?.tokens)}</strong></div>
-              <div>会话数 <strong>${fmtNum(proj?.sessions)}</strong></div>
-            </div>
-            <div class="row-subtitle">工具：${(proj?.sources || []).map(s => SOURCE_NAMES[s] || s).join(" · ") || "—"}</div>
-            <div class="row-actions-inline" style="margin-top:6px">
-              ${managed
-                  ? `<button type="button" class="glass-btn sm" data-action="open-project" data-id="${escapeHtml(managed.id)}">打开目录</button>`
-                  : `<button type="button" class="glass-btn sm" data-action="open-discovered-project" data-directory="${pathEsc}">打开目录</button>
-                     <button type="button" class="glass-btn sm" data-action="add-discovered-project" data-directory="${pathEsc}">登记项目</button>`}
-              <button type="button" class="glass-btn sm primary" data-project-sessions="${pathEsc}">查看会话</button>
-            </div>
+            ${tabBody}
           </div>
         `;
-        return;
     }
 
+    patchHtml(eStage, `
+      <div class="stage-header">
+        <div class="stage-title-group">
+          <span class="stage-letter-pill">E</span>
+          <h2 class="stage-title">记忆与图谱</h2>
+          <span class="stage-subtitle">Mem0 · Hindsight · memU · Cognee · Graphiti · OpenViking 分层召回</span>
+        </div>
+        <div class="stage-actions">
+          <button type="button" class="glass-btn sm" data-action="open-memory-dir">归档目录 ↗</button>
+          <button type="button" class="glass-btn sm" data-action="toggle-retain-form">+ 写入记忆</button>
+          <button type="button" class="glass-btn sm primary" data-action="sync-memory-now">${mem.phase === "compressing" ? "同步中…" : "⟳ 同步并压缩"}</button>
+        </div>
+      </div>
+
+      <div class="split-cols wide-right">
+        <div class="col-stack">
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">认知记忆引擎与跨 Agent 技能</span>
+              <span class="tag ${ms.installedCount === ms.totalCount ? "ok" : "warn"}">qlex-memory ${ms.installedCount}/${ms.totalCount}</span>
+            </div>
+            <div class="kpi-strip-3">
+              <div class="kpi-chip"><span>活跃记忆</span><strong>${fmtNum(cog.activeItems || 0)}</strong></div>
+              <div class="kpi-chip"><span>图谱实体/边</span><strong>${cog.entities || 0}/${cog.activeEdges || 0}</strong></div>
+              <div class="kpi-chip"><span>日/周/月</span><strong>${c.daily}/${c.weekly}/${c.monthly}</strong></div>
+            </div>
+            <div class="btn-row">
+              <button type="button" class="glass-btn sm primary" data-action="install-memory-skill">✦ 部署 6 工具 Agent 技能</button>
+              <button type="button" class="glass-btn sm" data-action="reflect-memory">执行反思</button>
+              <button type="button" class="glass-btn sm" data-action="choose-memory-dir">更改目录</button>
+            </div>
+            <div class="mono-line">${esc(mem.archiveDir || state.memoryArchiveDir || "")}</div>
+          </div>
+
+          ${retainForm}
+
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">OpenViking 分层检索</span>
+              <div class="seg-bar">
+                ${["L0", "L1", "L2"].map(lv => `<button type="button" class="seg-btn ${memoryRecallLevel === lv ? "active" : ""}" data-mem-level="${lv}">${lv}</button>`).join("")}
+              </div>
+            </div>
+            <form id="memoryRecallForm" class="search-bar-row">
+              <input id="memoryRecallInput" class="glass-input" type="search" value="${esc(memoryRecallQuery)}" placeholder="检索架构决策、偏好、排错经验或实体…" />
+              <button type="submit" class="glass-btn sm primary">检索</button>
+            </form>
+            ${memoryRecallResult ? `
+              <div class="muted-note">命中 ${memoryRecallResult.results.length}/${memoryRecallResult.totalMatched} 条（${memoryRecallResult.level}）</div>
+              <div class="item-list" style="max-height:200px;overflow-y:auto">
+                ${memoryRecallResult.results.length ? memoryRecallResult.results.slice(0, 8).map(r => `
+                  <div class="item-row clickable" data-browse-uri="${esc(r.uri)}">
+                    <div class="item-text">
+                      <div class="item-title">${esc(r.title)}</div>
+                      <div class="item-sub">${esc(memoryRecallLevel === "L0" ? r.l0 : memoryRecallLevel === "L1" ? (r.l1 || r.l0) : (r.l2 || r.l1 || r.l0))}</div>
+                    </div>
+                    <span class="tag ok">${esc(r.bank)}</span>
+                  </div>
+                `).join("") : `<div class="muted-note">未检索到相关记忆，试试其他关键词。</div>`}
+              </div>
+            ` : `<div class="muted-note">输入关键词检索任意历史记忆，点击结果可在右侧完整阅读 L2 正文。</div>`}
+          </div>
+        </div>
+
+        <div class="col-stack">
+          ${rightPanelHtml}
+        </div>
+      </div>
+    `);
+}
+
+/* ---- X Stage: eXtensions & Workspace (Projects Sync + 6-Tool Skills Sync) ---- */
+function renderXStage() {
     const q = projectQuery.trim().toLowerCase();
     const remoteProjects = (state.remoteProjects || []).filter(rp => !q || rp.name.toLowerCase().includes(q));
-    const managed = state.projects.filter(p => !q || p.name.toLowerCase().includes(q) || p.directory.toLowerCase().includes(q));
-    const managedSet = new Set(state.projects.map(p => p.directory));
+    const managed = (state.projects || []).filter(p => !q || p.name.toLowerCase().includes(q) || p.directory.toLowerCase().includes(q));
+    const managedSet = new Set((state.projects || []).map(p => p.directory));
     const discovered = (state.usage?.week?.projects || []).filter(p =>
         !managedSet.has(p.directory) && (!q || p.name.toLowerCase().includes(q) || p.directory.toLowerCase().includes(q))
     );
 
-    const remoteHtml = remoteProjects.length ? `
-      <div class="conflict-panel" style="border-color:rgba(var(--accent-rgb),0.34);background:rgba(var(--accent-rgb),0.06)">
-        <div class="row-head">
-          <span class="row-title" style="color:var(--accent)">来自中心/其他节点的共享项目 (${remoteProjects.length})</span>
-          <button type="button" class="glass-btn sm" data-action="sync-projects-now">⟳ 同步</button>
-        </div>
-        ${remoteProjects.map(rp => `
-          <div class="ts-peer-card">
-            <div style="min-width:0">
-              <div class="row-title">${escapeHtml(rp.name)}</div>
-              <div class="row-subtitle">来源设备：${escapeHtml(rp.originDevice || "中心节点")} · ID ${escapeHtml(rp.syncId)}</div>
-            </div>
-            <button type="button" class="glass-btn sm primary" data-bind-remote-project="${escapeHtml(rp.syncId)}">绑定本机目录</button>
-          </div>
-        `).join("")}
-      </div>
-    ` : "";
+    const sk = state.skills || {};
+    const namespaces = Object.values(sk.namespaces || {});
+    const conflictDetails = sk.conflictDetails || [];
 
-    const managedHtml = managed.length ? managed.map(p => {
-        const id = escapeHtml(p.id);
-        const name = escapeHtml(p.name);
-        if (editingProject === p.id) {
-            return `<div class="row">
-              <form class="project-rename" data-id="${id}" style="display:flex;gap:5px">
-                <input id="projectRenameInput" class="glass-input" style="flex:1;min-width:0" value="${name}" maxlength="120" required />
-                <button type="submit" class="glass-btn sm primary">保存</button>
-                <button type="button" class="glass-btn sm" data-action="cancel-rename">取消</button>
-              </form>
-              <div class="row-subtitle">${escapeHtml(p.directory)}</div>
-            </div>`;
-        }
-        return `<div class="row">
-          <div class="row-head">
-            <div class="row-name clickable" data-project-detail="${escapeHtml(p.directory)}" style="cursor:pointer">
-              <span class="home-dot" style="background:var(--accent)"></span>
-              <div style="min-width:0">
-                <div class="row-title">${name}</div>
-                <div class="row-subtitle">${escapeHtml(p.directory)}</div>
+    let projectsLeftHtml = "";
+    if (projectDetail) {
+        const proj = (selectedReport()?.projects || []).find(p => p.directory === projectDetail);
+        const m = (state.projects || []).find(p => p.directory === projectDetail);
+        projectsLeftHtml = `
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">${esc(projectName(projectDetail))}</span>
+              <button type="button" class="glass-btn sm" data-action="close-project-detail">返回项目列表</button>
+            </div>
+            <div class="mono-line">${esc(projectDetail)}</div>
+            <div class="kpi-strip-3">
+              <div class="kpi-chip"><span>${PERIODS[period]} Token</span><strong>${fmtCompact(proj?.tokens || 0)}</strong></div>
+              <div class="kpi-chip"><span>会话数</span><strong>${fmtNum(proj?.sessions || 0)}</strong></div>
+              <div class="kpi-chip"><span>状态</span><strong>${m ? "已登记" : "自动发现"}</strong></div>
+            </div>
+            <div class="btn-row">
+              ${m ? `<button type="button" class="glass-btn sm" data-action="open-project" data-id="${esc(m.id)}">打开目录 ↗</button>`
+                  : `<button type="button" class="glass-btn sm" data-action="open-discovered-project" data-directory="${esc(projectDetail)}">打开目录 ↗</button>
+                     <button type="button" class="glass-btn sm primary" data-action="add-discovered-project" data-directory="${esc(projectDetail)}">+ 登记项目</button>`}
+            </div>
+          </div>
+        `;
+    } else {
+        projectsLeftHtml = `
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">跨端同步项目与工作区</span>
+              <div class="btn-row">
+                <button type="button" class="glass-btn sm" data-action="sync-projects-now">⟳ 同步</button>
+                <button type="button" class="glass-btn sm primary" data-action="add-project">+ 添加项目</button>
               </div>
             </div>
-          </div>
-          <div class="row-actions-inline">
-            <button type="button" class="glass-btn sm" data-action="open-project" data-id="${id}">打开</button>
-            <button type="button" class="glass-btn sm" data-action="rename-project" data-id="${id}">重命名</button>
-            <button type="button" class="glass-btn sm danger" data-action="remove-project" data-id="${id}">移出</button>
-          </div>
-        </div>`;
-    }).join("") : `<div class="empty-state">尚未登记本机项目。点击右上角「+ 添加」或从下方自动发现添加。</div>`;
+            <input id="projectSearchInput" class="glass-input" type="search" value="${esc(projectQuery)}" placeholder="筛选项目名称或目录路径…" />
 
-    const discoveredHtml = discovered.length ? `
-      <div class="home-module-label" style="margin-top:6px">自动发现的工作区（近 7 天）</div>
-      ${discovered.slice(0, 40).map(p => `
-        <div class="row">
-          <div class="row-head">
-            <div class="row-name clickable" data-project-detail="${escapeHtml(p.directory)}" style="cursor:pointer">
-              <span class="home-dot" style="background:${sourceColor(p.sources?.[0])}"></span>
-              <div style="min-width:0">
-                <div class="row-title">${escapeHtml(p.name)}</div>
-                <div class="row-subtitle">${p.sources.map(s => SOURCE_NAMES[s] || s).join(" · ")} · ${fmtNum(p.tokens)} tok</div>
+            ${remoteProjects.length ? `
+              <div class="conflict-box" style="border-color:rgba(var(--accent-rgb),0.36);background:rgba(var(--accent-rgb),0.06)">
+                <div class="card-head"><span class="card-title" style="font-size:12px;color:var(--accent)">远端共享项目（待绑定 ${remoteProjects.length}）</span></div>
+                ${remoteProjects.map(rp => `
+                  <div class="item-row">
+                    <div class="item-text">
+                      <div class="item-title">${esc(rp.name)}</div>
+                      <div class="item-sub">来自 ${esc(rp.originDevice || "中心节点")}</div>
+                    </div>
+                    <button type="button" class="glass-btn sm primary" data-bind-remote-project="${esc(rp.syncId)}">绑定目录</button>
+                  </div>
+                `).join("")}
               </div>
+            ` : ""}
+
+            <div class="item-list">
+              ${managed.length ? managed.map(p => editingProject === p.id ? `
+                <div class="item-row">
+                  <form class="project-rename" data-id="${esc(p.id)}" style="display:flex;gap:6px;width:100%">
+                    <input id="projectRenameInput" class="glass-input" value="${esc(p.name)}" maxlength="120" required />
+                    <button type="submit" class="glass-btn sm primary">保存</button>
+                    <button type="button" class="glass-btn sm" data-action="cancel-rename">取消</button>
+                  </form>
+                </div>
+              ` : `
+                <div class="item-row">
+                  <div class="item-main clickable" data-project-detail="${esc(p.directory)}">
+                    <span class="item-dot" style="background:var(--accent)"></span>
+                    <div class="item-text">
+                      <div class="item-title">${esc(p.name)}</div>
+                      <div class="item-sub">${esc(p.directory)}</div>
+                    </div>
+                  </div>
+                  <div class="btn-row">
+                    <button type="button" class="glass-btn sm" data-action="open-project" data-id="${esc(p.id)}">打开</button>
+                    <button type="button" class="glass-btn sm" data-action="rename-project" data-id="${esc(p.id)}">改名</button>
+                    <button type="button" class="glass-btn sm danger" data-action="remove-project" data-id="${esc(p.id)}">移出</button>
+                  </div>
+                </div>
+              `).join("") : `<div class="muted-note">尚未登记本机项目。点击右上角「+ 添加项目」或从下方自动发现工作区一键登记。</div>`}
             </div>
-            <button type="button" class="glass-btn sm btn-register" data-action="add-discovered-project" data-directory="${escapeHtml(p.directory)}">+ 登记</button>
+
+            ${discovered.length ? `
+              <div class="card-head" style="margin-top:4px"><span class="card-meta">近 7 天自动发现工作区 (${discovered.length})</span></div>
+              <div class="item-list" style="max-height:190px;overflow-y:auto">
+                ${discovered.slice(0, 30).map(p => `
+                  <div class="item-row">
+                    <div class="item-main clickable" data-project-detail="${esc(p.directory)}">
+                      <span class="item-dot" style="background:${sourceColor(p.sources?.[0])}"></span>
+                      <div class="item-text">
+                        <div class="item-title">${esc(p.name)}</div>
+                        <div class="item-sub">${(p.sources || []).map(s => SOURCE_NAMES[s] || s).join(" · ")} · ${fmtCompact(p.tokens)} tok</div>
+                      </div>
+                    </div>
+                    <button type="button" class="glass-btn sm btn-register" data-action="add-discovered-project" data-directory="${esc(p.directory)}">+ 登记</button>
+                  </div>
+                `).join("")}
+              </div>
+            ` : ""}
           </div>
-        </div>
-      `).join("")}` : "";
-
-    mainListPanel.innerHTML = remoteHtml + managedHtml + discoveredHtml;
-}
-
-function renderSessions() {
-    const q = projectQuery.trim().toLowerCase();
-    const sessions = (selectedReport()?.sessions || []).filter(s =>
-        (!sessionSource || s.source === sessionSource)
-        && (!sessionProject || s.workspace === sessionProject)
-        && (!q || (s.workspace || "").toLowerCase().includes(q) || (SOURCE_NAMES[s.source] || s.source).toLowerCase().includes(q))
-    );
-    if (!sessions.length) {
-        mainListPanel.innerHTML = `<div class="empty-state">当前条件下暂无会话记录。</div>`;
-        return;
+        `;
     }
-    const maxTok = Math.max(1, ...sessions.slice(0, sessionLimit).map(s => s.tokens));
-    mainListPanel.innerHTML = sessions.slice(0, sessionLimit).map(s => `
-      <div class="row ${s.workspace ? "clickable" : ""}" ${s.workspace ? `data-project-detail="${escapeHtml(s.workspace)}"` : ""}>
-        <div class="row-head">
-          <div class="row-name">
-            <span class="home-dot" style="background:${sourceColor(s.source)}"></span>
-            <div style="min-width:0">
-              <div class="row-title">${escapeHtml(s.workspace ? projectName(s.workspace) : "未归属工作区")}</div>
-              <div class="row-subtitle">${SOURCE_NAMES[s.source] || s.source} · ${fmtTime(s.lastActive)}</div>
+
+    patchHtml(xStage, `
+      <div class="stage-header">
+        <div class="stage-title-group">
+          <span class="stage-letter-pill">X</span>
+          <h2 class="stage-title">工程：项目同步与 Skills</h2>
+          <span class="stage-subtitle">跨设备工作区对齐 · 6 大 AI 工具本地 Skills 一致化与冲突解决</span>
+        </div>
+        <div class="stage-actions">
+          <button type="button" class="glass-btn sm" data-action="open-skill-backup-dir">冲突备份 ↗</button>
+          <button type="button" class="glass-btn sm primary" data-action="sync-local-skills">⟳ 立即对齐 Skills</button>
+        </div>
+      </div>
+
+      <div class="split-cols">
+        <div class="col-stack">${projectsLeftHtml}</div>
+
+        <div class="col-stack">
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">6 大 AI 工具 Skills 同步矩阵</span>
+              <span class="tag ${conflictDetails.length ? "warn" : "ok"}">${sk.uniqueSkills ?? 0} 项 · ${conflictDetails.length ? `冲突 ${conflictDetails.length}` : sk.missingLinks > 0 ? `待齐 ${sk.missingLinks}` : "已对齐"}</span>
+            </div>
+            <div class="skills-ns-grid">
+              ${namespaces.map(ns => `
+                <div class="skill-ns-chip ${ns.enabled ? "enabled" : ""}" data-toggle-ns="${ns.id}" title="${esc(ns.path)}">
+                  <span>${ns.enabled ? "✓ " : ""}${esc(ns.label)}</span>
+                  <strong>${ns.count}</strong>
+                </div>
+              `).join("")}
+            </div>
+            <div class="muted-note">${sk.localTime ? `最近对齐 ${fmtTime(sk.localTime)} · 新增/更新 ${sk.localSynced || 0} · 冲突 ${sk.conflicts || 0}` : "勾选需保持一致的工具目录，覆盖冲突前自动备份至 ~/.qlex-skill-backups"}</div>
+            <div class="btn-row">
+              <button type="button" class="glass-btn sm primary" data-action="sync-local-skills">⟳ 同步本机 Skills</button>
+              <button type="button" class="glass-btn sm" data-action="open-skill-dir" data-ns="agents">打开技能目录 ↗</button>
+              <button type="button" class="glass-btn sm" data-action="install-memory-skill">部署 qlex-memory</button>
             </div>
           </div>
-          <div class="row-metrics">
-            <div class="row-value">${fmtNum(s.tokens)}</div>
-            <div class="row-cost">${fmtCompact(s.tokens) || "tok"}</div>
-          </div>
+
+          ${conflictDetails.length ? `
+            <div class="conflict-box">
+              <div class="card-head">
+                <span class="card-title" style="color:var(--orange)">发现 ${conflictDetails.length} 项技能版本冲突</span>
+                <button type="button" class="glass-btn sm primary" data-action="resolve-all-conflicts">⚡ 全部按最新对齐</button>
+              </div>
+              <div class="item-list" style="max-height:240px;overflow-y:auto">
+                ${conflictDetails.map(cf => `
+                  <div class="conflict-item">
+                    <div class="card-head">
+                      <span class="item-title">${esc(cf.name)}</span>
+                      <span class="card-meta">${cf.variants.length} 个目录有差异</span>
+                    </div>
+                    <div class="conflict-variants">
+                      ${cf.variants.map(v => `
+                        <button type="button" class="conflict-pick-btn ${v.recommended ? "recommended" : ""}" data-resolve-skill="${esc(cf.name)}:${esc(v.ns)}">
+                          <span>以 ${esc(v.label)} 为准${v.recommended ? " · 推荐" : ""}</span>
+                          <small>${v.filesCount}文件 · ${fmtTime(v.mtimeMs)}</small>
+                        </button>
+                      `).join("")}
+                    </div>
+                  </div>
+                `).join("")}
+              </div>
+            </div>
+          ` : `
+            <div class="card">
+              <div class="card-head"><span class="card-title">技能冲突状态</span><span class="tag ok">0 冲突</span></div>
+              <div class="muted-note">所有已勾选的 AI 工具技能目录版本完全一致，无内容分歧。</div>
+            </div>
+          `}
         </div>
-        <div class="bar"><div class="bar-fill" style="width:${Math.round((s.tokens / maxTok) * 100)}%;background:${sourceColor(s.source)}"></div></div>
       </div>
-    `).join("") + (sessions.length > sessionLimit
-        ? `<button type="button" class="glass-btn" data-action="more-sessions" style="margin-top:4px">加载更多（剩余 ${fmtNum(sessions.length - sessionLimit)} 条）</button>`
-        : "");
+    `);
 }
 
-function trendRows() {
+/* ---- Auxiliary Insights Stage (Usage, Quotas, Sessions, Trends) ---- */
+function renderInsightsStage() {
     const report = selectedReport();
-    if (period !== 1) return report?.daily || [];
-    if (!report) return [];
-    const now = new Date();
-    const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-    return [{ date, tokens: report.total }];
-}
+    const totalSessions = report ? Object.values(report.totals || {}).reduce((s, x) => s + (x.sessions || 0), 0) : 0;
 
-function renderTrends() {
-    const rows = trendRows();
-    trendsPanel.innerHTML = `
-      <div class="trend-canvas-card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <span class="home-module-label">每日 Token 柱状图</span>
-          <button type="button" class="glass-btn sm" data-action="open-dashboard-trends">大屏分析 ↗</button>
-        </div>
-        ${rows.length ? `<canvas id="trendChart"></canvas>` : `<div class="empty-state">当前范围暂无每日趋势数据</div>`}
-      </div>
-      ${rows.length ? `<div class="breakdown">${[...rows].reverse().slice(0, 14).map(r => `
-        <div class="row" style="padding-bottom:6px">
-          <div class="row-head">
-            <span class="row-subtitle">${escapeHtml(r.date)}</span>
-            <span class="row-value">${fmtNum(r.tokens)}</span>
+    let bodyHtml = "";
+    if (insightsTab === "usage") {
+        const entries = Object.entries(SOURCE_NAMES).map(([k, label]) => ({
+            key: k, label, stats: report?.totals?.[k] || { tokens: 0, sessions: 0, input: 0, output: 0, cacheRead: 0 },
+        })).sort((a, b) => b.stats.tokens - a.stats.tokens);
+        const maxT = Math.max(1, ...entries.map(e => e.stats.tokens));
+        bodyHtml = `
+          <div class="split-cols">
+            <div class="card">
+              <div class="card-head"><span class="card-title">5 大工具用量分布（${PERIODS[period]}）</span><span class="card-meta">总计 ${fmtNum(report?.total || 0)}</span></div>
+              <div class="item-list">
+                ${entries.map(({ key, label, stats }) => `
+                  <div class="item-row" style="flex-direction:column;align-items:stretch;gap:4px">
+                    <div style="display:flex;justify-content:space-between;align-items:center">
+                      <span class="item-title"><span class="item-dot" style="display:inline-block;margin-right:7px;background:${sourceColor(key)}"></span>${label}</span>
+                      <span class="item-title" style="font-variant-numeric:tabular-nums">${fmtNum(stats.tokens)} <small style="color:var(--muted)">(${stats.sessions} 会话)</small></span>
+                    </div>
+                    <div class="bar"><div class="bar-fill" style="width:${Math.round((stats.tokens / maxT) * 100)}%;background:${sourceColor(key)}"></div></div>
+                  </div>
+                `).join("")}
+              </div>
+            </div>
+            <div class="card trend-canvas-box">
+              <div class="card-head"><span class="card-title">每日活动趋势</span><button type="button" class="glass-btn sm" data-action="open-dashboard-trends">独立大屏 ↗</button></div>
+              <canvas id="trendChart"></canvas>
+            </div>
           </div>
-        </div>`).join("")}</div>` : ""}
-    `;
-    paintTrendCanvas();
+        `;
+    } else if (insightsTab === "limits") {
+        const codex = state.usage?.quotas?.codex;
+        bodyHtml = `
+          <div class="card">
+            <div class="card-head"><span class="card-title">Codex 订阅额度监控</span><span class="card-meta">${codex?.time ? `采样于 ${fmtTime(codex.time)}` : "暂无记录"}</span></div>
+            ${codex?.windows?.length ? `<div class="tide-orbs-grid">${codex.windows.map(w => {
+                const expired = w.resetsAt && w.resetsAt <= Date.now();
+                const rem = expired ? 100 : Math.max(0, Math.min(100, Math.round(100 - w.used)));
+                const cls = rem <= 15 ? "danger" : rem <= 35 ? "warn" : "";
+                return `<div class="tide-card">
+                  <div class="tide-orb ${cls}" style="--tide-pct:${rem}%">
+                    <div class="tide-wave-wrap"></div>
+                    <span class="tide-pct-label">${rem}%</span>
+                  </div>
+                  <strong>${w.minutes ? `${fmtNum(w.minutes)} 分钟窗口` : "当前周期"}</strong>
+                  <span class="card-meta">${expired ? "窗口已重置" : w.resetsAt ? `重置 ${fmtTime(w.resetsAt)}` : "剩余额度"}</span>
+                </div>`;
+            }).join("")}</div>` : `<div class="empty-state">暂无本机订阅额度数据。使用 Codex 后将自动采集。</div>`}
+          </div>
+        `;
+    } else {
+        const sessions = (report?.sessions || []).filter(s => !sessionSource || s.source === sessionSource);
+        bodyHtml = `
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">历史会话记录（${sessions.length} 条）</span>
+              <select id="sessionSourceFilter" class="glass-select" style="width:160px">
+                <option value="">全部工具</option>
+                ${Object.entries(SOURCE_NAMES).map(([k, l]) => `<option value="${k}" ${k === sessionSource ? "selected" : ""}>${l}</option>`).join("")}
+              </select>
+            </div>
+            <div class="item-list" style="max-height:380px;overflow-y:auto">
+              ${sessions.length ? sessions.slice(0, sessionLimit).map(s => `
+                <div class="item-row">
+                  <div class="item-main">
+                    <span class="item-dot" style="background:${sourceColor(s.source)}"></span>
+                    <div class="item-text">
+                      <div class="item-title">${esc(s.workspace ? projectName(s.workspace) : "未归属工作区")}</div>
+                      <div class="item-sub">${SOURCE_NAMES[s.source] || s.source} · ${fmtTime(s.lastActive)}</div>
+                    </div>
+                  </div>
+                  <span class="card-meta">${fmtNum(s.tokens)} tok</span>
+                </div>
+              `).join("") : `<div class="empty-state">当前条件下暂无会话记录。</div>`}
+            </div>
+          </div>
+        `;
+    }
+
+    patchHtml(insightsStage, `
+      <div class="stage-header">
+        <div class="stage-title-group">
+          <h2 class="stage-title">辅助洞察</h2>
+          <span class="stage-subtitle">${PERIODS[period]} · ${fmtNum(totalSessions)} 次会话 · Token 统计仅作辅助参考</span>
+        </div>
+        <div class="stage-actions">
+          <div class="seg-bar">
+            <button type="button" class="seg-btn ${insightsTab === "usage" ? "active" : ""}" data-insights-tab="usage">用量与趋势</button>
+            <button type="button" class="seg-btn ${insightsTab === "limits" ? "active" : ""}" data-insights-tab="limits">订阅额度</button>
+            <button type="button" class="seg-btn ${insightsTab === "sessions" ? "active" : ""}" data-insights-tab="sessions">历史会话</button>
+          </div>
+          <div class="seg-bar">
+            <button type="button" class="seg-btn ${period === 1 ? "active" : ""}" data-period="1">今日</button>
+            <button type="button" class="seg-btn ${period === 7 ? "active" : ""}" data-period="7">7天</button>
+            <button type="button" class="seg-btn ${period === 30 ? "active" : ""}" data-period="30">30天</button>
+          </div>
+        </div>
+      </div>
+      ${bodyHtml}
+    `);
+
+    if (insightsTab === "usage") paintTrendCanvas();
 }
 
 function paintTrendCanvas() {
     const canvas = document.querySelector("#trendChart");
     if (!canvas) return;
-    const rows = trendRows();
+    const report = selectedReport();
+    const rows = period === 1
+        ? (report ? [{ date: new Date().toISOString().slice(0, 10), tokens: report.total || 0 }] : [])
+        : (report?.daily || []);
     const observed = new Map(rows.map(r => [r.date, r.tokens]));
     const end = new Date();
     const daysCount = Math.min(period, 30);
@@ -1166,276 +1044,163 @@ function paintTrendCanvas() {
     if (!ctx) return;
     ctx.scale(dpr, dpr);
     const style = getComputedStyle(document.documentElement);
-    const muted = style.getPropertyValue("--muted").trim() || "#a3adbb";
+    const muted = style.getPropertyValue("--muted").trim() || "#98a4b6";
     const chartColor = style.getPropertyValue("--chart-color").trim() || "#73bdf5";
     const ceiling = Math.max(1, ...series.map(s => s.tokens));
-    const left = 36, plot = w - left - 6, base = h - 20;
+    const left = 38, plot = w - left - 8, base = h - 22;
     const step = plot / series.length;
     ctx.font = "10px -apple-system, sans-serif";
     for (let t = 0; t <= 2; t++) {
-        const y = base - t * (base - 8) / 2;
+        const y = base - t * (base - 10) / 2;
         ctx.fillStyle = muted;
-        ctx.fillText(fmtCompact(Math.round(ceiling * t / 2)) || "0", 0, y + 3);
-        ctx.fillStyle = "rgba(232,238,244,0.1)";
+        ctx.fillText(fmtCompact(Math.round(ceiling * t / 2)), 0, y + 3);
+        ctx.fillStyle = "rgba(232,238,244,0.09)";
         ctx.fillRect(left, y, plot, 1);
     }
-    const barW = Math.min(20, Math.max(2, step * 0.62));
-    const labelEvery = Math.max(1, Math.ceil(series.length / 5));
+    const barW = Math.min(22, Math.max(3, step * 0.6));
+    const every = Math.max(1, Math.ceil(series.length / 6));
     series.forEach((pt, i) => {
         const cx = left + step * (i + 0.5);
-        const bh = (base - 8) * pt.tokens / ceiling;
+        const bh = (base - 10) * pt.tokens / ceiling;
         ctx.fillStyle = chartColor;
         ctx.beginPath();
         ctx.roundRect(cx - barW / 2, base - bh, barW, Math.max(bh, pt.tokens > 0 ? 2 : 0), [3, 3, 0, 0]);
         ctx.fill();
-        if (i % labelEvery === 0 || i === series.length - 1) {
+        if (i % every === 0 || i === series.length - 1) {
             ctx.fillStyle = muted;
             const txt = pt.label.slice(5);
-            ctx.fillText(txt, cx - ctx.measureText(txt).width / 2, h - 4);
+            ctx.fillText(txt, cx - ctx.measureText(txt).width / 2, h - 5);
         }
     });
 }
 
-function renderDevices() {
-    const net = state.pairing;
-    const sk = state.skills || {};
-    const namespaces = Object.values(sk.namespaces || {});
-    const isCenter = net.mode === "center";
-    const isEndpoint = net.mode === "endpoint";
-    const hubTone = (isCenter && !net.online) || (isEndpoint && (!net.online || net.endpoint?.status !== "connected")) ? "pending" : "live";
-    const hubTitle = isEndpoint ? (net.endpoint?.name || net.endpoint?.address || "中心点") : state.deviceName;
-    const hubSub = isCenter ? `中心点 · 端口 ${net.port}` : isEndpoint ? `地址 ${net.endpoint?.address}` : "本机设备 · 单机模式";
-    const hubBadge = isCenter ? (net.online ? "运行中" : "未启动")
-        : isEndpoint ? (net.endpoint?.status === "pending" ? "待确认" : net.online ? "已连接" : "不可达") : "本机";
+/* ---- Settings Stage (2-Column Spacious Settings) ---- */
+function renderSettingsStage() {
+    const a = state.appearance || {};
+    const presetItems = Object.values(window.QlexTheme?.PRESETS || {});
+    const isGlass = a.macBackdrop === "liquid-glass" || a.macBackdrop === "liquid-glass-clear";
+    const tintVal = a.macBackdrop === "liquid-glass-clear" ? (a.macClearGlassTint ?? 35) : (a.macGlassTint ?? 0);
+    const diag = state.usage?.diagnostics || {};
+    const upd = state.updater || { phase: "idle", currentVersion: state.version };
 
-    let actionHtml = "";
-    if (isCenter) {
-        const entries = net.addressEntries?.length
-            ? net.addressEntries
-            : (net.addresses || []).map(addr => ({ host: addr, label: addr }));
-        if (!invitationAddress || !entries.some(e => e.host === invitationAddress)) {
-            invitationAddress = net.activeInvite?.host || entries[0]?.host || "";
-        }
-        const choices = entries.map(e =>
-            `<option value="${escapeHtml(e.host)}" ${e.host === invitationAddress ? "selected" : ""}>${escapeHtml(e.label)}</option>`
-        ).join("");
-        const inv = net.activeInvite;
-        const remainMin = inv ? Math.max(1, Math.ceil((inv.expiresAt - Date.now()) / 60_000)) : 0;
-        const compactCode = inv?.code
-            ? (inv.code.length > 44 ? `${inv.code.slice(0, 26)}…${inv.code.slice(-14)}` : inv.code)
-            : "";
-        const invitePreviewHtml = inv ? `
-          <div class="invite-code-box">
-            <div class="invite-code-head">
-              <span class="invite-code-title">一次性邀请码 · #${escapeHtml(inv.shortToken)}</span>
-              <span class="invite-code-expiry">剩 ${remainMin} 分钟</span>
-            </div>
-            <div class="invite-code-addr" title="${escapeHtml(inv.host)}:${inv.port}">接入地址：${escapeHtml(inv.host)}:${inv.port}</div>
-            <div class="invite-code-value" title="完整邀请码已可一键复制">${escapeHtml(compactCode)}</div>
-            <div class="invite-code-actions">
-              <button type="button" class="glass-btn sm primary" data-action="copy-invite">复制邀请码</button>
-              <button type="button" class="glass-btn sm" data-action="invite">⟳ 刷新链接</button>
-            </div>
-          </div>
-          <div class="row-actions-inline" style="margin:0;justify-content:flex-end">
-            <button type="button" class="glass-btn sm danger" data-action="use-local">停止中心</button>
-          </div>
-        ` : `
-          <div class="row-actions-inline" style="margin:0">
-            <button type="button" class="glass-btn sm primary" data-action="invite" ${choices && net.online ? "" : "disabled"}>生成并复制邀请码</button>
-            ${!net.online ? `<button type="button" class="glass-btn sm primary" data-action="enable-center">重试启动</button>` : ""}
-            <button type="button" class="glass-btn sm danger" data-action="use-local">停止中心</button>
-          </div>
-        `;
-        actionHtml = `
-          <div class="row-detail-drawer">
-            <div class="row-subtitle">选择供接入设备连接的本机地址（端口 ${net.port}）</div>
-            <select id="centerAddress" class="glass-select" ${choices ? "" : "disabled"}>
-              ${choices || "<option>无可用网络地址</option>"}
-            </select>
-            ${invitePreviewHtml}
-          </div>`;
-    } else if (isEndpoint) {
-        actionHtml = `
-          <div class="row-detail-drawer">
-            ${net.endpoint?.status === "pending" ? `<div>核对码：<strong>${escapeHtml(net.endpoint.check)}</strong>（请在中心端点击确认）</div>` : ""}
-            <div class="row-actions-inline">
-              <button type="button" class="glass-btn sm" data-action="refresh-pairing">刷新连接</button>
-              <button type="button" class="glass-btn sm danger" data-action="use-local">退出中心</button>
-            </div>
-          </div>`;
-    } else {
-        actionHtml = `
-          <div class="row-detail-drawer">
-            ${joining ? `<textarea id="invite" class="glass-textarea" placeholder="粘贴中心生成的配对邀请…"></textarea>
-              <div class="row-actions-inline">
-                <button type="button" class="glass-btn sm primary" data-action="submit-invite">提交配对</button>
-                <button type="button" class="glass-btn sm" data-action="cancel-join">取消</button>
-              </div>` : `
-              <div class="row-actions-inline">
-                <button type="button" class="glass-btn sm primary" data-action="enable-center">设为中心</button>
-                <button type="button" class="glass-btn sm" data-action="show-join">加入中心</button>
-              </div>`}
-          </div>`;
-    }
-
-    const peersHtml = isCenter && net.peers?.length ? `
-      <div class="sync-device-rail-list">
-        ${net.peers.map(peer => {
-            const tone = peer.status === "pending" ? "pending" : peer.online ? "live" : "";
-            return `<div class="sync-device-row">
-              <span class="sync-device-dot" style="--node-rgb:${tone === "live" ? "var(--success-rgb)" : tone === "pending" ? "244,160,115" : "163,173,187"}"></span>
-              <div style="display:grid;gap:4px;min-width:0">
-                <div class="row-head">
-                  <span class="sync-node-title">${escapeHtml(peer.name)}</span>
-                  <span class="sync-node-state">${peer.status === "pending" ? `待确认 ${escapeHtml(peer.check)}` : peer.online ? "在线" : "离线"}</span>
-                </div>
-                <div class="row-actions-inline">
-                  ${peer.status === "pending" ? `<button type="button" class="glass-btn sm primary" data-action="approve" data-id="${escapeHtml(peer.id)}">确认</button>` : ""}
-                  <button type="button" class="glass-btn sm danger" data-action="remove" data-id="${escapeHtml(peer.id)}">${peer.status === "pending" ? "拒绝" : "撤销"}</button>
-                </div>
-              </div>
-            </div>`;
-        }).join("")}
-      </div>` : "";
-
-    const conflictDetails = sk.conflictDetails || [];
-    const conflictPanelHtml = conflictDetails.length ? `
-      <div class="conflict-panel">
-        <div class="row-head">
-          <span class="row-title" style="color:var(--orange)">发现 ${conflictDetails.length} 项技能版本冲突</span>
-          <button type="button" class="glass-btn sm primary" data-action="resolve-all-conflicts">⚡ 全部按最新对齐</button>
+    patchHtml(settingsStage, `
+      <div class="stage-header">
+        <div class="stage-title-group">
+          <h2 class="stage-title">工作台设置</h2>
+          <span class="stage-subtitle">外观材质 · 侧边吸附 · 日志采集诊断 · Beta / Stable 自动更新通道</span>
         </div>
-        <div class="row-subtitle">不同工具目录存在内容差异；覆盖前会自动备份旧版本至 ~/.qlex-skill-backups</div>
-        ${conflictDetails.map(cf => `
-          <div class="conflict-item-card">
-            <div class="row-head">
-              <span class="row-title">${escapeHtml(cf.name)}</span>
-              <span class="row-cost">${cf.variants.length} 个目录有差异</span>
-            </div>
-            <div class="conflict-variants">
-              ${cf.variants.map(v => `
-                <button type="button" class="conflict-pick-btn ${v.recommended ? "recommended" : ""}" data-resolve-skill="${escapeHtml(cf.name)}:${escapeHtml(v.ns)}" title="以 ${escapeHtml(v.label)} 目录版本为准覆盖其余目录（哈希 ${escapeHtml(v.shortHash)}）">
-                  <span>以 ${escapeHtml(v.label)} 为准${v.recommended ? " · 推荐" : ""}</span>
-                  <small>${v.filesCount}文件 · ${fmtTime(v.mtimeMs)}</small>
+      </div>
+
+      <div class="split-cols">
+        <div class="col-stack">
+          <div class="card">
+            <div class="card-head"><span class="card-title">外观与毛玻璃材质</span><span class="card-meta">主窗口与菜单栏同步生效</span></div>
+            <div class="theme-swatches">
+              ${presetItems.map(p => `
+                <button type="button" class="theme-swatch ${a.themePreset === p.id ? "active" : ""}" data-theme-preset="${p.id}">
+                  <span class="theme-swatch-dot" style="background:${p.bg};box-shadow:inset 0 0 0 2px ${p.accent}"></span>
+                  <span>${p.name}</span>
                 </button>
               `).join("")}
             </div>
-          </div>
-        `).join("")}
-      </div>
-    ` : "";
-
-    const skillsSection = `
-      <div class="row">
-        <div class="row-head">
-          <span class="row-title">本机 Skills 技能同步</span>
-          <span class="row-cost">${sk.uniqueSkills ?? 0} 项 · ${conflictDetails.length > 0 ? `冲突 ${conflictDetails.length}` : sk.missingLinks > 0 ? `待对齐 ${sk.missingLinks}` : "已对齐"}</span>
-        </div>
-        <div class="skills-ns-grid">
-          ${namespaces.map(ns => `
-            <div class="skill-ns-chip ${ns.enabled ? "enabled" : ""}" data-toggle-ns="${ns.id}" title="${escapeHtml(ns.path)}">
-              <span class="skill-ns-left">
-                <span class="check-box-svg"><svg viewBox="0 0 12 12"><path d="M2.2 6.2 4.8 8.8 9.8 3.2"/></svg></span>
-                <span>${escapeHtml(ns.label)}</span>
-              </span>
-              <strong>${ns.count}</strong>
+            <div class="settings-row">
+              <span class="settings-label">系统毛玻璃材质</span>
+              <input id="systemGlassInput" class="settings-switch" type="checkbox" ${a.systemGlass !== false ? "checked" : ""} />
             </div>
-          `).join("")}
-        </div>
-        <div class="row-subtitle">${sk.localTime ? `最近本机同步 ${fmtTime(sk.localTime)} · 新增/更新 ${sk.localSynced || 0} · 冲突 ${sk.conflicts || 0}` : "勾选需要保持一致的本机工具目录，一键安全同步（冲突保留并支持备份覆盖）"}</div>
-        <div class="row-actions-inline">
-          <button type="button" class="glass-btn sm primary" data-action="sync-local-skills">⟳ 立即同步本机 Skills</button>
-          <button type="button" class="glass-btn sm" data-action="open-skill-dir" data-ns="agents">打开技能目录 ↗</button>
-          <button type="button" class="glass-btn sm" data-action="open-skill-backup-dir">冲突备份 ↗</button>
-        </div>
-        ${conflictPanelHtml}
-      </div>
-    `;
-
-    const ts = state.tailscale || { mode: "unavailable", online: false, self: {}, tailnetPeers: [], discoveredCenters: [] };
-    const tsBadge = ts.mode === "system" && ts.online ? "系统 Tailscale 在线"
-        : ts.mode === "embedded" && ts.online ? "内嵌 tsnet SDK 在线"
-        : ts.embeddedRunning ? (ts.authURL ? "等待登录" : "启动中…")
-        : "未连接";
-    const tsSection = `
-      <div class="row">
-        <div class="row-head">
-          <span class="row-title">Tailscale 内网穿透与自动发现</span>
-          <span class="row-cost">${tsBadge}</span>
-        </div>
-        <div class="row-subtitle">${ts.self?.ip ? `本机 Tailnet：${escapeHtml(ts.self.ip)}${ts.self.dnsName ? ` · ${escapeHtml(ts.self.dnsName)}` : ""}` : "支持接管本机 Tailscale 或启动内嵌 Go tsnet SDK（免装 VPN 客户端）"}</div>
-        <div class="row-actions-inline">
-          <button type="button" class="glass-btn sm primary" data-action="tailscale-scan">⟳ 扫描内网设备</button>
-          ${ts.embeddedRunning
-              ? `<button type="button" class="glass-btn sm danger" data-action="tailscale-stop-embedded">停止内嵌 SDK</button>`
-              : ts.embeddedAvailable
-                  ? `<button type="button" class="glass-btn sm" data-action="tailscale-start-embedded">启动内嵌 tsnet SDK</button>`
-                  : ""}
-          ${ts.authURL ? `<button type="button" class="glass-btn sm primary" data-action="tailscale-open-auth">浏览器登录 ↗</button>` : ""}
-        </div>
-        ${(ts.discoveredCenters || []).length ? `
-          <div class="diag-list" style="margin-top:4px">
-            ${ts.discoveredCenters.map(p => `
-              <div class="ts-peer-card">
-                <div style="min-width:0">
-                  <div class="row-title">${escapeHtml(p.name)}</div>
-                  <div class="row-subtitle">${escapeHtml(p.dnsName || p.host)}:${p.port} · ${p.latencyMs}ms</div>
-                </div>
-                <span class="diag-badge ok">${p.transport === "lan" ? "局域网" : p.transport === "tailscale-direct" ? "TS 直连" : `TS 中继${p.relay ? `(${p.relay})` : ""}`}</span>
+            ${state.platform === "darwin" ? `
+              <div class="settings-row">
+                <span class="settings-label">macOS 背景材质</span>
+                <select id="macBackdropSelect" class="glass-select" style="width:188px" ${a.systemGlass === false ? "disabled" : ""}>
+                  <option value="vibrancy" ${a.macBackdrop === "vibrancy" ? "selected" : ""}>经典毛玻璃 (HUD)</option>
+                  ${state.liquidGlassSupported ? `
+                    <option value="liquid-glass" ${a.macBackdrop === "liquid-glass" ? "selected" : ""}>液态玻璃 (Liquid Glass)</option>
+                    <option value="liquid-glass-clear" ${a.macBackdrop === "liquid-glass-clear" ? "selected" : ""}>清透液态玻璃 (Clear)</option>
+                  ` : ""}
+                </select>
               </div>
-            `).join("")}
+            ` : ""}
+            ${isGlass && a.systemGlass !== false ? `
+              <div class="settings-row"><span class="settings-label">液态玻璃染色深度</span><span class="card-meta" id="tintValueLabel">${tintVal}%</span></div>
+              <input id="glassTintRange" class="glass-range" type="range" min="0" max="85" value="${tintVal}" />
+            ` : `
+              <div class="settings-row"><span class="settings-label">毛玻璃不透明度</span><span class="card-meta" id="opacityValueLabel">${a.glassOpacity ?? 68}%</span></div>
+              <input id="glassOpacityRange" class="glass-range" type="range" min="20" max="100" value="${a.glassOpacity ?? 68}" />
+            `}
           </div>
-        ` : (ts.tailnetPeers || []).filter(p => p.online).length ? `
-          <div class="row-subtitle">Tailnet 在线节点 ${(ts.tailnetPeers || []).filter(p => p.online).length} 台（未发现已开启中心的 QLEX 节点）</div>
-        ` : ""}
-      </div>
-    `;
 
-    patchHtml(mainListPanel, `
-      <div class="sync-map">
-        <div class="sync-node ${hubTone}">
-          <span class="sync-node-icon">
-            <span class="mask-icon" style="-webkit-mask-image:url('icons/devices/${isCenter || isEndpoint ? "server" : "laptop"}.svg');mask-image:url('icons/devices/${isCenter || isEndpoint ? "server" : "laptop"}.svg')"></span>
-          </span>
-          <div class="sync-node-text">
-            <div class="sync-node-title">${escapeHtml(hubTitle)}</div>
-            <div class="sync-node-sub">${escapeHtml(hubSub)}</div>
+          <div class="card">
+            <div class="card-head"><span class="card-title">窗口、侧边吸附与自动化</span></div>
+            <div class="settings-row">
+              <span class="settings-label">侧边吸附位置</span>
+              <select id="edgeDockSelect" class="glass-select" style="width:168px">
+                <option value="off" ${!state.edgeDock || state.edgeDock === "off" ? "selected" : ""}>关闭</option>
+                <option value="left" ${state.edgeDock === "left" ? "selected" : ""}>屏幕左侧</option>
+                <option value="right" ${state.edgeDock === "right" ? "selected" : ""}>屏幕右侧</option>
+              </select>
+            </div>
+            <div class="settings-row">
+              <span class="settings-label">侧边吸附弹出方式</span>
+              <select id="edgeDockModeSelect" class="glass-select" style="width:168px">
+                <option value="autoHide" ${state.edgeDockMode !== "always" ? "selected" : ""}>鼠标悬浮弹出</option>
+                <option value="always" ${state.edgeDockMode === "always" ? "selected" : ""}>始终停靠显示</option>
+              </select>
+            </div>
+            <div class="settings-row"><span class="settings-label">自动同步本机 Skills</span><input id="skillSyncInput" class="settings-switch" type="checkbox" ${state.skillSyncEnabled ? "checked" : ""} /></div>
+            <div class="settings-row"><span class="settings-label">每日/周/月记忆自动压缩</span><input id="memoryAutoInput" class="settings-switch" type="checkbox" ${state.memoryAutoCompress !== false ? "checked" : ""} /></div>
+            <div class="settings-row"><span class="settings-label">窗口置顶显示</span><input id="alwaysOnTopInput" class="settings-switch" type="checkbox" ${a.alwaysOnTop ? "checked" : ""} /></div>
+            <div class="settings-row"><span class="settings-label">关闭窗口后菜单栏后台常驻</span><input id="keepRunningInput" class="settings-switch" type="checkbox" ${state.keepRunning && state.trayAvailable ? "checked" : ""} ${state.trayAvailable ? "" : "disabled"} /></div>
           </div>
-          <span class="sync-node-state">${hubBadge}</span>
         </div>
-        ${peersHtml}
-      </div>
-      ${actionHtml}
-    ` + tsSection + skillsSection + `
-      <div class="row" style="margin-top:2px">
-        <div class="row-head"><span class="row-subtitle">本机设备</span><span class="row-value">${escapeHtml(state.deviceName)}</span></div>
-        <div class="row-head"><span class="row-subtitle">系统平台</span><span class="row-value">${state.platform === "darwin" ? "macOS" : state.platform}</span></div>
+
+        <div class="col-stack">
+          <div class="card">
+            <div class="card-head"><span class="card-title">版本下载与更新推送通道</span><span class="tag ok">v${esc(upd.currentVersion || state.version)}</span></div>
+            <div class="settings-row">
+              <span class="settings-label">推送通道</span>
+              <select id="updateChannelSelect" class="glass-select" style="width:168px">
+                <option value="beta" ${(state.updateChannel || "beta") === "beta" ? "selected" : ""}>Beta 尝鲜版</option>
+                <option value="stable" ${state.updateChannel === "stable" ? "selected" : ""}>Stable 正式版</option>
+              </select>
+            </div>
+            <div class="settings-row"><span class="settings-label">启动与定时自动检查更新</span><input id="autoUpdatesInput" class="settings-switch" type="checkbox" ${state.autoCheckUpdates !== false ? "checked" : ""} /></div>
+            ${upd.phase === "downloading" || upd.phase === "verifying" ? `
+              <div class="muted-note">${upd.phase === "verifying" ? "正在校验 SHA-256…" : `正在下载 ${esc(upd.latest?.assetName || "")} (${upd.progress || 0}%)`}</div>
+              <div class="update-progress-track"><div class="update-progress-fill" style="width:${upd.progress || 0}%"></div></div>
+            ` : upd.phase === "available" && upd.latest ? `
+              <div class="muted-note" style="color:var(--accent)">发现新版本 <strong>${esc(upd.latest.version)}</strong>（支持 SHA-256 强制校验）</div>
+            ` : upd.phase === "ready" ? `
+              <div class="muted-note" style="color:var(--success)">✓ 安装包已校验就绪，点击下方按钮立即安装。</div>
+            ` : upd.phase === "error" ? `
+              <div class="muted-note" style="color:var(--red)">${esc(upd.error || "检查更新失败")}</div>
+            ` : `<div class="muted-note">当前已是最新${(state.updateChannel || "beta") === "beta" ? " Beta " : " "}版本（更新源：haoyu-qi/qlex）。</div>`}
+            <div class="btn-row">
+              <button type="button" class="glass-btn sm" data-action="update-check">${upd.phase === "checking" ? "检查中…" : "检查更新"}</button>
+              ${upd.phase === "available" ? `<button type="button" class="glass-btn sm primary" data-action="update-download">↓ 下载更新</button>` : ""}
+              ${upd.phase === "ready" ? `<button type="button" class="glass-btn sm primary" data-action="update-install">⚡ 立即安装</button>` : ""}
+              <button type="button" class="glass-btn sm" data-action="update-open-release">发布页 ↗</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">本地 5 大 Agent 日志采集诊断</span>
+              <button type="button" class="glass-btn sm" data-action="refresh-usage">⟳ 重新采集</button>
+            </div>
+            <div class="item-list">
+              ${Object.entries(SOURCE_NAMES).map(([k, label]) => {
+                  const d = diag[k] || { status: "empty", filesScanned: 0, sessionsFound: 0 };
+                  const cls = d.status === "ok" ? "ok" : d.status === "missing" ? "warn" : "";
+                  const txt = d.status === "ok" ? "正常" : d.status === "missing" ? "未安装" : "无记录";
+                  return `<div class="item-row" style="padding:7px 10px">
+                    <div class="item-text"><div class="item-title" style="font-size:12px">${label}</div><div class="item-sub">${d.sessionsFound || 0} 会话 · ${d.filesScanned || 0} 文件</div></div>
+                    <span class="tag ${cls}">${txt}</span>
+                  </div>`;
+              }).join("")}
+            </div>
+          </div>
+        </div>
       </div>
     `);
-}
-
-function renderViewSwitcher() {
-    const active = VIEWS.find(v => v.id === view) || VIEWS[0];
-    const iconCss = `url('${active.icon}')`;
-    if (viewSwitcherIcon.style.maskImage !== iconCss) {
-        viewSwitcherIcon.style.webkitMaskImage = iconCss;
-        viewSwitcherIcon.style.maskImage = iconCss;
-    }
-    if (viewSwitcherLabel.textContent !== active.label) {
-        viewSwitcherLabel.textContent = active.label;
-    }
-    patchHtml(viewSwitcherMenu, VIEWS.map(v => `
-      <button class="view-switcher-menu-item ${v.id === view ? "is-current" : ""}" type="button" role="menuitemradio" data-view="${v.id}">
-        <span class="mask-icon" style="width:14px;height:14px;-webkit-mask-image:url('${v.icon}');mask-image:url('${v.icon}')"></span>
-        <span>${v.label}</span>
-      </button>
-    `).join(""));
-}
-
-function setVisible(el, visible) {
-    if (!el) return;
-    el.classList.toggle("hidden", !visible);
 }
 
 function render() {
@@ -1443,117 +1208,44 @@ function render() {
     const appFp = JSON.stringify(state.appearance || {});
     if (appFp !== lastAppearanceFp) {
         lastAppearanceFp = appFp;
-        window.QlexTheme.applyAppearance(state.appearance);
+        window.QlexTheme?.applyAppearance(state.appearance);
     }
     const matFp = JSON.stringify(state.nativeMaterial || {});
     if (state.nativeMaterial && matFp !== lastMaterialFp) {
         lastMaterialFp = matFp;
-        window.QlexTheme.applyNativeMaterial(state.nativeMaterial);
-    }
-    updateLiveDotAndSyncButton();
-
-    shell.classList.toggle("onboarding-open", !state.configured);
-    shell.classList.toggle("settings-open", state.configured && settingsOpen);
-    settingsButton.classList.toggle("active", settingsOpen);
-
-    const slotMap = { 1: 0, 7: 1, 30: 2, 90: 2 };
-    periodTabs.style.setProperty("--period-index", String(slotMap[period] ?? 1));
-    for (const tab of periodTabs.querySelectorAll(".tab")) {
-        tab.classList.toggle("active", Number(tab.dataset.period) === period);
+        window.QlexTheme?.applyNativeMaterial(state.nativeMaterial);
     }
 
+    updateTopbarAndRail();
+
+    const stages = [onboardingPanel, qStage, lStage, eStage, xStage, insightsStage, settingsStage];
     if (!state.configured) {
-        setVisible(onboardingPanel, true);
-        for (const el of [settingsPanel, hubPanel, totalPanel, viewBackRow, searchHost, homePanel, mainListPanel, limitsPanel, trendsPanel, footer]) setVisible(el, false);
+        for (const s of stages) setVisible(s, s === onboardingPanel);
         renderOnboarding();
         return;
     }
 
-    setVisible(onboardingPanel, false);
-    setVisible(footer, true);
-    renderViewSwitcher();
+    const activeMap = { Q: qStage, L: lStage, E: eStage, X: xStage, insights: insightsStage, settings: settingsStage };
+    const currentStage = activeMap[activeSection] || qStage;
+    for (const s of stages) setVisible(s, s === currentStage);
 
-    if (settingsOpen) {
-        setVisible(settingsPanel, true);
-        for (const el of [hubPanel, totalPanel, viewBackRow, searchHost, homePanel, mainListPanel, limitsPanel, trendsPanel]) setVisible(el, false);
-        renderSettings();
-        return;
-    }
-
-    setVisible(settingsPanel, false);
-    const isUsageView = view === "usage" || view === "limits" || view === "trends" || view === "sessions";
-    periodTabs.classList.toggle("hidden", !isUsageView);
-
-    setVisible(totalPanel, isUsageView);
-    setVisible(hubPanel, !isUsageView);
-    if (isUsageView) {
-        const report = selectedReport();
-        const totalSessions = report ? Object.values(report.totals || {}).reduce((s, x) => s + (x.sessions || 0), 0) : 0;
-        totalLabel.textContent = `${PERIODS[period]} 辅助用量统计`;
-        usageUpdated.textContent = usageNotice();
-        animateTotalNumber(report?.total ?? 0);
-        totalSubline.textContent = `${fmtNum(totalSessions)} 会话 · ${fmtNum(report?.projects?.length || 0)} 工作区 · ${ROLES[state.pairing.mode]}`;
-    } else {
-        renderSyncHubHeader();
-    }
-
-    const canSearch = view === "projects" || view === "sessions";
-    searchToggleBtn.classList.toggle("hidden", !canSearch || Boolean(projectDetail));
-    searchToggleBtn.classList.toggle("is-active", searchVisible);
-
-    const showBack = view !== "home";
-    setVisible(viewBackRow, showBack);
-    if (showBack) {
-        if (view === "projects" && projectDetail) {
-            backButtonLabel.textContent = "返回项目列表";
-            patchHtml(viewHeaderActions, "");
-        } else if (view === "projects") {
-            backButtonLabel.textContent = "返回总览";
-            patchHtml(viewHeaderActions, `<div class="row-actions-inline" style="margin:0"><button type="button" class="glass-btn sm" data-action="sync-projects-now">⟳ 同步项目</button><button type="button" class="glass-btn sm primary" data-action="add-project">+ 添加项目</button></div>`);
-        } else {
-            backButtonLabel.textContent = "返回总览";
-            patchHtml(viewHeaderActions, "");
-        }
-    }
-
-    const showSearch = canSearch && searchVisible && !projectDetail;
-    setVisible(searchHost, showSearch);
-    if (showSearch) {
-        searchInput.placeholder = view === "projects" ? "搜索项目名或路径…" : "搜索会话工作区…";
-        if (searchInput.value !== projectQuery) searchInput.value = projectQuery;
-        if (view === "sessions") {
-            sessionSourceFilter.classList.remove("hidden");
-            patchHtml(sessionSourceFilter, `<option value="">全部工具</option>` +
-                Object.entries(SOURCE_NAMES).map(([k, l]) => `<option value="${k}" ${k === sessionSource ? "selected" : ""}>${l}</option>`).join(""));
-        } else {
-            sessionSourceFilter.classList.add("hidden");
-        }
-    }
-
-    const showList = ["usage", "memory", "projects", "sessions", "devices"].includes(view);
-    setVisible(homePanel, view === "home");
-    setVisible(mainListPanel, showList);
-    setVisible(limitsPanel, view === "limits");
-    setVisible(trendsPanel, view === "trends");
-
-    if (view === "home") renderHome();
-    else if (view === "usage") renderUsageList();
-    else if (view === "limits") renderLimits();
-    else if (view === "memory") renderMemoryArchiveView();
-    else if (view === "projects") renderProjects();
-    else if (view === "sessions") renderSessions();
-    else if (view === "trends") renderTrends();
-    else if (view === "devices") renderDevices();
+    if (activeSection === "Q") renderQStage();
+    else if (activeSection === "L") renderLStage();
+    else if (activeSection === "E") renderEStage();
+    else if (activeSection === "X") renderXStage();
+    else if (activeSection === "insights") renderInsightsStage();
+    else if (activeSection === "settings") renderSettingsStage();
 }
 
-async function runAction(btn, fn, { goToView = null, success = "" } = {}) {
+async function runAction(btn, fn, { goToSection = null, success = "" } = {}) {
     if (busy) return;
     busy = true;
     if (btn) btn.disabled = true;
     try {
         const next = await fn();
-        if (next) state = next;
-        if (goToView) { settingsOpen = false; view = goToView; }
+        if (next && next.version) state = next;
+        else if (next?.state) state = next.state;
+        if (goToSection) activeSection = goToSection;
         if (state?.pairing?.mode !== "local") joining = false;
         render();
         if (success) notify(success);
@@ -1565,160 +1257,124 @@ async function runAction(btn, fn, { goToView = null, success = "" } = {}) {
     }
 }
 
-function isViewMenuOpen() {
-    return !viewSwitcherMenu.classList.contains("hidden");
-}
-
-function toggleViewMenu(force) {
-    const isOpen = isViewMenuOpen();
-    const wantOpen = force !== undefined ? force : !isOpen;
-    viewSwitcherMenu.classList.toggle("hidden", !wantOpen);
-    viewSwitcher.classList.toggle("is-open", wantOpen);
-}
-
-viewSwitcherCurrent.title = "点击切换到下一个功能页（右侧箭头展开全部视图）";
-viewSwitcherCurrent.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleViewMenu(false);
-    settingsOpen = false;
-    projectDetail = "";
-    memoryPreview = null;
-    sessionSource = "";
-    sessionProject = "";
-    const idx = VIEWS.findIndex(v => v.id === view);
-    const nextView = VIEWS[(idx + 1) % VIEWS.length];
-    view = nextView ? nextView.id : "home";
-    render();
-});
-viewSwitcherDisclosure.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleViewMenu();
-});
-
-pinButton.addEventListener("click", () => void runAction(pinButton, () => window.qlex.togglePinWindow()));
-dashButton.addEventListener("click", () => void window.qlex.openDashboard("activity"));
-minButton.addEventListener("click", () => void window.qlex.minimizeWindow());
 closeButton.addEventListener("click", () => void window.qlex.closeWindow());
-rolePill.addEventListener("click", () => { settingsOpen = false; view = "devices"; render(); });
-settingsButton.addEventListener("click", () => { settingsOpen = !settingsOpen; toggleViewMenu(false); render(); });
-searchToggleBtn.addEventListener("click", () => {
-    searchVisible = !searchVisible;
-    render();
-    if (searchVisible) searchInput.focus();
-});
-
-syncStatusBtn.addEventListener("click", () => {
-    void runAction(syncStatusBtn, () => window.qlex.syncNow(), { success: "同步与归档完成" });
-});
-
-backButton.addEventListener("click", () => {
-    if (view === "projects" && projectDetail) {
-        projectDetail = "";
-    } else if (view === "memory" && memoryPreview) {
-        memoryPreview = null;
-    } else {
-        view = "home";
-        searchVisible = false;
-    }
-    render();
+minButton.addEventListener("click", () => void window.qlex.minimizeWindow());
+pinButton.addEventListener("click", () => void runAction(pinButton, () => window.qlex.togglePinWindow()));
+rolePill.addEventListener("click", () => { activeSection = "L"; render(); });
+syncStatusBtn.addEventListener("click", () => void runAction(syncStatusBtn, () => window.qlex.syncNow(), { success: "双向同步与归档完成" }));
+updatePillBtn.addEventListener("click", () => {
+    const ph = state?.updater?.phase;
+    if (ph === "ready") void runAction(updatePillBtn, () => window.qlex.updateInstall());
+    else { activeSection = "settings"; render(); }
 });
 
 document.addEventListener("click", (event) => {
     const target = event.target;
 
-    if (isViewMenuOpen() && !viewSwitcher.contains(target) && !viewSwitcherMenu.contains(target)) {
-        toggleViewMenu(false);
-    }
-
-    const menuView = target.closest("[data-view]");
-    if (menuView) {
-        view = menuView.dataset.view;
-        settingsOpen = false;
-        projectDetail = "";
-        memoryPreview = null;
-        sessionSource = "";
-        sessionProject = "";
-        toggleViewMenu(false);
-        render();
-        return;
-    }
-
-    const periodBtn = target.closest("[data-period]");
-    if (periodBtn && state) {
-        const next = Number(periodBtn.dataset.period);
-        // #05 Gooey Tab Bar horizontal stretch pulse
-        periodTabs.classList.remove("is-stretching");
-        void periodTabs.offsetWidth;
-        periodTabs.classList.add("is-stretching");
-        clearTimeout(stretchTimer);
-        stretchTimer = setTimeout(() => periodTabs.classList.remove("is-stretching"), 320);
-        if (next <= 7 || state.usage?.history?.[next]) {
-            period = next;
-            render();
-        } else {
-            void runAction(periodBtn, async () => {
-                const res = await window.qlex.usagePeriod(next);
-                period = next;
-                return res;
+    const actionBtn = target.closest("[data-action]");
+    if (actionBtn && state) {
+        event.stopPropagation();
+        const act = actionBtn.dataset.action;
+        if (act === "continue") {
+            const mode = document.querySelector('input[name="mode"]:checked')?.value || "local";
+            if (mode === "center") void runAction(actionBtn, () => window.qlex.enableCenter(), { goToSection: "L" });
+            else if (mode === "endpoint") {
+                const code = document.querySelector("#invite")?.value || "";
+                void runAction(actionBtn, () => window.qlex.joinCenter(code), { goToSection: "L" });
+            } else void runAction(actionBtn, () => window.qlex.configureLocal(), { goToSection: "Q" });
+        } else if (act === "sync-now") {
+            void runAction(actionBtn, () => window.qlex.syncNow(), { success: "双向同步与归档完成" });
+        } else if (act === "sync-local-skills") {
+            void runAction(actionBtn, () => window.qlex.syncLocalSkills(), { success: "本机 Skills 已对齐" });
+        } else if (act === "resolve-all-conflicts") {
+            void runAction(actionBtn, async () => {
+                const res = await window.qlex.resolveAllSkillConflicts("latest");
+                notify(`已解决 ${res.result?.resolvedCount || 0} 项冲突，旧版已备份`);
+                return res.state;
             });
-        }
-        return;
-    }
-
-    const secBtn = target.closest("[data-settings-section]");
-    if (secBtn) {
-        const id = secBtn.dataset.settingsSection;
-        openSettingsSection = openSettingsSection === id ? "" : id;
-        renderSettings();
-        return;
-    }
-
-    const presetBtn = target.closest("[data-theme-preset]");
-    if (presetBtn) {
-        void runAction(presetBtn, () => window.qlex.updateAppearance({ themePreset: presetBtn.dataset.themePreset }));
-        return;
-    }
-
-    const memCatBtn = target.closest("[data-mem-cat]");
-    if (memCatBtn) {
-        memoryCategory = memCatBtn.dataset.memCat;
-        memoryPreview = null;
-        renderMemoryArchiveView();
-        return;
-    }
-
-    const memLevelBtn = target.closest("[data-mem-level]");
-    if (memLevelBtn) {
-        memoryRecallLevel = memLevelBtn.dataset.memLevel;
-        if (memoryRecallResult) {
-            void window.qlex.memoryRecall({ query: memoryRecallQuery, level: memoryRecallLevel, limit: 10 }).then(res => {
-                memoryRecallResult = res;
-                renderMemoryArchiveView();
+        } else if (act === "open-skill-backup-dir") void window.qlex.openSkillBackupDir();
+        else if (act === "open-skill-dir") void window.qlex.openSkillDir(actionBtn.dataset.ns || "agents");
+        else if (act === "sync-memory-now") {
+            void runAction(actionBtn, async () => {
+                const res = await window.qlex.syncMemoryNow();
+                notify(res.remote ? `记忆已与中心双向同步 (+${res.remote.pulledAdded || 0} 拉取 / +${res.remote.pushedAdded || 0} 推送)` : "记忆已压缩归档并更新图谱");
+                return res.state;
             });
-        } else {
-            renderMemoryArchiveView();
-        }
+        } else if (act === "sync-projects-now") {
+            void runAction(actionBtn, async () => {
+                const res = await window.qlex.syncProjectsNow();
+                notify(res.remote ? `跨端项目已同步（共 ${res.remote.totalShared || 0} 个共享项目）` : "已刷新本机项目列表");
+                return res.state;
+            });
+        } else if (act === "reflect-memory") {
+            void runAction(actionBtn, async () => {
+                const res = await window.qlex.memoryReflect({});
+                notify(`Hindsight 反思完成：更新 ${res.result?.generated || 0} 条洞察`);
+                return res.state;
+            });
+        } else if (act === "install-memory-skill") {
+            void runAction(actionBtn, async () => {
+                const res = await window.qlex.installMemorySkill();
+                const st = res.result?.status;
+                notify(`已将 qlex-memory 部署到 ${st?.installedCount || 0}/${st?.totalCount || 6} 个工具目录`);
+                return res.state;
+            });
+        } else if (act === "toggle-retain-form") {
+            memoryRetainOpen = !memoryRetainOpen;
+            renderEStage();
+            if (memoryRetainOpen) document.querySelector("#retainContentInput")?.focus();
+        } else if (act === "open-memory-dir") void window.qlex.openMemoryDir();
+        else if (act === "choose-memory-dir") void runAction(actionBtn, () => window.qlex.chooseMemoryDir(), { success: "记忆归档目录已更新" });
+        else if (act === "open-memory-file") void window.qlex.openMemoryFile(actionBtn.dataset.kind, actionBtn.dataset.key);
+        else if (act === "close-memory-preview") { memoryPreview = null; renderEStage(); }
+        else if (act === "close-project-detail") { projectDetail = ""; renderXStage(); }
+        else if (act === "refresh-usage") void runAction(actionBtn, () => window.qlex.refreshUsage(), { success: "5 大工具日志已重新采集" });
+        else if (act === "tailscale-scan") void runAction(actionBtn, () => window.qlex.tailscaleScan(), { success: "Tailscale 与局域网扫描完成" });
+        else if (act === "tailscale-start-embedded") void runAction(actionBtn, () => window.qlex.tailscaleStartEmbedded({}), { success: "已启动内嵌 Tailscale tsnet SDK" });
+        else if (act === "tailscale-stop-embedded") void runAction(actionBtn, () => window.qlex.tailscaleStopEmbedded(), { success: "已停止内嵌 tsnet SDK" });
+        else if (act === "tailscale-open-auth") void window.qlex.tailscaleOpenAuth();
+        else if (act === "update-check") void runAction(actionBtn, () => window.qlex.updateCheck(true), { success: "更新检查完成" });
+        else if (act === "update-download") void runAction(actionBtn, () => window.qlex.updateDownload(), { success: "更新下载并校验完成" });
+        else if (act === "update-install") void runAction(actionBtn, () => window.qlex.updateInstall());
+        else if (act === "update-open-release") void window.qlex.updateOpenRelease();
+        else if (act === "open-dashboard-trends") void window.qlex.openDashboard("trends");
+        else if (act === "add-project") void runAction(actionBtn, () => window.qlex.chooseProject());
+        else if (act === "add-discovered-project") void runAction(actionBtn, () => window.qlex.addDiscoveredProject(actionBtn.dataset.directory), { success: "已登记到本机项目" });
+        else if (act === "open-discovered-project") void runAction(actionBtn, () => window.qlex.openDiscoveredProject(actionBtn.dataset.directory));
+        else if (act === "open-project") void runAction(actionBtn, () => window.qlex.openProject(actionBtn.dataset.id));
+        else if (act === "rename-project") { editingProject = actionBtn.dataset.id; renderXStage(); document.querySelector("#projectRenameInput")?.focus(); }
+        else if (act === "cancel-rename") { editingProject = ""; renderXStage(); }
+        else if (act === "remove-project") void runAction(actionBtn, () => window.qlex.removeProject(actionBtn.dataset.id));
+        else if (act === "enable-center") void runAction(actionBtn, () => window.qlex.enableCenter());
+        else if (act === "show-join") { joining = true; renderLStage(); document.querySelector("#invite")?.focus(); }
+        else if (act === "cancel-join") { joining = false; renderLStage(); }
+        else if (act === "submit-invite") void runAction(actionBtn, () => window.qlex.joinCenter(document.querySelector("#invite")?.value || ""));
+        else if (act === "use-local") void runAction(actionBtn, () => window.qlex.useLocal());
+        else if (act === "invite") {
+            invitationAddress = document.querySelector("#centerAddress")?.value || invitationAddress || state?.pairing?.activeInvite?.host || state?.pairing?.addresses?.[0] || "";
+            void runAction(actionBtn, () => window.qlex.createInvite(invitationAddress), { success: "已刷新配对邀请并复制到剪贴板" });
+        } else if (act === "copy-invite") {
+            void runAction(actionBtn, () => window.qlex.copyInvite(), { success: "邀请码已复制到剪贴板" });
+        } else if (act === "approve") void runAction(actionBtn, () => window.qlex.approveDevice(actionBtn.dataset.id));
+        else if (act === "remove") void runAction(actionBtn, () => window.qlex.removeDevice(actionBtn.dataset.id));
+        else if (act === "refresh-pairing") void runAction(actionBtn, () => window.qlex.refreshPairing());
         return;
     }
 
-    const browseUriEl = target.closest("[data-browse-uri]");
-    if (browseUriEl) {
-        const uri = browseUriEl.dataset.browseUri;
-        void window.qlex.memoryBrowse({ uri, level: "L2" }).then(res => {
-            memoryPreview = { kind: "items", key: res.item?.title || uri, uri: res.uri, content: res.content };
-            renderMemoryArchiveView();
-        }).catch(() => notify("无法读取该记忆详情"));
+    const bindBtn = target.closest("[data-bind-remote-project]");
+    if (bindBtn && state) {
+        void runAction(bindBtn, () => window.qlex.bindRemoteProject(bindBtn.dataset.bindRemoteProject), { success: "已将跨端共享项目绑定到本机目录" });
         return;
     }
 
-    const readMem = target.closest("[data-read-memory]");
-    if (readMem) {
-        const [kind, ...rest] = readMem.dataset.readMemory.split(":");
-        const key = rest.join(":");
-        void window.qlex.readMemoryArchive(kind, key).then(entry => {
-            memoryPreview = entry;
-            renderMemoryArchiveView();
-        }).catch(() => notify("无法读取该归档文件"));
+    const resolveBtn = target.closest("[data-resolve-skill]");
+    if (resolveBtn && state) {
+        const [name, sourceNs] = resolveBtn.dataset.resolveSkill.split(":");
+        void runAction(resolveBtn, async () => {
+            const res = await window.qlex.resolveSkillConflict(name, sourceNs);
+            notify(`已以 ${sourceNs} 为准对齐「${name}」（更新 ${res.result?.updated || 0} 目录）`);
+            return res.state;
+        });
         return;
     }
 
@@ -1732,269 +1388,101 @@ document.addEventListener("click", (event) => {
         return;
     }
 
-    const bindRemoteBtn = target.closest("[data-bind-remote-project]");
-    if (bindRemoteBtn && state) {
-        const syncId = bindRemoteBtn.dataset.bindRemoteProject;
-        void runAction(bindRemoteBtn, () => window.qlex.bindRemoteProject(syncId), { success: "已将跨端共享项目绑定到本机目录" });
-        return;
-    }
+    const memCatBtn = target.closest("[data-mem-cat]");
+    if (memCatBtn) { memoryCategory = memCatBtn.dataset.memCat; memoryPreview = null; renderEStage(); return; }
 
-    const resolveBtn = target.closest("[data-resolve-skill]");
-    if (resolveBtn && state) {
-        const [name, sourceNs] = resolveBtn.dataset.resolveSkill.split(":");
-        void runAction(resolveBtn, async () => {
-            const res = await window.qlex.resolveSkillConflict(name, sourceNs);
-            const r = res.result || {};
-            notify(`已以 ${sourceNs} 为准对齐「${name}」（更新 ${r.updated || 0} 目录，备份 ${r.backedUp || 0} 份旧版）`);
-            return res.state;
-        });
-        return;
-    }
-
-    const btn = target.closest("[data-action]");
-    if (btn && state) {
-        const action = btn.dataset.action;
-        if (action === "continue") {
-            const mode = document.querySelector('input[name="mode"]:checked')?.value || "local";
-            if (mode === "center") void runAction(btn, () => window.qlex.enableCenter(), { goToView: "devices" });
-            else if (mode === "endpoint") {
-                const code = document.querySelector("#invite")?.value || "";
-                void runAction(btn, () => window.qlex.joinCenter(code), { goToView: "devices" });
-            } else void runAction(btn, () => window.qlex.configureLocal(), { goToView: "home" });
-        } else if (action === "sync-local-skills") {
-            void runAction(btn, () => window.qlex.syncLocalSkills(), { success: "本机 Skills 同步完成" });
-        } else if (action === "resolve-all-conflicts") {
-            void runAction(btn, async () => {
-                const res = await window.qlex.resolveAllSkillConflicts("latest");
-                const r = res.result || {};
-                notify(`已解决 ${r.resolvedCount || 0} 项冲突（对齐 ${r.updatedDirs || 0} 个目录，旧版已备份）`);
-                return res.state;
+    const memLvBtn = target.closest("[data-mem-level]");
+    if (memLvBtn) {
+        memoryRecallLevel = memLvBtn.dataset.memLevel;
+        if (memoryRecallResult) {
+            void window.qlex.memoryRecall({ query: memoryRecallQuery, level: memoryRecallLevel, limit: 10 }).then(res => {
+                memoryRecallResult = res;
+                renderEStage();
             });
-        } else if (action === "open-skill-backup-dir") {
-            void window.qlex.openSkillBackupDir();
-        } else if (action === "open-skill-dir") {
-            void window.qlex.openSkillDir(btn.dataset.ns || "agents");
-        } else if (action === "compress-memory") {
-            void runAction(btn, () => window.qlex.compressMemory(), { success: "记忆已压缩归档并更新知识图谱" });
-        } else if (action === "sync-memory-now") {
-            void runAction(btn, async () => {
-                const res = await window.qlex.syncMemoryNow();
-                notify(res.remote ? `记忆已与中心双向同步（+${res.remote.pulledAdded || 0} 拉取 / +${res.remote.pushedAdded || 0} 推送）` : "本机记忆已压缩并更新知识图谱");
-                return res.state;
-            });
-        } else if (action === "sync-projects-now") {
-            void runAction(btn, async () => {
-                const res = await window.qlex.syncProjectsNow();
-                notify(res.remote ? `跨端项目已同步（共 ${res.remote.totalShared || 0} 个共享项目）` : "当前为单机/中心模式，已刷新本机项目列表");
-                return res.state;
-            });
-        } else if (action === "reflect-memory") {
-            void runAction(btn, async () => {
-                const res = await window.qlex.memoryReflect({});
-                notify(`Hindsight 反思完成：生成/更新 ${res.result?.generated || 0} 条洞察`);
-                return res.state;
-            });
-        } else if (action === "install-memory-skill") {
-            void runAction(btn, async () => {
-                const res = await window.qlex.installMemorySkill();
-                const st = res.result?.status;
-                notify(`已将 qlex-memory 检索技能部署到 ${st?.installedCount || 0}/${st?.totalCount || 6} 个 Agent 目录`);
-                return res.state;
-            });
-        } else if (action === "toggle-retain-form") {
-            memoryRetainOpen = !memoryRetainOpen;
-            renderMemoryArchiveView();
-            if (memoryRetainOpen) document.querySelector("#retainContentInput")?.focus();
-        } else if (action === "open-memory-dir") {
-            void window.qlex.openMemoryDir();
-        } else if (action === "choose-memory-dir") {
-            void runAction(btn, () => window.qlex.chooseMemoryDir(), { success: "记忆归档目录已更新" });
-        } else if (action === "open-memory-file") {
-            void window.qlex.openMemoryFile(btn.dataset.kind, btn.dataset.key);
-        } else if (action === "close-memory-preview") {
-            memoryPreview = null;
-            renderMemoryArchiveView();
-        } else if (action === "refresh-usage") {
-            void runAction(btn, () => window.qlex.refreshUsage(), { success: "5 大工具日志已重新采集" });
-        } else if (action === "tailscale-scan") {
-            void runAction(btn, () => window.qlex.tailscaleScan(), { success: "Tailscale 与局域网扫描完成" });
-        } else if (action === "tailscale-start-embedded") {
-            void runAction(btn, () => window.qlex.tailscaleStartEmbedded({}), { success: "已启动内嵌 Tailscale tsnet SDK" });
-        } else if (action === "tailscale-stop-embedded") {
-            void runAction(btn, () => window.qlex.tailscaleStopEmbedded(), { success: "已停止内嵌 tsnet SDK" });
-        } else if (action === "tailscale-open-auth") {
-            void window.qlex.tailscaleOpenAuth();
-        } else if (action === "update-check") {
-            void runAction(btn, () => window.qlex.updateCheck(true), { success: "更新检查完成" });
-        } else if (action === "update-download") {
-            void runAction(btn, () => window.qlex.updateDownload(), { success: "更新下载并校验完成" });
-        } else if (action === "update-install") {
-            void runAction(btn, () => window.qlex.updateInstall());
-        } else if (action === "update-open-release") {
-            void window.qlex.updateOpenRelease();
-        } else if (action === "open-dashboard") {
-            void window.qlex.openDashboard("activity");
-        } else if (action === "open-dashboard-trends") {
-            void window.qlex.openDashboard("trends");
-        } else if (action === "add-project") {
-            void runAction(btn, () => window.qlex.chooseProject());
-        } else if (action === "add-discovered-project") {
-            void runAction(btn, () => window.qlex.addDiscoveredProject(btn.dataset.directory), { success: "已登记到本机项目" });
-        } else if (action === "open-discovered-project") {
-            void runAction(btn, () => window.qlex.openDiscoveredProject(btn.dataset.directory));
-        } else if (action === "open-project") {
-            void runAction(btn, () => window.qlex.openProject(btn.dataset.id));
-        } else if (action === "rename-project") {
-            editingProject = btn.dataset.id;
-            renderProjects();
-            document.querySelector("#projectRenameInput")?.focus();
-        } else if (action === "cancel-rename") {
-            editingProject = "";
-            renderProjects();
-        } else if (action === "remove-project") {
-            void runAction(btn, () => window.qlex.removeProject(btn.dataset.id));
-        } else if (action === "more-sessions") {
-            sessionLimit += 80;
-            renderSessions();
-        } else if (action === "enable-center") {
-            void runAction(btn, () => window.qlex.enableCenter());
-        } else if (action === "show-join") {
-            joining = true;
-            renderDevices();
-            document.querySelector("#invite")?.focus();
-        } else if (action === "cancel-join") {
-            joining = false;
-            renderDevices();
-        } else if (action === "submit-invite") {
-            const code = document.querySelector("#invite")?.value || "";
-            void runAction(btn, () => window.qlex.joinCenter(code));
-        } else if (action === "use-local") {
-            void runAction(btn, () => window.qlex.useLocal());
-        } else if (action === "invite") {
-            invitationAddress = document.querySelector("#centerAddress")?.value || invitationAddress || state?.pairing?.activeInvite?.host || state?.pairing?.addresses?.[0] || "";
-            void runAction(btn, () => window.qlex.createInvite(invitationAddress), { success: "已刷新配对邀请并复制到剪贴板" });
-        } else if (action === "copy-invite") {
-            void runAction(btn, () => window.qlex.copyInvite(), { success: "邀请码已复制到剪贴板" });
-        } else if (action === "approve") {
-            void runAction(btn, () => window.qlex.approveDevice(btn.dataset.id));
-        } else if (action === "remove") {
-            void runAction(btn, () => window.qlex.removeDevice(btn.dataset.id));
-        } else if (action === "refresh-pairing") {
-            void runAction(btn, () => window.qlex.refreshPairing());
-        }
+        } else renderEStage();
         return;
     }
 
-    const jumpView = target.closest("[data-jump-view]");
-    if (jumpView) {
-        view = jumpView.dataset.jumpView;
-        settingsOpen = false;
-        projectDetail = "";
-        memoryPreview = null;
-        render();
+    const browseUri = target.closest("[data-browse-uri]");
+    if (browseUri) {
+        const uri = browseUri.dataset.browseUri;
+        void window.qlex.memoryBrowse({ uri, level: "L2" }).then(res => {
+            memoryPreview = { kind: "items", key: res.item?.title || uri, uri: res.uri, content: res.content };
+            renderEStage();
+        }).catch(() => notify("无法读取该记忆详情"));
         return;
     }
 
-    const jumpTool = target.closest("[data-jump-tool]");
-    if (jumpTool) {
-        expandedSource = jumpTool.dataset.jumpTool;
-        view = "usage";
-        render();
-        return;
-    }
-
-    const toggleSrc = target.closest("[data-toggle-source]");
-    if (toggleSrc && !target.closest("button")) {
-        const src = toggleSrc.dataset.toggleSource;
-        expandedSource = expandedSource === src ? "" : src;
-        renderUsageList();
-        return;
-    }
-
-    const sessSrc = target.closest("[data-session-source]");
-    if (sessSrc) {
-        sessionSource = sessSrc.dataset.sessionSource;
-        sessionProject = "";
-        searchVisible = true;
-        view = "sessions";
-        render();
+    const readMem = target.closest("[data-read-memory]");
+    if (readMem) {
+        const [kind, ...rest] = readMem.dataset.readMemory.split(":");
+        void window.qlex.readMemoryArchive(kind, rest.join(":")).then(entry => {
+            memoryPreview = entry;
+            renderEStage();
+        }).catch(() => notify("无法读取该归档文件"));
         return;
     }
 
     const projDetailEl = target.closest("[data-project-detail]");
-    if (projDetailEl && !target.closest("button[data-action]")) {
-        projectDetail = projDetailEl.dataset.projectDetail;
-        view = "projects";
-        render();
+    if (projDetailEl) { projectDetail = projDetailEl.dataset.projectDetail; renderXStage(); return; }
+
+    const presetBtn = target.closest("[data-theme-preset]");
+    if (presetBtn) { void runAction(presetBtn, () => window.qlex.updateAppearance({ themePreset: presetBtn.dataset.themePreset })); return; }
+
+    const insightsTabBtn = target.closest("[data-insights-tab]");
+    if (insightsTabBtn) { insightsTab = insightsTabBtn.dataset.insightsTab; renderInsightsStage(); return; }
+
+    const periodBtn = target.closest("[data-period]");
+    if (periodBtn && state) {
+        const next = Number(periodBtn.dataset.period);
+        if (next <= 7 || state.usage?.history?.[next]) { period = next; renderInsightsStage(); }
+        else void runAction(periodBtn, async () => { const res = await window.qlex.usagePeriod(next); period = next; return res; });
         return;
     }
 
-    const projSess = target.closest("[data-project-sessions]");
-    if (projSess) {
-        sessionProject = projSess.dataset.projectSessions;
-        sessionSource = "";
-        view = "sessions";
+    const railBtn = target.closest("[data-rail]");
+    if (railBtn && state?.configured) {
+        activeSection = railBtn.dataset.rail;
+        projectDetail = "";
         render();
-        return;
     }
 });
 
 document.addEventListener("change", (event) => {
-    const el = event.target;
-    if (el.name === "mode") {
+    const t = event.target;
+    if (t.name === "mode") {
         const box = document.querySelector("#onboardingInviteBox");
-        if (box) box.classList.toggle("hidden", el.value !== "endpoint");
-        if (el.value === "endpoint") document.querySelector("#invite")?.focus();
-    } else if (el.id === "systemGlassInput") {
-        void runAction(el, () => window.qlex.updateAppearance({ systemGlass: el.checked }));
-    } else if (el.id === "macBackdropSelect") {
-        void runAction(el, () => window.qlex.updateAppearance({ macBackdrop: el.value }));
-    } else if (el.id === "edgeDockSelect") {
-        void runAction(el, () => window.qlex.setEdgeDock(el.value));
-    } else if (el.id === "edgeDockModeSelect") {
-        void runAction(el, () => window.qlex.setEdgeDockMode(el.value));
-    } else if (el.id === "alwaysOnTopInput") {
-        void runAction(el, () => window.qlex.updateAppearance({ alwaysOnTop: el.checked }));
-    } else if (el.id === "keepRunningInput") {
-        void runAction(el, () => window.qlex.setKeepRunning(el.checked));
-    } else if (el.id === "skillSyncInput") {
-        void runAction(el, () => window.qlex.setSkillSync(el.checked));
-    } else if (el.id === "memoryAutoInput") {
-        void runAction(el, () => window.qlex.setMemoryAutoCompress(el.checked));
-    } else if (el.id === "updateChannelSelect") {
-        void runAction(el, () => window.qlex.setUpdateChannel(el.value));
-    } else if (el.id === "autoUpdatesInput") {
-        void runAction(el, () => window.qlex.setAutoUpdates(el.checked));
-    } else if (el.id === "sessionSourceFilter") {
-        sessionSource = el.value;
-        sessionLimit = 80;
-        renderSessions();
-    } else if (el.id === "centerAddress") {
-        invitationAddress = el.value;
-        if (state?.pairing?.activeInvite && state.pairing.activeInvite.host !== invitationAddress) {
-            void runAction(null, () => window.qlex.createInvite(invitationAddress), { success: `已按 ${invitationAddress} 刷新邀请码并复制` });
-        }
+        if (box) box.classList.toggle("hidden", t.value !== "endpoint");
+        return;
     }
+    if (t.id === "centerAddress") { invitationAddress = t.value; return; }
+    if (t.id === "sessionSourceFilter") { sessionSource = t.value; renderInsightsStage(); return; }
+    if (t.id === "systemGlassInput") { void runAction(t, () => window.qlex.updateAppearance({ systemGlass: t.checked })); return; }
+    if (t.id === "macBackdropSelect") { void runAction(t, () => window.qlex.updateAppearance({ macBackdrop: t.value, systemGlass: true })); return; }
+    if (t.id === "edgeDockSelect") { void runAction(t, () => window.qlex.setEdgeDock(t.value)); return; }
+    if (t.id === "edgeDockModeSelect") { void runAction(t, () => window.qlex.setEdgeDockMode(t.value)); return; }
+    if (t.id === "alwaysOnTopInput") { void runAction(t, () => window.qlex.updateAppearance({ alwaysOnTop: t.checked })); return; }
+    if (t.id === "keepRunningInput") { void runAction(t, () => window.qlex.setKeepRunning(t.checked)); return; }
+    if (t.id === "skillSyncInput") { void runAction(t, () => window.qlex.setSkillSync(t.checked)); return; }
+    if (t.id === "memoryAutoInput") { void runAction(t, () => window.qlex.setMemoryAutoCompress(t.checked)); return; }
+    if (t.id === "updateChannelSelect") { void runAction(t, () => window.qlex.setUpdateChannel(t.value), { success: `已切换至 ${t.value === "beta" ? "Beta 尝鲜版" : "Stable 正式版"}通道` }); return; }
+    if (t.id === "autoUpdatesInput") { void runAction(t, () => window.qlex.setAutoUpdates(t.checked)); return; }
 });
 
 document.addEventListener("input", (event) => {
-    const el = event.target;
-    if (el.id === "searchInput") {
-        projectQuery = el.value;
-        if (view === "projects") renderProjects();
-        else if (view === "sessions") renderSessions();
-    } else if (el.id === "glassOpacityRange") {
-        const val = Number(el.value);
+    const t = event.target;
+    if (t.id === "projectSearchInput") { projectQuery = t.value; renderXStage(); return; }
+    if (t.id === "glassOpacityRange") {
         const lbl = document.querySelector("#opacityValueLabel");
-        if (lbl) lbl.textContent = `${val}%`;
-        window.QlexTheme.applyAppearance({ ...state.appearance, glassOpacity: val });
-        void window.qlex.updateAppearance({ glassOpacity: val }).then(next => { state = next; });
-    } else if (el.id === "glassTintRange") {
-        const val = Number(el.value);
+        if (lbl) lbl.textContent = `${t.value}%`;
+        void window.qlex.updateAppearance({ glassOpacity: Number(t.value) });
+        return;
+    }
+    if (t.id === "glassTintRange") {
         const lbl = document.querySelector("#tintValueLabel");
-        if (lbl) lbl.textContent = `${val}%`;
-        const key = state.appearance?.macBackdrop === "liquid-glass-clear" ? "macClearGlassTint" : "macGlassTint";
-        void window.qlex.updateAppearance({ [key]: val }).then(next => { state = next; });
+        if (lbl) lbl.textContent = `${t.value}%`;
+        const key = state?.appearance?.macBackdrop === "liquid-glass-clear" ? "macClearGlassTint" : "macGlassTint";
+        void window.qlex.updateAppearance({ [key]: Number(t.value) });
     }
 });
 
@@ -2002,46 +1490,39 @@ document.addEventListener("submit", (event) => {
     const form = event.target;
     if (form.id === "memoryRecallForm") {
         event.preventDefault();
-        memoryRecallQuery = document.querySelector("#memoryRecallInput")?.value?.trim() || "";
+        memoryRecallQuery = document.querySelector("#memoryRecallInput")?.value || "";
         void window.qlex.memoryRecall({ query: memoryRecallQuery, level: memoryRecallLevel, limit: 10 }).then(res => {
             memoryRecallResult = res;
-            renderMemoryArchiveView();
+            renderEStage();
         }).catch(() => notify("记忆检索失败"));
         return;
     }
     if (form.id === "memoryRetainForm") {
         event.preventDefault();
-        const content = document.querySelector("#retainContentInput")?.value?.trim() || "";
+        const content = document.querySelector("#retainContentInput")?.value?.trim();
         if (!content) return;
-        const title = document.querySelector("#retainTitleInput")?.value?.trim() || undefined;
-        const bank = document.querySelector("#retainBankSelect")?.value || undefined;
-        const project = document.querySelector("#retainProjectInput")?.value?.trim() || undefined;
-        const factKey = document.querySelector("#retainFactKeyInput")?.value?.trim() || undefined;
-        void runAction(form.querySelector('[type="submit"]'), async () => {
-            const res = await window.qlex.memoryRetain({ content, title, bank, project, factKey, source: "user" });
+        const payload = {
+            title: document.querySelector("#retainTitleInput")?.value?.trim() || "",
+            content,
+            bank: document.querySelector("#retainBankSelect")?.value || "",
+            project: document.querySelector("#retainProjectInput")?.value?.trim() || "",
+            factKey: document.querySelector("#retainFactKeyInput")?.value?.trim() || "",
+        };
+        void runAction(form.querySelector('button[type="submit"]'), async () => {
+            const res = await window.qlex.memoryRetain(payload);
             memoryRetainOpen = false;
-            const op = res.result?.operation || "ADD";
-            const gd = res.result?.graphDelta || {};
-            notify(`[${op}] 已沉淀记忆 · 图谱 +${gd.entitiesAdded || 0}实体/+${gd.edgesAdded || 0}边`);
+            notify(`原子记忆已保存（${res.result?.action || "ADD"}）`);
             return res.state;
         });
         return;
     }
-    if (!form.matches(".project-rename")) return;
-    event.preventDefault();
-    const val = form.querySelector("#projectRenameInput")?.value || "";
-    void runAction(form.querySelector('[type="submit"]'), async () => {
-        const next = await window.qlex.renameProject(form.dataset.id, val);
+    if (form.classList.contains("project-rename")) {
+        event.preventDefault();
+        const id = form.dataset.id;
+        const name = form.querySelector("#projectRenameInput")?.value?.trim();
+        if (!name) return;
         editingProject = "";
-        return next;
-    }, { success: "项目名称已更新" });
-});
-
-document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-        if (isViewMenuOpen()) toggleViewMenu(false);
-        else if (settingsOpen) { settingsOpen = false; render(); }
-        else if (memoryPreview) { memoryPreview = null; renderMemoryArchiveView(); }
+        void runAction(null, () => window.qlex.renameProject(id, name));
     }
 });
 
@@ -2050,46 +1531,53 @@ window.qlex.onNativeMaterial?.((mat) => {
     if (fp === lastMaterialFp) return;
     lastMaterialFp = fp;
     if (state) state.nativeMaterial = mat;
-    window.QlexTheme.applyNativeMaterial(mat);
+    window.QlexTheme?.applyNativeMaterial(mat);
 });
 
 window.qlex.onStateChanged?.((next) => {
     const activeEl = document.activeElement;
-    const activeId = activeEl?.id || "";
-    const editingControl = activeEl?.tagName === "SELECT" || activeEl?.tagName === "TEXTAREA" ||
-        ["searchInput", "invite", "centerAddress", "memoryRecallInput", "retainTitleInput", "retainContentInput", "retainProjectInput", "retainFactKeyInput"].includes(activeId);
+    const editingControl = activeEl?.tagName === "SELECT" || activeEl?.tagName === "TEXTAREA" || activeEl?.tagName === "INPUT";
     if (!busy && !editingProject && !editingControl && !memoryRetainOpen) {
         state = next;
         render();
     }
 });
 
-function openFromDock(destination) {
+function openFromExternal(destination) {
     if (!state) { pendingDestination = destination; return; }
     if (!state.configured) { render(); return; }
     pendingDestination = null;
-    settingsOpen = false;
     memoryPreview = null;
-    const map = { overview: "home", home: "home", usage: "usage", quota: "limits", limits: "limits", memory: "memory", projects: "projects", sessions: "sessions", devices: "devices", trends: "trends" };
-    view = map[destination] || "home";
-    period = destination === "sessions" ? 7 : 1;
+    projectDetail = "";
+    const map = {
+        overview: "Q", home: "Q", Q: "Q",
+        devices: "L", sync: "L", L: "L",
+        memory: "E", E: "E",
+        projects: "X", skills: "X", X: "X",
+        usage: "insights", limits: "insights", quota: "insights", sessions: "insights", trends: "insights",
+        settings: "settings",
+    };
+    activeSection = map[destination] || "Q";
+    if (destination === "limits" || destination === "quota") insightsTab = "limits";
+    else if (destination === "sessions") insightsTab = "sessions";
+    else if (destination === "usage" || destination === "trends") insightsTab = "usage";
     render();
 }
 
-window.qlex.onNavigate?.(openFromDock);
-window.addEventListener("resize", () => { if (view === "trends") paintTrendCanvas(); });
+window.qlex.onNavigate?.(openFromExternal);
+window.addEventListener("resize", () => { if (activeSection === "insights" && insightsTab === "usage") paintTrendCanvas(); });
 
 setInterval(async () => {
-    if (!state?.configured || state.pairing.mode === "local" || view !== "devices" || busy || refreshing || document.hidden) return;
-    if (document.activeElement?.tagName === "SELECT" || document.activeElement?.tagName === "TEXTAREA") return;
+    if (!state?.configured || state.pairing.mode === "local" || activeSection !== "L" || busy || refreshing || document.hidden) return;
+    if (["SELECT", "TEXTAREA", "INPUT"].includes(document.activeElement?.tagName)) return;
     refreshing = true;
     try {
         const next = await window.qlex.refreshPairing();
-        if (!busy && view === "devices" && JSON.stringify(state.pairing) !== JSON.stringify(next.pairing)) {
+        if (!busy && activeSection === "L" && JSON.stringify(state.pairing) !== JSON.stringify(next.pairing)) {
             state = next;
             render();
         }
-    } catch { /* retry next tick */ }
+    } catch { /* ignore */ }
     finally { refreshing = false; }
 }, 4000);
 
@@ -2098,7 +1586,7 @@ setInterval(async () => {
         state = await window.qlex.getState();
         const mat = await window.qlex.getNativeMaterial();
         if (mat) state.nativeMaterial = mat;
-        if (pendingDestination) openFromDock(pendingDestination);
+        if (pendingDestination) openFromExternal(pendingDestination);
         else render();
     } catch {
         notify("无法读取 QLEX 本机状态，请重新打开应用。", 0);

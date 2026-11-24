@@ -39,9 +39,9 @@ const dockPath = (0, node_path_1.join)(__dirname, "../ui/dock.html");
 const dockUrl = (0, node_url_1.pathToFileURL)(dockPath).href;
 const logo = (0, node_path_1.join)(electron_1.app.getAppPath(), "docs/assets/brand/logo.png");
 
-const DEFAULT_WINDOW = { width: 372, height: 676 };
+const DEFAULT_WINDOW = { width: 1020, height: 640 };
 const MENUBAR_POPOVER = { width: 352, height: 746 };
-const WINDOW_LIMITS = { minWidth: 280, minHeight: 380, maxWidth: 1200, maxHeight: 1400 };
+const WINDOW_LIMITS = { minWidth: 840, minHeight: 540, maxWidth: 1600, maxHeight: 1100 };
 const LIQUID_GLASS_SUPPORTED = process.platform === "darwin" && Number.parseInt(node_os_1.release(), 10) >= 25;
 
 let store;
@@ -242,15 +242,15 @@ function persistBoundsSoon() {
 
 function restoredBounds() {
     const saved = store.snapshot().windowBounds;
-    if (!saved) return DEFAULT_WINDOW;
+    if (!saved || typeof saved.width !== "number" || saved.width < WINDOW_LIMITS.minWidth) return DEFAULT_WINDOW;
     const width = Math.min(WINDOW_LIMITS.maxWidth, Math.max(WINDOW_LIMITS.minWidth, saved.width));
     const height = Math.min(WINDOW_LIMITS.maxHeight, Math.max(WINDOW_LIMITS.minHeight, saved.height));
     if (typeof saved.x === "number" && typeof saved.y === "number") {
         const display = electron_1.screen.getDisplayMatching({ x: saved.x, y: saved.y, width, height });
         const area = display?.workArea;
         if (area) {
-            const x = Math.max(area.x - width + 80, Math.min(area.x + area.width - 80, saved.x));
-            const y = Math.max(area.y, Math.min(area.y + area.height - 80, saved.y));
+            const x = Math.max(area.x - width + 120, Math.min(area.x + area.width - 120, saved.x));
+            const y = Math.max(area.y, Math.min(area.y + area.height - 120, saved.y));
             return { x, y, width, height };
         }
     }
@@ -1005,7 +1005,7 @@ async function smokeTest(created) {
       (async () => {
         const before = await window.qlex.getState();
         document.querySelector('[data-action="continue"]').click();
-        for (let count = 0; count < 100 && !document.querySelector('#viewSwitcher .view-switcher-current'); count++) {
+        for (let count = 0; count < 100 && !document.querySelector('.qlex-rail-btn.active'); count++) {
           await new Promise(resolve => setTimeout(resolve, 25));
         }
         const after = await window.qlex.getState();
