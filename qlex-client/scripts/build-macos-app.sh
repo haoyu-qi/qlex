@@ -94,6 +94,9 @@ cp -R "$KOFFI_SRC" "$STAGE_DIR/node_modules/koffi"
 # Copy Electron app template
 ditto "$TEMPLATE_APP" "$APP_OUT"
 rm -rf "$APP_OUT/Contents/Resources/app.asar" "$APP_OUT/Contents/Resources/app.asar.unpacked"
+if [[ -f "$ROOT/docs/assets/brand/icon.icns" ]]; then
+  cp "$ROOT/docs/assets/brand/icon.icns" "$APP_OUT/Contents/Resources/icon.icns"
+fi
 
 # Pack app.asar with koffi & embedded tsnet binary unpacked so native binaries execute cleanly
 npx --yes @electron/asar pack "$STAGE_DIR" "$APP_OUT/Contents/Resources/app.asar" --unpack="{**/node_modules/koffi/**,**/desktop/bin/**}"

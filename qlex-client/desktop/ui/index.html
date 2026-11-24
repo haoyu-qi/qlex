@@ -12,7 +12,7 @@
 </head>
 <body>
   <main id="shell" class="shell" tabindex="-1">
-    <!-- Top Draggable Titlebar (Mole / CleanMyMac inspired spacious header) -->
+    <!-- Top Draggable Titlebar -->
     <header class="topbar">
       <div class="topbar-left">
         <div class="traffic-lights" aria-label="窗口控制">
@@ -21,17 +21,15 @@
           <button id="pinButton" class="tl-dot pin" type="button" title="窗口置顶"></button>
         </div>
         <div class="brand-cluster">
-          <img class="brand-logo" src="../../docs/assets/brand/logo.png" alt="" />
-          <span class="brand-name">QLEX</span>
           <span id="liveDot" class="live-dot" title="节点状态"></span>
-          <button id="rolePill" class="role-badge hidden" type="button" title="切换到 L · 互联与穿透">本机</button>
+          <button id="rolePill" class="role-badge hidden" type="button" title="切换到互联与穿透">本机</button>
         </div>
       </div>
 
       <div class="topbar-center">
         <div id="topbarStatusPill" class="topbar-status-pill hidden">
           <span id="topbarStatusDot" class="status-pulse"></span>
-          <span id="topbarStatusText">同步总览</span>
+          <span id="topbarStatusText">中枢总览</span>
         </div>
       </div>
 
@@ -47,27 +45,21 @@
       </div>
     </header>
 
-    <!-- Main Body: Left Q-L-E-X Vertical Rail + Right Spacious Stage -->
+    <!-- Main Body: Left Frosted Pill Capsule Navigation (Logo + Pure Chinese Tabs) + Right Stage -->
     <div id="workspaceFrame" class="workspace-frame">
-      <aside id="qlexRail" class="qlex-rail hidden" aria-label="QLEX 核心导航">
-        <nav class="qlex-rail-core">
-          <button class="qlex-rail-btn active" type="button" data-rail="Q" title="Q · QLEX Core（中枢总览与同步核心）">
-            <span class="rail-letter">Q</span>
-            <span class="rail-name">总览</span>
+      <aside id="qlexRail" class="qlex-rail hidden" aria-label="QLEX 主导航">
+        <nav class="nav-capsule">
+          <button class="nav-capsule-logo" type="button" data-rail="overview" title="QLEX · 返回总览">
+            <img src="../../docs/assets/brand/logo.svg" alt="QLEX" />
           </button>
-          <button class="qlex-rail-btn" type="button" data-rail="L" title="L · Link（中心/接入点与 Tailscale 内网穿透）">
-            <span class="rail-letter">L</span>
-            <span class="rail-name">互联</span>
+          <button class="nav-capsule-btn active" type="button" data-rail="overview" title="中枢总览与同步核心">总览</button>
+          <button class="nav-capsule-btn" type="button" data-rail="link" title="中心/接入点与 Tailscale 内网穿透">互联</button>
+          <button class="nav-capsule-btn" type="button" data-rail="memory" title="认知记忆引擎、图谱与召回">记忆</button>
+          <button class="nav-capsule-btn" type="button" data-rail="workspace" title="跨端项目同步与 6 工具 Skills">
+            <span>工程</span>
+            <span id="railWorkspaceBadge" class="rail-badge hidden"></span>
           </button>
-          <button class="qlex-rail-btn" type="button" data-rail="E" title="E · Engram（认知记忆引擎、图谱与召回）">
-            <span class="rail-letter">E</span>
-            <span class="rail-name">记忆</span>
-          </button>
-          <button class="qlex-rail-btn" type="button" data-rail="X" title="X · eXtensions（跨端项目同步与 6 工具 Skills）">
-            <span class="rail-letter">X</span>
-            <span class="rail-name">工程</span>
-            <span id="railXBadge" class="rail-badge hidden"></span>
-          </button>
+          <button class="nav-capsule-btn" type="button" data-rail="status" title="节点、采集器、穿透与技能实时状态">状态</button>
         </nav>
 
         <div class="qlex-rail-aux">
@@ -84,10 +76,11 @@
 
       <section id="stageHost" class="stage-host">
         <div id="onboardingPanel" class="stage-view onboarding-stage hidden"></div>
-        <div id="qStage" class="stage-view q-stage hidden"></div>
-        <div id="lStage" class="stage-view split-stage hidden"></div>
-        <div id="eStage" class="stage-view split-stage hidden"></div>
-        <div id="xStage" class="stage-view split-stage hidden"></div>
+        <div id="overviewStage" class="stage-view q-stage hidden"></div>
+        <div id="linkStage" class="stage-view split-stage hidden"></div>
+        <div id="memoryStage" class="stage-view split-stage hidden"></div>
+        <div id="workspaceStage" class="stage-view split-stage hidden"></div>
+        <div id="statusStage" class="stage-view status-stage hidden"></div>
         <div id="insightsStage" class="stage-view insights-stage hidden"></div>
         <div id="settingsStage" class="stage-view settings-stage hidden"></div>
       </section>

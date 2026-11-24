@@ -38,6 +38,7 @@ const menubarUrl = (0, node_url_1.pathToFileURL)(menubarPath).href;
 const dockPath = (0, node_path_1.join)(__dirname, "../ui/dock.html");
 const dockUrl = (0, node_url_1.pathToFileURL)(dockPath).href;
 const logo = (0, node_path_1.join)(electron_1.app.getAppPath(), "docs/assets/brand/logo.png");
+const trayLogo = (0, node_path_1.join)(electron_1.app.getAppPath(), "docs/assets/brand/tray-icon.png");
 
 const DEFAULT_WINDOW = { width: 1020, height: 640 };
 const MENUBAR_POPOVER = { width: 352, height: 746 };
@@ -486,14 +487,11 @@ function applyEdgeDockMode(mode) {
 }
 
 function createTray() {
-    const original = electron_1.nativeImage.createFromPath(logo);
+    const templatePath = (0, node_fs_1.existsSync)(trayLogo) ? trayLogo : logo;
+    const original = electron_1.nativeImage.createFromPath(templatePath);
     if (original.isEmpty())
         return;
-    const { width, height } = original.getSize();
-    const mark = original.crop({
-        x: Math.round(width * .15), y: Math.round(height * .26),
-        width: Math.round(width * .69), height: Math.round(height * .54),
-    }).resize({ width: 19 });
+    const mark = original.resize({ width: 19, height: 19 });
     mark.setTemplateImage(process.platform === "darwin");
     tray = new electron_1.Tray(mark);
     tray.on("click", () => {
@@ -1005,7 +1003,7 @@ async function smokeTest(created) {
       (async () => {
         const before = await window.qlex.getState();
         document.querySelector('[data-action="continue"]').click();
-        for (let count = 0; count < 100 && !document.querySelector('.qlex-rail-btn.active'); count++) {
+        for (let count = 0; count < 100 && !document.querySelector('.nav-capsule-btn.active'); count++) {
           await new Promise(resolve => setTimeout(resolve, 25));
         }
         const after = await window.qlex.getState();

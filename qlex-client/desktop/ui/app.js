@@ -17,12 +17,13 @@ const syncStatusText = document.querySelector("#syncStatusText");
 const updatePillBtn = document.querySelector("#updatePillBtn");
 const updatePillText = document.querySelector("#updatePillText");
 const qlexRail = document.querySelector("#qlexRail");
-const railXBadge = document.querySelector("#railXBadge");
+const railWorkspaceBadge = document.querySelector("#railWorkspaceBadge");
 const onboardingPanel = document.querySelector("#onboardingPanel");
-const qStage = document.querySelector("#qStage");
-const lStage = document.querySelector("#lStage");
-const eStage = document.querySelector("#eStage");
-const xStage = document.querySelector("#xStage");
+const overviewStage = document.querySelector("#overviewStage");
+const linkStage = document.querySelector("#linkStage");
+const memoryStage = document.querySelector("#memoryStage");
+const workspaceStage = document.querySelector("#workspaceStage");
+const statusStage = document.querySelector("#statusStage");
 const insightsStage = document.querySelector("#insightsStage");
 const settingsStage = document.querySelector("#settingsStage");
 const noticeEl = document.querySelector("#notice");
@@ -37,16 +38,17 @@ const SOURCE_NAMES = {
 const ROLES = { local: "单机模式", center: "中心点", endpoint: "接入点" };
 const PERIODS = { 1: "今日", 7: "近 7 天", 30: "近 30 天" };
 const SECTION_LABELS = {
-    Q: "Q · 中枢总览",
-    L: "L · 互联与穿透",
-    E: "E · 记忆与图谱",
-    X: "X · 项目与技能",
-    insights: "辅助洞察 · 用量与会话",
+    overview: "中枢总览",
+    link: "互联与穿透",
+    memory: "记忆与图谱",
+    workspace: "项目与技能",
+    status: "运行状态",
+    insights: "辅助洞察",
     settings: "工作台设置",
 };
 
 let state = null;
-let activeSection = "Q"; // "Q" | "L" | "E" | "X" | "insights" | "settings"
+let activeSection = "overview"; // "overview" | "link" | "memory" | "workspace" | "status" | "insights" | "settings"
 let insightsTab = "usage"; // "usage" | "limits" | "sessions" | "trends"
 let period = 7;
 let busy = false;
@@ -176,7 +178,7 @@ function updateTopbarAndRail() {
     pinButton.classList.toggle("active", Boolean(state.appearance?.alwaysOnTop));
 
     setVisible(topbarStatusPill, state.configured);
-    topbarStatusText.textContent = SECTION_LABELS[activeSection] || "Q · 中枢总览";
+    topbarStatusText.textContent = SECTION_LABELS[activeSection] || "中枢总览";
     topbarStatusDot.className = `status-pulse${st.phase === "syncing" ? " syncing" : (sk.conflicts > 0 || (net.mode !== "local" && !net.online)) ? " warn" : ""}`;
 
     setVisible(syncStatusBtn, state.configured);
@@ -195,12 +197,12 @@ function updateTopbarAndRail() {
             : `v${state.version || "0.3.0"}`;
 
     setVisible(qlexRail, state.configured);
-    for (const btn of qlexRail.querySelectorAll("[data-rail]")) {
+    for (const btn of qlexRail.querySelectorAll(".nav-capsule-btn, .rail-aux-btn")) {
         btn.classList.toggle("active", btn.dataset.rail === activeSection);
     }
-    const xAlerts = (sk.conflicts || 0) + (state.remoteProjects?.length || 0);
-    setVisible(railXBadge, xAlerts > 0);
-    if (xAlerts > 0) railXBadge.textContent = String(xAlerts);
+    const workspaceAlerts = (sk.conflicts || 0) + (state.remoteProjects?.length || 0);
+    setVisible(railWorkspaceBadge, workspaceAlerts > 0);
+    if (workspaceAlerts > 0) railWorkspaceBadge.textContent = String(workspaceAlerts);
 }
 
 /* ---- Onboarding ---- */
@@ -208,10 +210,10 @@ function renderOnboarding() {
     patchHtml(onboardingPanel, `
       <div class="onboarding-card">
         <div style="display:flex;align-items:center;gap:12px">
-          <img src="../../docs/assets/brand/logo.png" alt="" style="width:42px;height:42px;border-radius:11px" />
+          <img src="../../docs/assets/brand/logo.svg" alt="QLEX" style="width:46px;height:46px;border-radius:50%" />
           <div>
             <h1 style="margin:0;font-size:20px;color:var(--number)">欢迎使用 QLEX</h1>
-            <div class="muted-note">Q 总览 · L 互联 · E 记忆 · X 工程 — 多端 AI 工作台互联中枢</div>
+            <div class="muted-note">总览 · 互联 · 记忆 · 工程 · 状态 — 多端 AI 工作台互联中枢</div>
           </div>
         </div>
         <div class="item-list">
@@ -225,7 +227,7 @@ function renderOnboarding() {
           </label>
           <label class="mode-option">
             <input type="radio" name="mode" value="local" />
-            <span><strong>暂仅本机使用</strong><small>先在本机运行认知记忆引擎、项目工作区与 6 工具 Skills 一致化，随时可在「L 互联」中切换。</small></span>
+            <span><strong>暂仅本机使用</strong><small>先在本机运行认知记忆引擎、项目工作区与 6 工具 Skills 一致化，随时可在「互联」中切换。</small></span>
           </label>
         </div>
         <div id="onboardingInviteBox" class="hidden">
@@ -306,7 +308,7 @@ function renderQStage() {
     const isSyncing = st.phase === "syncing";
     const orbTone = health.phase === "warn" || health.phase === "error" ? "warn" : "";
 
-    patchHtml(qStage, `
+    patchHtml(overviewStage, `
       <section class="q-hero">
         <div class="q-orbit-stage ${isSyncing ? "syncing" : ""}">
           <div class="q-orbit-ring outer">
@@ -332,7 +334,7 @@ function renderQStage() {
           <span>${fmtNum(cog.activeItems || 0)} 条记忆 · ${sk.uniqueSkills ?? 0} 项技能 · ${ts.online ? `Tailscale ${esc(ts.self?.ip || "")}` : "局域网就绪"}</span>
           <span>·</span>
           ${sk.conflicts > 0
-              ? `<button type="button" class="q-inline-link" style="color:var(--orange)" data-rail="X">解决 ${sk.conflicts} 项技能冲突 ›</button>`
+              ? `<button type="button" class="q-inline-link" style="color:var(--orange)" data-rail="workspace">解决 ${sk.conflicts} 项技能冲突 ›</button>`
               : net.mode === "center" && net.online
                   ? `<button type="button" class="q-inline-link" data-action="copy-invite">复制一次性邀请码</button><span>·</span><button type="button" class="q-inline-link" data-action="invite">刷新链接</button>`
                   : `<button type="button" class="q-inline-link" data-action="tailscale-scan">扫描内网节点</button>`}
@@ -344,34 +346,34 @@ function renderQStage() {
       </section>
 
       <section class="q-bottom-grid">
-        <div class="q-tile" data-rail="L">
+        <div class="q-tile" data-rail="link">
           <div class="q-tile-head">
-            <span class="q-tile-kicker"><span class="q-tile-letter">L</span>互联穿透</span>
+            <span class="q-tile-kicker">互联穿透</span>
             <span class="tag ${ts.online || net.online ? "ok" : "warn"}">${ts.online ? "TS 在线" : ROLES[net.mode]}</span>
           </div>
           <div class="q-tile-val">${net.mode === "center" ? `${onlinePeers}<small>/${connectedPeers} 节点</small>` : ts.online ? `${(ts.discoveredCenters || []).length}<small> 台中心</small>` : "就绪"}</div>
           <div class="q-tile-sub">${esc(ts.self?.dnsName || cleanHost(state.deviceName))}</div>
         </div>
 
-        <div class="q-tile" data-rail="E">
+        <div class="q-tile" data-rail="memory">
           <div class="q-tile-head">
-            <span class="q-tile-kicker"><span class="q-tile-letter">E</span>记忆图谱</span>
+            <span class="q-tile-kicker">记忆图谱</span>
             <span class="tag ${ms.installedCount === ms.totalCount ? "ok" : "warn"}">技能 ${ms.installedCount}/${ms.totalCount}</span>
           </div>
           <div class="q-tile-val">${fmtNum(cog.activeItems || 0)}<small>条</small></div>
           <div class="q-tile-sub">${cog.entities || 0} 实体 · ${cog.activeEdges || 0} 边 · 压缩 ${mem.compressionRatio ?? 0}%</div>
         </div>
 
-        <div class="q-tile" data-rail="X">
+        <div class="q-tile" data-rail="workspace">
           <div class="q-tile-head">
-            <span class="q-tile-kicker"><span class="q-tile-letter">X</span>项目与技能</span>
+            <span class="q-tile-kicker">项目与技能</span>
             <span class="tag ${sk.conflicts > 0 ? "warn" : "ok"}">${sk.conflicts > 0 ? `冲突 ${sk.conflicts}` : "已对齐"}</span>
           </div>
           <div class="q-tile-val">${boundProjects.length}<small>项目 · ${sk.uniqueSkills ?? 0}技能</small></div>
           <div class="q-tile-sub">${remoteProjects.length ? `${remoteProjects.length} 个远端共享项目待绑定` : "跨设备工作区与 6 工具技能"}</div>
         </div>
 
-        <div class="q-tile" data-rail="insights">
+        <div class="q-tile" data-rail="status">
           <div class="q-tile-head">
             <span class="q-tile-kicker">同步活动趋势</span>
             <span class="card-meta">${fmtShortTime(st.time)}</span>
@@ -488,10 +490,9 @@ function renderLStage() {
         : ts.mode === "embedded" && ts.online ? "内嵌 tsnet SDK 在线"
         : ts.embeddedRunning ? (ts.authURL ? "等待浏览器登录" : "启动中…") : "未连接";
 
-    patchHtml(lStage, `
+    patchHtml(linkStage, `
       <div class="stage-header">
         <div class="stage-title-group">
-          <span class="stage-letter-pill">L</span>
           <h2 class="stage-title">互联与穿透</h2>
           <span class="stage-subtitle">中心点 / 接入点配对 · 一次性邀请码 · Tailscale 内网穿透与自动发现</span>
         </div>
@@ -655,10 +656,9 @@ function renderEStage() {
         `;
     }
 
-    patchHtml(eStage, `
+    patchHtml(memoryStage, `
       <div class="stage-header">
         <div class="stage-title-group">
-          <span class="stage-letter-pill">E</span>
           <h2 class="stage-title">记忆与图谱</h2>
           <span class="stage-subtitle">Mem0 · Hindsight · memU · Cognee · Graphiti · OpenViking 分层召回</span>
         </div>
@@ -838,11 +838,10 @@ function renderXStage() {
         `;
     }
 
-    patchHtml(xStage, `
+    patchHtml(workspaceStage, `
       <div class="stage-header">
         <div class="stage-title-group">
-          <span class="stage-letter-pill">X</span>
-          <h2 class="stage-title">工程：项目同步与 Skills</h2>
+          <h2 class="stage-title">项目同步与技能</h2>
           <span class="stage-subtitle">跨设备工作区对齐 · 6 大 AI 工具本地 Skills 一致化与冲突解决</span>
         </div>
         <div class="stage-actions">
@@ -907,6 +906,192 @@ function renderXStage() {
               <div class="muted-note">所有已勾选的 AI 工具技能目录版本完全一致，无内容分歧。</div>
             </div>
           `}
+        </div>
+      </div>
+    `);
+}
+
+/* ---- Status Stage: Live System, Sync, Collectors, Tailscale & Skills Telemetry ---- */
+function statusRingSvg(pct, label, tone = "") {
+    const r = 17;
+    const circ = 2 * Math.PI * r;
+    const clamped = Math.max(0, Math.min(100, pct));
+    const offset = circ * (1 - clamped / 100);
+    return `
+      <div class="status-ring" title="${esc(label)} ${clamped}%">
+        <svg viewBox="0 0 44 44">
+          <circle class="track" cx="22" cy="22" r="${r}" />
+          <circle class="fill ${tone}" cx="22" cy="22" r="${r}" stroke-dasharray="${circ.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}" />
+        </svg>
+        <span class="status-ring-label">${esc(label)}</span>
+      </div>
+    `;
+}
+
+function renderStatusStage() {
+    const net = state.pairing || { mode: "local", peers: [] };
+    const ts = state.tailscale || {};
+    const sk = state.skills || {};
+    const mem = state.memoryArchive || {};
+    const cog = mem.cognitive || { activeItems: 0, entities: 0, activeEdges: 0 };
+    const counts = mem.counts || { daily: 0, weekly: 0, monthly: 0 };
+    const ms = state.memorySkill || { installedCount: 0, totalCount: 6 };
+    const st = state.syncStatus || { phase: "idle", label: "待同步", time: 0 };
+    const diag = state.usage?.diagnostics || {};
+    const upd = state.updater || { phase: "idle", currentVersion: state.version };
+    const health = computeHealth(state);
+    const namespaces = Object.values(sk.namespaces || {});
+    const syncMeta = net.syncMeta || {};
+
+    const eqLit = Math.max(2, Math.round(health.score / 10));
+    const eqBars = Array.from({ length: 10 }, (_, i) =>
+        `<span class="status-eq-bar ${i < eqLit ? (health.phase === "ok" ? "on" : "warn") : ""}"></span>`
+    ).join("");
+
+    const agentPct = ms.totalCount ? Math.round(((ms.installedCount || 0) / ms.totalCount) * 100) : 100;
+    const alignedPct = sk.conflicts > 0 ? Math.max(20, 100 - sk.conflicts * 15) : sk.missingLinks > 0 ? 80 : 100;
+    const netPct = ts.online ? 100 : net.online ? 85 : 50;
+
+    patchHtml(statusStage, `
+      <div class="stage-header">
+        <div class="stage-title-group">
+          <h2 class="stage-title">运行状态</h2>
+          <span class="stage-subtitle">综合健康评估 · 同步链路 · 5 大 Agent 采集器与 6 工具技能实时状态</span>
+        </div>
+        <div class="stage-actions">
+          <button type="button" class="glass-btn sm" data-action="refresh-usage">⟳ 刷新采集</button>
+          <button type="button" class="glass-btn sm" data-action="tailscale-scan">扫描穿透</button>
+          <button type="button" class="glass-btn sm primary" data-action="sync-now">立即双向同步</button>
+        </div>
+      </div>
+
+      <div class="status-kpi-grid">
+        <div class="status-kpi-card">
+          <div class="card-head">
+            <span class="card-title">综合健康</span>
+            <span class="tag ${health.phase === "ok" ? "ok" : "warn"}">${esc(health.label)}</span>
+          </div>
+          <div class="status-kpi-val">${health.score}<small>/ 100</small></div>
+          <div class="status-eq-bars">${eqBars}</div>
+          <div class="item-sub">${ROLES[net.mode]} · ${esc(cleanHost(state.deviceName))}</div>
+        </div>
+
+        <div class="status-kpi-card">
+          <div class="card-head">
+            <span class="card-title">双向同步</span>
+            <span class="tag ${st.phase === "synced" ? "ok" : st.phase === "error" ? "err" : "warn"}">${fmtShortTime(st.time)}</span>
+          </div>
+          <div class="status-kpi-val">${esc(st.phase === "syncing" ? "同步中" : st.phase === "synced" ? "正常" : st.label)}</div>
+          <div class="item-sub">记忆 ${fmtShortTime(syncMeta.lastMemorySync?.time)} · 项目 ${fmtShortTime(syncMeta.lastProjectsSync?.time)}</div>
+        </div>
+
+        <div class="status-kpi-card">
+          <div class="card-head">
+            <span class="card-title">内网穿透</span>
+            <span class="tag ${ts.online ? "ok" : "warn"}">${ts.mode === "embedded" && ts.online ? "tsnet" : ts.online ? "已穿透" : "未连接"}</span>
+          </div>
+          <div class="status-kpi-val">${ts.online ? `${(ts.discoveredCenters || []).length}<small>台中心</small>` : "局域网"}</div>
+          <div class="item-sub">${esc(ts.self?.ip || ts.self?.dnsName || "支持 Tailscale / 内嵌 tsnet")}</div>
+        </div>
+
+        <div class="status-kpi-card">
+          <div class="card-head">
+            <span class="card-title">能力覆盖</span>
+            <span class="tag ${agentPct === 100 && alignedPct === 100 ? "ok" : "warn"}">${ms.installedCount}/${ms.totalCount} 工具</span>
+          </div>
+          <div class="status-rings-row">
+            ${statusRingSvg(agentPct, "技能", agentPct === 100 ? "" : "warn")}
+            ${statusRingSvg(alignedPct, "对齐", alignedPct === 100 ? "" : "warn")}
+            ${statusRingSvg(netPct, "穿透", ts.online ? "" : "blue")}
+          </div>
+        </div>
+      </div>
+
+      <div class="split-cols">
+        <div class="col-stack">
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">核心服务与 5 大 Agent 采集器</span>
+              <span class="tag ok">${esc(state.usage?.engine || "native")} 引擎</span>
+            </div>
+            <div class="item-list">
+              <div class="item-row" style="padding:7px 10px">
+                <div class="item-main">
+                  <span class="item-dot" style="background:${net.online || net.mode === "local" ? "var(--success)" : "var(--orange)"}"></span>
+                  <div class="item-text">
+                    <div class="item-title" style="font-size:12px">同步中心 / 接入点通信服务</div>
+                    <div class="item-sub">${ROLES[net.mode]} · 端口 ${net.port || 46271} · ${(net.peers || []).filter(p => p.online).length}/${(net.peers || []).length} 在线</div>
+                  </div>
+                </div>
+                <span class="tag ${net.online || net.mode === "local" ? "ok" : "warn"}">${net.online || net.mode === "local" ? "正常" : "离线"}</span>
+              </div>
+              <div class="item-row" style="padding:7px 10px">
+                <div class="item-main">
+                  <span class="item-dot" style="background:var(--purple)"></span>
+                  <div class="item-text">
+                    <div class="item-title" style="font-size:12px">认知记忆压缩归档引擎</div>
+                    <div class="item-sub">活跃 ${cog.activeItems || 0} 条 · 日${counts.daily}/周${counts.weekly}/月${counts.monthly} · 压缩率 ${mem.compressionRatio ?? 0}%</div>
+                  </div>
+                </div>
+                <span class="tag ok">运行中</span>
+              </div>
+              ${Object.entries(SOURCE_NAMES).map(([k, label]) => {
+                  const d = diag[k] || { status: "empty", filesScanned: 0, sessionsFound: 0 };
+                  const cls = d.status === "ok" ? "ok" : d.status === "missing" ? "warn" : "";
+                  const txt = d.status === "ok" ? "正常" : d.status === "missing" ? "未安装" : "无记录";
+                  return `<div class="item-row" style="padding:6px 10px">
+                    <div class="item-main">
+                      <span class="item-dot" style="background:${sourceColor(k)}"></span>
+                      <div class="item-text">
+                        <div class="item-title" style="font-size:12px">${label}</div>
+                        <div class="item-sub">${d.sessionsFound || 0} 会话 · ${d.filesScanned || 0} 日志文件</div>
+                      </div>
+                    </div>
+                    <span class="tag ${cls}">${txt}</span>
+                  </div>`;
+              }).join("")}
+            </div>
+          </div>
+        </div>
+
+        <div class="col-stack">
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">6 大工具 Skills 目录健康状态</span>
+              <span class="tag ${sk.conflicts > 0 ? "warn" : "ok"}">${sk.conflicts > 0 ? `冲突 ${sk.conflicts}` : `${sk.uniqueSkills ?? 0} 项已对齐`}</span>
+            </div>
+            <div class="skills-ns-grid">
+              ${namespaces.map(ns => `
+                <div class="skill-ns-chip ${ns.enabled ? "enabled" : ""}" data-rail="workspace" title="${esc(ns.path)}">
+                  <span>${ns.enabled ? "✓ " : ""}${esc(ns.label)}</span>
+                  <strong>${ns.count}</strong>
+                </div>
+              `).join("")}
+            </div>
+            <div class="btn-row">
+              <button type="button" class="glass-btn sm primary" data-action="sync-local-skills">⟳ 一键对齐</button>
+              ${sk.conflicts > 0 ? `<button type="button" class="glass-btn sm" style="color:var(--orange)" data-action="resolve-all-conflicts">⚡ 全部解冲突</button>` : ""}
+              <button type="button" class="glass-btn sm" data-action="install-memory-skill">部署 Agent 技能</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">环境与版本推送状态</span>
+              <span class="tag ok">v${esc(state.version)}</span>
+            </div>
+            <div class="kpi-strip-3">
+              <div class="kpi-chip"><span>更新通道</span><strong>${(state.updateChannel || "beta") === "beta" ? "Beta" : "Stable"}</strong></div>
+              <div class="kpi-chip"><span>系统平台</span><strong>${state.platform === "darwin" ? "macOS" : state.platform}</strong></div>
+              <div class="kpi-chip"><span>已绑项目</span><strong>${(state.projects || []).length}</strong></div>
+            </div>
+            <div class="btn-row">
+              <button type="button" class="glass-btn sm" data-action="update-check">${upd.phase === "checking" ? "检查中…" : "检查新版本"}</button>
+              ${upd.phase === "available" ? `<button type="button" class="glass-btn sm primary" data-action="update-download">↓ 下载 ${esc(upd.latest?.version || "")}</button>` : ""}
+              ${upd.phase === "ready" ? `<button type="button" class="glass-btn sm primary" data-action="update-install">⚡ 立即安装</button>` : ""}
+              <button type="button" class="glass-btn sm" data-action="open-memory-dir">记忆目录 ↗</button>
+            </div>
+          </div>
         </div>
       </div>
     `);
@@ -1218,21 +1403,30 @@ function render() {
 
     updateTopbarAndRail();
 
-    const stages = [onboardingPanel, qStage, lStage, eStage, xStage, insightsStage, settingsStage];
+    const stages = [onboardingPanel, overviewStage, linkStage, memoryStage, workspaceStage, statusStage, insightsStage, settingsStage];
     if (!state.configured) {
         for (const s of stages) setVisible(s, s === onboardingPanel);
         renderOnboarding();
         return;
     }
 
-    const activeMap = { Q: qStage, L: lStage, E: eStage, X: xStage, insights: insightsStage, settings: settingsStage };
-    const currentStage = activeMap[activeSection] || qStage;
+    const activeMap = {
+        overview: overviewStage,
+        link: linkStage,
+        memory: memoryStage,
+        workspace: workspaceStage,
+        status: statusStage,
+        insights: insightsStage,
+        settings: settingsStage,
+    };
+    const currentStage = activeMap[activeSection] || overviewStage;
     for (const s of stages) setVisible(s, s === currentStage);
 
-    if (activeSection === "Q") renderQStage();
-    else if (activeSection === "L") renderLStage();
-    else if (activeSection === "E") renderEStage();
-    else if (activeSection === "X") renderXStage();
+    if (activeSection === "overview") renderQStage();
+    else if (activeSection === "link") renderLStage();
+    else if (activeSection === "memory") renderEStage();
+    else if (activeSection === "workspace") renderXStage();
+    else if (activeSection === "status") renderStatusStage();
     else if (activeSection === "insights") renderInsightsStage();
     else if (activeSection === "settings") renderSettingsStage();
 }
@@ -1260,7 +1454,7 @@ async function runAction(btn, fn, { goToSection = null, success = "" } = {}) {
 closeButton.addEventListener("click", () => void window.qlex.closeWindow());
 minButton.addEventListener("click", () => void window.qlex.minimizeWindow());
 pinButton.addEventListener("click", () => void runAction(pinButton, () => window.qlex.togglePinWindow()));
-rolePill.addEventListener("click", () => { activeSection = "L"; render(); });
+rolePill.addEventListener("click", () => { activeSection = "link"; render(); });
 syncStatusBtn.addEventListener("click", () => void runAction(syncStatusBtn, () => window.qlex.syncNow(), { success: "双向同步与归档完成" }));
 updatePillBtn.addEventListener("click", () => {
     const ph = state?.updater?.phase;
@@ -1277,11 +1471,11 @@ document.addEventListener("click", (event) => {
         const act = actionBtn.dataset.action;
         if (act === "continue") {
             const mode = document.querySelector('input[name="mode"]:checked')?.value || "local";
-            if (mode === "center") void runAction(actionBtn, () => window.qlex.enableCenter(), { goToSection: "L" });
+            if (mode === "center") void runAction(actionBtn, () => window.qlex.enableCenter(), { goToSection: "link" });
             else if (mode === "endpoint") {
                 const code = document.querySelector("#invite")?.value || "";
-                void runAction(actionBtn, () => window.qlex.joinCenter(code), { goToSection: "L" });
-            } else void runAction(actionBtn, () => window.qlex.configureLocal(), { goToSection: "Q" });
+                void runAction(actionBtn, () => window.qlex.joinCenter(code), { goToSection: "link" });
+            } else void runAction(actionBtn, () => window.qlex.configureLocal(), { goToSection: "overview" });
         } else if (act === "sync-now") {
             void runAction(actionBtn, () => window.qlex.syncNow(), { success: "双向同步与归档完成" });
         } else if (act === "sync-local-skills") {
@@ -1550,14 +1744,15 @@ function openFromExternal(destination) {
     memoryPreview = null;
     projectDetail = "";
     const map = {
-        overview: "Q", home: "Q", Q: "Q",
-        devices: "L", sync: "L", L: "L",
-        memory: "E", E: "E",
-        projects: "X", skills: "X", X: "X",
-        usage: "insights", limits: "insights", quota: "insights", sessions: "insights", trends: "insights",
+        overview: "overview", home: "overview", Q: "overview",
+        devices: "link", sync: "link", link: "link", L: "link",
+        memory: "memory", E: "memory",
+        projects: "workspace", skills: "workspace", workspace: "workspace", X: "workspace",
+        status: "status",
+        usage: "insights", limits: "insights", quota: "insights", sessions: "insights", trends: "insights", insights: "insights",
         settings: "settings",
     };
-    activeSection = map[destination] || "Q";
+    activeSection = map[destination] || "overview";
     if (destination === "limits" || destination === "quota") insightsTab = "limits";
     else if (destination === "sessions") insightsTab = "sessions";
     else if (destination === "usage" || destination === "trends") insightsTab = "usage";
@@ -1568,12 +1763,12 @@ window.qlex.onNavigate?.(openFromExternal);
 window.addEventListener("resize", () => { if (activeSection === "insights" && insightsTab === "usage") paintTrendCanvas(); });
 
 setInterval(async () => {
-    if (!state?.configured || state.pairing.mode === "local" || activeSection !== "L" || busy || refreshing || document.hidden) return;
+    if (!state?.configured || state.pairing.mode === "local" || (activeSection !== "link" && activeSection !== "status") || busy || refreshing || document.hidden) return;
     if (["SELECT", "TEXTAREA", "INPUT"].includes(document.activeElement?.tagName)) return;
     refreshing = true;
     try {
         const next = await window.qlex.refreshPairing();
-        if (!busy && activeSection === "L" && JSON.stringify(state.pairing) !== JSON.stringify(next.pairing)) {
+        if (!busy && JSON.stringify(state.pairing) !== JSON.stringify(next.pairing)) {
             state = next;
             render();
         }
