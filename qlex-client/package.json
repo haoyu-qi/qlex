@@ -36,6 +36,7 @@
     },
     "win": {
       "icon": "docs/assets/brand/icon.ico",
+      "artifactName": "QLEX-${version}-Windows-${arch}-Portable.${ext}",
       "target": [
         {
           "target": "nsis",
@@ -61,9 +62,6 @@
       "installerIcon": "docs/assets/brand/icon.ico",
       "uninstallerIcon": "docs/assets/brand/icon.ico",
       "artifactName": "QLEX-${version}-Windows-${arch}-Setup.${ext}"
-    },
-    "zip": {
-      "artifactName": "QLEX-${version}-Windows-${arch}-Portable.${ext}"
     }
   }
 }

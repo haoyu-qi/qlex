@@ -56,6 +56,7 @@ jobs:
         shell: pwsh
         run: |
           npx electron-builder --win nsis zip --x64 --publish never
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $ver = (Get-Content package.json | ConvertFrom-Json).version
           New-Item -ItemType Directory -Force -Path ..\installers | Out-Null
           Copy-Item "..\installers\win-build\QLEX-$ver-Windows-x64-Setup.exe" "..\installers\" -Force
