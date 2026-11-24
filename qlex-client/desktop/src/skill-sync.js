@@ -79,7 +79,7 @@ function rootAt(home, namespace, create = false) {
 
 function digest(files) {
     const ordered = [...files].sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)));
-    return createHash("sha256").update(JSON.stringify(ordered.map(f => [f.path, f.data, f.executable]))).digest("hex");
+    return createHash("sha256").update(JSON.stringify(ordered.map(f => [f.path, f.data]))).digest("hex");
 }
 
 function inspect(folder) {

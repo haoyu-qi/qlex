@@ -312,7 +312,7 @@ function buildSkillFiles() {
         { rel: "scripts/qlex_memory.mjs", content: buildCliScript(), executable: true },
     ];
     const hash = createHash("sha256")
-        .update(JSON.stringify(files.map(f => [f.rel, f.content, f.executable])))
+        .update(JSON.stringify(files.map(f => [f.rel, f.content])))
         .digest("hex");
     return { files, hash };
 }
@@ -324,7 +324,7 @@ function computeDirHash(skillDir) {
             const full = path.join(skillDir, ...rel.split("/"));
             const stat = fs.lstatSync(full);
             if (!stat.isFile()) return null;
-            return [rel, fs.readFileSync(full, "utf8"), Boolean(stat.mode & 0o100)];
+            return [rel, fs.readFileSync(full, "utf8")];
         });
         if (tuples.some(x => !x)) return null;
         return createHash("sha256").update(JSON.stringify(tuples)).digest("hex");
