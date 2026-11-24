@@ -186,6 +186,7 @@ class DevicePairing {
     listenPort;
     server;
     activeInvite;
+    activeInviteCode;
     endpointOnline = false;
     peerSeenAt = new Map();
     refreshing;
@@ -205,6 +206,10 @@ class DevicePairing {
     }
     view() {
         const config = this.config;
+        if (this.activeInvite && Date.now() >= this.activeInvite.expiresAt) {
+            this.activeInvite = undefined;
+            this.activeInviteCode = undefined;
+        }
         const hostList = config.mode === "center" ? addresses(this.getExtraHosts?.() || []) : [];
         return {
             mode: config.mode,
@@ -217,6 +222,13 @@ class DevicePairing {
                 label: h.endsWith(".ts.net") ? `${h} (Tailscale MagicDNS)` : isTailscaleIPv4(h) ? `${h} (Tailscale)` : `${h} (局域网)`,
             })),
             port: this.serverPort(),
+            activeInvite: config.mode === "center" && this.activeInvite && this.activeInviteCode ? {
+                code: this.activeInviteCode,
+                host: this.activeInvite.host,
+                port: this.activeInvite.port,
+                expiresAt: this.activeInvite.expiresAt,
+                shortToken: this.activeInvite.token.slice(0, 8),
+            } : null,
             peers: config.mode === "center" ? config.center?.peers.filter(({ status }) => status !== "rejected")
                 .map(({ id, name, status, credentialHash }) => ({ id, name, status,
                     online: status === "connected" && Boolean(this.server?.listening) &&
@@ -280,6 +292,7 @@ class DevicePairing {
         this.server?.closeAllConnections();
         this.server = undefined;
         this.activeInvite = undefined;
+        this.activeInviteCode = undefined;
         this.peerSeenAt.clear();
     }
     async useLocal() {
@@ -301,12 +314,14 @@ class DevicePairing {
     }
     createInvite(host) {
         const allowed = addresses(this.getExtraHosts?.() || []);
-        if (!this.server?.listening || typeof host !== "string" || !allowed.includes(host)) {
+        const selectedHost = (typeof host === "string" && allowed.includes(host)) ? host : allowed[0];
+        if (!this.server?.listening || !selectedHost) {
             throw new Error("请先启动中心，并选择本机可用的网络地址。");
         }
         const center = this.config.center;
-        this.activeInvite = { host, port: this.serverPort(), cert: center.cert, token: secret(), expiresAt: Date.now() + lifetime };
-        return "QLEX1." + Buffer.from(JSON.stringify(this.activeInvite)).toString("base64url");
+        this.activeInvite = { host: selectedHost, port: this.serverPort(), cert: center.cert, token: secret(), expiresAt: Date.now() + lifetime };
+        this.activeInviteCode = "QLEX1." + Buffer.from(JSON.stringify(this.activeInvite)).toString("base64url");
+        return this.activeInviteCode;
     }
     async join(code) {
         const config = this.config;
@@ -535,6 +550,7 @@ class DevicePairing {
             const peers = [...center.peers.filter((entry) => entry.id !== id), peer];
             this.store.setPairing({ ...config, center: { ...center, peers } });
             this.activeInvite = undefined;
+            this.activeInviteCode = undefined;
             reply(res, 200, { name: deviceName(), status: peer.status });
         }
         catch {

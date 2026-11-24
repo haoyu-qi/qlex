@@ -124,7 +124,21 @@ function createTailscaleManager({ dataDir, getCenterInfo, onChange } = {}) {
         error: null,
     };
 
+    let lastEmitFp = "";
     function emitChange() {
+        const fp = JSON.stringify({
+            mode: state.mode,
+            backendState: state.backendState,
+            online: state.online,
+            embeddedRunning: state.embeddedRunning,
+            authURL: state.authURL,
+            self: state.self,
+            tailnetPeers: state.tailnetPeers,
+            discoveredCenters: state.discoveredCenters,
+            error: state.error,
+        });
+        if (fp === lastEmitFp) return;
+        lastEmitFp = fp;
         onChange?.(structuredClone(state));
     }
 

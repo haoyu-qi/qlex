@@ -85,6 +85,7 @@ electron_1.contextBridge.exposeInMainWorld("qlex", {
     useLocal: () => electron_1.ipcRenderer.invoke("qlex:use-local"),
     refreshPairing: () => electron_1.ipcRenderer.invoke("qlex:refresh-pairing"),
     createInvite: (host) => electron_1.ipcRenderer.invoke("qlex:create-invite", host),
+    copyInvite: () => electron_1.ipcRenderer.invoke("qlex:copy-invite"),
     approveDevice: (id) => electron_1.ipcRenderer.invoke("qlex:approve-device", id),
     removeDevice: (id) => electron_1.ipcRenderer.invoke("qlex:remove-device", id),
 

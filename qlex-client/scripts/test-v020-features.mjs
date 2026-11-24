@@ -106,8 +106,11 @@ try {
             const view = pairing.view();
             assert.equal(view.addressEntries[0].host, "macbook-pro.tailffde7.ts.net");
             assert.equal(view.addressEntries[0].kind, "tailscale");
-            const inviteCode = pairing.createInvite("macbook-pro.tailffde7.ts.net");
-            assert.ok(inviteCode.startsWith("QLEX1."));
+            const inviteCode1 = pairing.createInvite("macbook-pro.tailffde7.ts.net");
+            const inviteCode2 = pairing.createInvite("macbook-pro.tailffde7.ts.net");
+            assert.ok(inviteCode1.startsWith("QLEX1."));
+            assert.notEqual(inviteCode1, inviteCode2, "Refreshing invite must generate a brand-new token");
+            assert.equal(pairing.view().activeInvite?.code, inviteCode2, "view().activeInvite must expose latest invite code");
         } finally {
             pairing.stop();
         }

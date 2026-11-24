@@ -136,14 +136,20 @@ function computeSyncSummary() {
     };
 }
 
-function broadcastState(state) {
+let lastBroadcastFp = "";
+
+function broadcastState(state, { force = false } = {}) {
     const payload = desktopState(state);
+    const fp = JSON.stringify(payload);
+    if (!force && fp === lastBroadcastFp) {
+        return payload;
+    }
+    lastBroadcastFp = fp;
     for (const target of [window, dashboardWindow]) {
         if (target && !target.isDestroyed()) {
             target.webContents.send("qlex:state-changed", payload);
         }
     }
-    edgeDock?.reposition?.();
     return payload;
 }
 
@@ -686,10 +692,20 @@ function registerHandlers() {
         "qlex:enable-center": () => changeRole(() => pairing.start()),
         "qlex:join-center": (code) => changeRole(() => pairing.join(code)),
         "qlex:use-local": () => changeRole(() => pairing.useLocal()),
-        "qlex:refresh-pairing": async () => { await pairing.refresh(); return broadcastState(); },
-        "qlex:create-invite": (host) => {
-            electron_1.clipboard.writeText(pairing.createInvite(host));
+        "qlex:refresh-pairing": async () => {
+            await pairing.refresh();
             return desktopState();
+        },
+        "qlex:create-invite": (host) => {
+            const code = pairing.createInvite(host);
+            electron_1.clipboard.writeText(code);
+            return broadcastState(undefined, { force: true });
+        },
+        "qlex:copy-invite": () => {
+            const active = pairing.view().activeInvite;
+            const code = active?.code || pairing.createInvite();
+            electron_1.clipboard.writeText(code);
+            return broadcastState(undefined, { force: true });
         },
         "qlex:approve-device": (id) => { pairing.decide(id, true); return broadcastState(); },
         "qlex:remove-device": (id) => { pairing.decide(id, false); return broadcastState(); },

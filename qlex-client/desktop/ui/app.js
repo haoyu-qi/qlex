@@ -143,6 +143,17 @@ function projectName(directory) {
 let lastSyncPhase = "idle";
 let lastOdoStr = "";
 let stretchTimer = null;
+let lastAppearanceFp = "";
+let lastMaterialFp = "";
+
+function patchHtml(el, html) {
+    if (!el) return;
+    if (el.__qlexHtml === html) return;
+    const prevScroll = el.scrollTop;
+    el.__qlexHtml = html;
+    el.innerHTML = html;
+    if (prevScroll > 0) el.scrollTop = prevScroll;
+}
 
 function animateTotalNumber(target) {
     if (target == null || !Number.isFinite(target)) {
@@ -459,7 +470,7 @@ function renderSyncHubHeader() {
         ? `Tailscale ${ts.self.ip}${ts.self.dnsName ? ` · ${ts.self.dnsName}` : ""}`
         : net.mode === "center" ? `监听端口 ${net.port} · 等待接入设备` : `设备：${state.deviceName}`;
 
-    hubPanel.innerHTML = `
+    patchHtml(hubPanel, `
       <div class="hub-head-row">
         <div class="hub-role-headline">${escapeHtml(headline)}</div>
         <button type="button" class="glass-btn sm" data-jump-view="devices">${net.mode === "local" ? "设为中心 / 加入" : "节点管理 ›"}</button>
@@ -482,7 +493,7 @@ function renderSyncHubHeader() {
           <small>${ts.online ? "Tailscale 在线" : (net.online ? "连接正常" : "本机就绪")}</small>
         </button>
       </div>
-    `;
+    `);
 }
 
 function renderHome() {
@@ -545,7 +556,7 @@ function renderHome() {
         `),
     ].join("") || `<div class="home-list-sub" style="padding:2px 6px">暂未绑定同步项目，点击右侧「+ 添加」登记工作区并跨设备共享。</div>`;
 
-    homePanel.innerHTML = updateBannerHtml + `
+    patchHtml(homePanel, updateBannerHtml + `
       <div class="home-module">
         <div class="home-module-head" data-jump-view="devices">
           <span class="home-module-label">中心点与接入点 · TAILSCALE</span>
@@ -611,7 +622,7 @@ function renderHome() {
           </button>
         </div>
       </div>
-    `;
+    `);
 }
 
 function renderMemoryArchiveView() {
@@ -1101,17 +1112,36 @@ function renderDevices() {
         const entries = net.addressEntries?.length
             ? net.addressEntries
             : (net.addresses || []).map(addr => ({ host: addr, label: addr }));
+        if (!invitationAddress || !entries.some(e => e.host === invitationAddress)) {
+            invitationAddress = net.activeInvite?.host || entries[0]?.host || "";
+        }
         const choices = entries.map(e =>
             `<option value="${escapeHtml(e.host)}" ${e.host === invitationAddress ? "selected" : ""}>${escapeHtml(e.label)}:${net.port}</option>`
         ).join("");
+        const inv = net.activeInvite;
+        const remainMin = inv ? Math.max(1, Math.ceil((inv.expiresAt - Date.now()) / 60_000)) : 0;
+        const invitePreviewHtml = inv ? `
+          <div class="invite-code-box">
+            <div class="row-head">
+              <span style="color:var(--text);font-weight:600">当前一次性邀请码 · #${escapeHtml(inv.shortToken)}</span>
+              <span class="row-cost">${escapeHtml(inv.host)}:${inv.port} · 剩 ${remainMin} 分钟</span>
+            </div>
+            <div class="invite-code-value">${escapeHtml(inv.code)}</div>
+            <div class="row-actions-inline" style="margin:0">
+              <button type="button" class="glass-btn sm primary" data-action="copy-invite">复制邀请码</button>
+              <button type="button" class="glass-btn sm" data-action="invite">⟳ 刷新邀请码</button>
+            </div>
+          </div>
+        ` : "";
         actionHtml = `
           <div class="row-detail-drawer">
             <div style="display:flex;gap:6px;align-items:center">
               <select id="centerAddress" class="glass-select" style="flex:1;min-width:0" ${choices ? "" : "disabled"}>
-                ${choices || "<option>无可用 IPv4</option>"}
+                ${choices || "<option>无可用网络地址</option>"}
               </select>
-              <button type="button" class="glass-btn sm primary" data-action="invite" ${choices && net.online ? "" : "disabled"}>复制邀请</button>
+              <button type="button" class="glass-btn sm primary" data-action="invite" ${choices && net.online ? "" : "disabled"}>${inv ? "⟳ 刷新邀请" : "生成并复制"}</button>
             </div>
+            ${invitePreviewHtml}
             <div class="row-actions-inline">
               ${!net.online ? `<button type="button" class="glass-btn sm primary" data-action="enable-center">重试启动</button>` : ""}
               <button type="button" class="glass-btn sm danger" data-action="use-local">停止中心</button>
@@ -1254,7 +1284,7 @@ function renderDevices() {
       </div>
     `;
 
-    mainListPanel.innerHTML = skillsSection + tsSection + `
+    patchHtml(mainListPanel, skillsSection + tsSection + `
       <div class="sync-map">
         <div class="sync-node ${hubTone}">
           <span class="sync-node-icon">
@@ -1273,7 +1303,7 @@ function renderDevices() {
         <div class="row-head"><span class="row-subtitle">本机设备</span><span class="row-value">${escapeHtml(state.deviceName)}</span></div>
         <div class="row-head"><span class="row-subtitle">系统平台</span><span class="row-value">${state.platform === "darwin" ? "macOS" : state.platform}</span></div>
       </div>
-    `;
+    `);
 }
 
 function renderViewSwitcher() {
@@ -1291,8 +1321,16 @@ function renderViewSwitcher() {
 
 function render() {
     if (!state) return;
-    window.QlexTheme.applyAppearance(state.appearance);
-    if (state.nativeMaterial) window.QlexTheme.applyNativeMaterial(state.nativeMaterial);
+    const appFp = JSON.stringify(state.appearance || {});
+    if (appFp !== lastAppearanceFp) {
+        lastAppearanceFp = appFp;
+        window.QlexTheme.applyAppearance(state.appearance);
+    }
+    const matFp = JSON.stringify(state.nativeMaterial || {});
+    if (state.nativeMaterial && matFp !== lastMaterialFp) {
+        lastMaterialFp = matFp;
+        window.QlexTheme.applyNativeMaterial(state.nativeMaterial);
+    }
     updateLiveDotAndSyncButton();
 
     shell.classList.toggle("onboarding-open", !state.configured);
@@ -1711,8 +1749,10 @@ document.addEventListener("click", (event) => {
         } else if (action === "use-local") {
             void runAction(btn, () => window.qlex.useLocal());
         } else if (action === "invite") {
-            invitationAddress = document.querySelector("#centerAddress")?.value || "";
-            void runAction(btn, () => window.qlex.createInvite(invitationAddress), { success: "配对邀请已复制到剪贴板" });
+            invitationAddress = document.querySelector("#centerAddress")?.value || invitationAddress;
+            void runAction(btn, () => window.qlex.createInvite(invitationAddress), { success: "已刷新配对邀请并复制到剪贴板" });
+        } else if (action === "copy-invite") {
+            void runAction(btn, () => window.qlex.copyInvite(), { success: "邀请码已复制到剪贴板" });
         } else if (action === "approve") {
             void runAction(btn, () => window.qlex.approveDevice(btn.dataset.id));
         } else if (action === "remove") {
@@ -1809,6 +1849,9 @@ document.addEventListener("change", (event) => {
         renderSessions();
     } else if (el.id === "centerAddress") {
         invitationAddress = el.value;
+        if (state?.pairing?.activeInvite && state.pairing.activeInvite.host !== invitationAddress) {
+            void runAction(null, () => window.qlex.createInvite(invitationAddress), { success: `已按 ${invitationAddress} 刷新邀请码并复制` });
+        }
     }
 });
 
@@ -1881,14 +1924,19 @@ document.addEventListener("keydown", (event) => {
 });
 
 window.qlex.onNativeMaterial?.((mat) => {
+    const fp = JSON.stringify(mat || {});
+    if (fp === lastMaterialFp) return;
+    lastMaterialFp = fp;
     if (state) state.nativeMaterial = mat;
     window.QlexTheme.applyNativeMaterial(mat);
 });
 
 window.qlex.onStateChanged?.((next) => {
-    const activeId = document.activeElement?.id || "";
-    const editingInput = ["searchInput", "invite", "memoryRecallInput", "retainTitleInput", "retainContentInput", "retainProjectInput", "retainFactKeyInput"].includes(activeId);
-    if (!busy && !editingProject && !editingInput && !memoryRetainOpen) {
+    const activeEl = document.activeElement;
+    const activeId = activeEl?.id || "";
+    const editingControl = activeEl?.tagName === "SELECT" || activeEl?.tagName === "TEXTAREA" ||
+        ["searchInput", "invite", "centerAddress", "memoryRecallInput", "retainTitleInput", "retainContentInput", "retainProjectInput", "retainFactKeyInput"].includes(activeId);
+    if (!busy && !editingProject && !editingControl && !memoryRetainOpen) {
         state = next;
         render();
     }
@@ -1911,6 +1959,7 @@ window.addEventListener("resize", () => { if (view === "trends") paintTrendCanva
 
 setInterval(async () => {
     if (!state?.configured || state.pairing.mode === "local" || view !== "devices" || busy || refreshing || document.hidden) return;
+    if (document.activeElement?.tagName === "SELECT" || document.activeElement?.tagName === "TEXTAREA") return;
     refreshing = true;
     try {
         const next = await window.qlex.refreshPairing();
