@@ -5,7 +5,13 @@ const node_crypto_1 = require("node:crypto");
 const node_fs_1 = require("node:fs");
 const node_os_1 = require("node:os");
 const node_path_1 = require("node:path");
-const { inspectWorkspace, applyWorkspaceContext } = require("./project-sync");
+const {
+    inspectWorkspace,
+    applyWorkspaceContext,
+    scanProjectFiles,
+    getProjectMirrorDir,
+    materializeMirrorToDirectory,
+} = require("./project-sync");
 
 const DEFAULT_APPEARANCE = Object.freeze({
     themePreset: "default",
@@ -123,6 +129,8 @@ function normalizeProjects(list) {
         gitCommit: typeof p.gitCommit === "string" ? p.gitCommit.slice(0, 16) : "",
         contextHash: typeof p.contextHash === "string" ? p.contextHash.slice(0, 32) : "",
         contextFilesCount: Number.isFinite(Number(p.contextFilesCount)) ? Number(p.contextFilesCount) : 0,
+        fileCount: Number.isFinite(Number(p.fileCount)) ? Number(p.fileCount) : 0,
+        totalBytes: Number.isFinite(Number(p.totalBytes)) ? Number(p.totalBytes) : 0,
         syncedDevices: normalizeSyncedDevices(p.syncedDevices),
         lastSyncedAt: Number.isFinite(Number(p.lastSyncedAt)) ? Number(p.lastSyncedAt) : 0,
     }));
@@ -140,6 +148,8 @@ function normalizeRemoteProjects(list) {
         gitCommit: typeof p.gitCommit === "string" ? p.gitCommit.slice(0, 16) : "",
         contextHash: typeof p.contextHash === "string" ? p.contextHash.slice(0, 32) : "",
         contextFiles: Array.isArray(p.contextFiles) ? p.contextFiles : [],
+        fileCount: Number.isFinite(Number(p.fileCount)) ? Number(p.fileCount) : 0,
+        totalBytes: Number.isFinite(Number(p.totalBytes)) ? Number(p.totalBytes) : 0,
         syncedDevices: normalizeSyncedDevices(p.syncedDevices),
     }));
 }
@@ -269,6 +279,8 @@ class LocalStore {
             gitCommit: meta.gitCommit,
             contextHash: meta.contextHash,
             contextFilesCount: meta.contextFiles.length,
+            fileCount: meta.fileCount || 0,
+            totalBytes: meta.totalBytes || 0,
             syncedDevices: [{ name: selfName, gitBranch: meta.gitBranch, gitCommit: meta.gitCommit, updatedAt: now }],
             lastSyncedAt: 0,
         };
@@ -291,14 +303,17 @@ class LocalStore {
                 gitCommit: meta.gitCommit || p.gitCommit || "",
                 contextHash: meta.contextHash || "",
                 contextFilesCount: meta.contextFiles.length,
+                fileCount: meta.fileCount || 0,
+                totalBytes: meta.totalBytes || 0,
                 syncedDevices: devices,
             };
         });
         return this.update({ projects });
     }
-    exportSharedProjects(originDevice = (0, node_os_1.hostname)(), { includeContext = true } = {}) {
+    exportSharedProjects(originDevice = (0, node_os_1.hostname)(), { includeContext = true, includeManifest = false, dataDir = (0, node_path_1.dirname)(this.file) } = {}) {
         const map = new Map();
         for (const r of this.state.remoteProjects || []) {
+            const mirrorScanned = dataDir ? scanProjectFiles(getProjectMirrorDir(dataDir, r.syncId)) : { files: [], fileCount: 0, totalBytes: 0 };
             map.set(r.syncId, {
                 syncId: r.syncId,
                 name: r.name,
@@ -309,12 +324,15 @@ class LocalStore {
                 gitCommit: r.gitCommit || "",
                 contextHash: r.contextHash || "",
                 contextFiles: includeContext ? (r.contextFiles || []) : [],
+                fileCount: mirrorScanned.fileCount || r.fileCount || 0,
+                totalBytes: mirrorScanned.totalBytes || r.totalBytes || 0,
+                ...(includeManifest ? { fileManifest: mirrorScanned.files } : {}),
                 syncedDevices: normalizeSyncedDevices(r.syncedDevices),
             });
         }
         for (const p of this.state.projects || []) {
             if (p.shared === false) continue;
-            const meta = inspectWorkspace(p.directory, { includeContent: includeContext });
+            const meta = inspectWorkspace(p.directory, { includeContent: includeContext, includeManifest });
             const syncedDevices = normalizeSyncedDevices([
                 ...(p.syncedDevices || []),
                 { name: originDevice, gitBranch: meta.gitBranch || p.gitBranch || "", gitCommit: meta.gitCommit || p.gitCommit || "", updatedAt: Date.now() },
@@ -329,6 +347,9 @@ class LocalStore {
                 gitCommit: meta.gitCommit || p.gitCommit || "",
                 contextHash: meta.contextHash || p.contextHash || "",
                 contextFiles: includeContext ? meta.contextFiles : [],
+                fileCount: meta.fileCount || p.fileCount || 0,
+                totalBytes: meta.totalBytes || p.totalBytes || 0,
+                ...(includeManifest ? { fileManifest: meta.fileManifest || [] } : {}),
                 syncedDevices,
             });
         }
@@ -453,15 +474,20 @@ class LocalStore {
             totalShared: localBySync.size + remoteBySync.size,
         };
     }
-    bindRemoteProject(syncId, directory, { backupRoot } = {}) {
+    bindRemoteProject(syncId, directory, { backupRoot, dataDir = (0, node_path_1.dirname)(this.file) } = {}) {
         const remote = (this.state.remoteProjects || []).find(r => r.syncId === syncId);
         if (!remote) throw new Error("该远端共享项目已不存在或已完成绑定。");
-        let next = this.addProject(directory, remote.syncId);
-        // Apply any carried workspace AI context files from the remote project safely
-        if (Array.isArray(remote.contextFiles) && remote.contextFiles.length) {
-            applyWorkspaceContext((0, node_path_1.resolve)(directory), remote.contextFiles, remote.syncId, backupRoot);
+        const resolvedDir = (0, node_path_1.resolve)(directory);
+        let next = this.addProject(resolvedDir, remote.syncId);
+        // 1. Materialize any Center-mirrored workspace files into the newly bound local directory
+        if (dataDir) {
+            materializeMirrorToDirectory(dataDir, remote.syncId, resolvedDir, backupRoot);
         }
-        const refreshedMeta = inspectWorkspace((0, node_path_1.resolve)(directory), { includeContent: false });
+        // 2. Apply any carried workspace AI context files from the remote project safely
+        if (Array.isArray(remote.contextFiles) && remote.contextFiles.length) {
+            applyWorkspaceContext(resolvedDir, remote.contextFiles, remote.syncId, backupRoot);
+        }
+        const refreshedMeta = inspectWorkspace(resolvedDir, { includeContent: false });
         const selfName = (0, node_os_1.hostname)();
         const now = Date.now();
         const projects = next.projects.map(p => {
@@ -474,6 +500,8 @@ class LocalStore {
                 gitCommit: refreshedMeta.gitCommit || p.gitCommit || "",
                 contextHash: refreshedMeta.contextHash || "",
                 contextFilesCount: refreshedMeta.contextFiles.length,
+                fileCount: refreshedMeta.fileCount || 0,
+                totalBytes: refreshedMeta.totalBytes || 0,
                 syncedDevices: normalizeSyncedDevices([
                     ...(remote.syncedDevices || []),
                     ...(p.syncedDevices || []),

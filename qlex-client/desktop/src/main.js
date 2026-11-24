@@ -16,6 +16,7 @@ const { installMemorySkill, getMemorySkillStatus } = require("./memory-skill");
 const { createTailscaleManager } = require("./tailscale");
 const { createUpdater } = require("./updater");
 const { createEdgeDock } = require("./edge-dock");
+const { createTrayAnimator } = require("./tray-animator");
 const APP_VERSION = require("../../package.json").version;
 const {
     attachNativeMaterialVisibility,
@@ -40,6 +41,7 @@ const dockPath = (0, node_path_1.join)(__dirname, "../ui/dock.html");
 const dockUrl = (0, node_url_1.pathToFileURL)(dockPath).href;
 const logo = (0, node_path_1.join)(electron_1.app.getAppPath(), "docs/assets/brand/logo.png");
 const trayLogo = (0, node_path_1.join)(electron_1.app.getAppPath(), "docs/assets/brand/tray-icon.png");
+const trayFramesDir = (0, node_path_1.join)(electron_1.app.getAppPath(), "docs/assets/brand/tray-frames");
 
 const DEFAULT_WINDOW = { width: 1080, height: 720 };
 const MENUBAR_POPOVER = { width: 352, height: 746 };
@@ -62,6 +64,7 @@ let dashboardWindow;
 let menubarWindow;
 let lastMenubarShowAt = 0;
 let tray;
+let trayAnimator;
 let trayContextMenu;
 let trayStatus;
 let queuedPage;
@@ -471,6 +474,7 @@ function toggleMenubarPopover(forceShow = false) {
     lastMenubarShowAt = Date.now();
     if (!target.webContents.isLoadingMainFrame()) {
         target.webContents.send("qlex:state-changed", desktopState());
+        target.webContents.send("qlex:menubar-shown");
     }
     syncNativeMaterialVisibility(target, nativeMaterialOptions(store.snapshot().appearance, false));
     target.show();
@@ -508,6 +512,12 @@ function createTray() {
     const mark = original.resize({ width: 19, height: 19 });
     mark.setTemplateImage(process.platform === "darwin");
     tray = new electron_1.Tray(mark);
+    trayAnimator = createTrayAnimator({
+        tray,
+        nativeImage: electron_1.nativeImage,
+        framesDir: trayFramesDir,
+        fallbackImage: mark,
+    });
     tray.on("click", () => {
         toggleMenubarPopover(false);
     });
@@ -550,6 +560,12 @@ function updateTray() {
     if (process.platform === "darwin") {
         tray.setTitle(trayBadge);
     }
+    const animMode = syncInfo.phase === "syncing"
+        ? "syncing"
+        : (sk.conflicts > 0 || pendingPeers > 0 || (network.mode !== "local" && !network.online))
+            ? "warn"
+            : "idle";
+    trayAnimator?.setMode(animMode);
     const backdropSubmenu = [
         { label: "经典毛玻璃 (HUD Vibrancy)", type: "radio", checked: appearance.macBackdrop === "vibrancy", click: () => { const next = store.setAppearance({ macBackdrop: "vibrancy", systemGlass: true }); applyAllNativeMaterials(next.appearance); broadcastState(next); } },
         ...(LIQUID_GLASS_SUPPORTED ? [
@@ -1088,6 +1104,7 @@ else {
     electron_1.app.on("before-quit", () => { quitting = true; });
     electron_1.app.on("will-quit", () => {
         clearTimeout(persistBoundsTimer);
+        trayAnimator?.stop();
         pairing?.stop();
         tailscale?.stop();
         edgeDock?.close();

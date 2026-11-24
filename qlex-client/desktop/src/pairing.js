@@ -38,6 +38,15 @@ const node_crypto_1 = require("node:crypto");
 const node_https_1 = require("node:https");
 const node_net_1 = require("node:net");
 const node_os_1 = require("node:os");
+const node_path_1 = require("node:path");
+const {
+    scanProjectFiles,
+    diffFileManifests,
+    packProjectFiles,
+    unpackProjectFiles,
+    applyProjectFiles,
+    getProjectMirrorDir,
+} = require("./project-sync");
 const port = 46271;
 const lifetime = 10 * 60 * 1000;
 const deviceLimit = 50;
@@ -142,6 +151,7 @@ function callCenter(endpoint, route, id, payload) {
                 ? { projects: payload }
                 : { projects: payload.projects || [], deleted: payload.deleted || [] })
             : {}),
+        ...(route === "project-files" && payload ? { fileTransfer: payload } : {}),
     });
     return new Promise((resolve, reject) => {
         const req = (0, node_https_1.request)({
@@ -174,7 +184,11 @@ function callCenter(endpoint, route, id, payload) {
                 return;
             }
             if (route === "projects") {
-                void readBody(res, 2 * 1024 * 1024).then(resolve, reject);
+                void readBody(res, 4 * 1024 * 1024).then(resolve, reject);
+                return;
+            }
+            if (route === "project-files") {
+                void readBody(res, 14 * 1024 * 1024).then(resolve, reject);
                 return;
             }
             void readBody(res).then((data) => {
@@ -184,7 +198,7 @@ function callCenter(endpoint, route, id, payload) {
                 resolve({ name: data.name, status: data.status });
             }).catch(() => reject(new Error("中心返回的配对状态无效。")));
         });
-        const timeoutMs = route === "memory" ? 12_000 : route === "projects" ? 10_000 : 4500;
+        const timeoutMs = route === "project-files" ? 25_000 : route === "memory" ? 12_000 : route === "projects" ? 12_000 : 4500;
         const timer = setTimeout(() => req.destroy(new Error("QLEX center timeout")), timeoutMs);
         req.once("error", () => reject(new Error("无法连接或验证中心。请检查中心是否在线、Tailscale 连接和防火墙设置。")));
         req.once("close", () => clearTimeout(timer));
@@ -269,11 +283,11 @@ class DevicePairing {
                 throw new Error("请先退出当前中心，再设为中心。");
             const center = config.center ?? makeCenter(this.store.snapshot().deviceId);
             const server = (0, node_https_1.createServer)({
-                key: center.key, cert: center.cert, minVersion: "TLSv1.2", requestTimeout: 6000,
-                headersTimeout: 5000, keepAliveTimeout: 1000, maxHeaderSize: 4096,
+                key: center.key, cert: center.cert, minVersion: "TLSv1.2", requestTimeout: 30_000,
+                headersTimeout: 10_000, keepAliveTimeout: 2000, maxHeaderSize: 4096,
             }, (req, res) => { void this.handle(req, res); });
             server.maxConnections = 32;
-            server.setTimeout(7000, (socket) => socket.destroy());
+            server.setTimeout(32_000, (socket) => socket.destroy());
             await new Promise((resolve, reject) => {
                 server.once("error", reject);
                 server.listen(this.listenPort, "0.0.0.0", () => {
@@ -467,7 +481,8 @@ class DevicePairing {
             throw err;
         }
         try {
-            const exported = this.store.exportSharedProjects(deviceName(), { includeContext: true });
+            const dataDir = (0, node_path_1.dirname)(this.store.file);
+            const exported = this.store.exportSharedProjects(deviceName(), { includeContext: true, includeManifest: true, dataDir });
             const response = await callCenter(endpoint, "projects", local.deviceId, exported);
             if (!Array.isArray(response?.projects)) {
                 throw new Error("中心端返回的项目同步数据格式无效。");
@@ -476,6 +491,62 @@ class DevicePairing {
                 { projects: response.projects, deleted: response.deleted || [] },
                 { peerName: endpoint.name || endpoint.invite.host, applyContext: true }
             );
+
+            // Real Bidirectional Workspace File Sync (delta push/pull for every bound project!)
+            let filesPushed = 0;
+            let filesPulled = 0;
+            const remoteBySync = new Map(response.projects.map(p => [p.syncId, p]));
+            const boundProjects = this.store.snapshot().projects || [];
+            for (const lp of boundProjects) {
+                if (lp.shared === false) continue;
+                const localScanned = scanProjectFiles(lp.directory);
+                const rp = remoteBySync.get(lp.syncId);
+                const remoteManifest = Array.isArray(rp?.fileManifest) ? rp.fileManifest : [];
+                const { toPull, toPush } = diffFileManifests(localScanned.files, remoteManifest);
+
+                // Push local missing or newer files in safe batches
+                for (let idx = 0; idx < toPush.length; ) {
+                    const slice = toPush.slice(idx, idx + 80);
+                    const packed = packProjectFiles(lp.directory, slice);
+                    idx += Math.max(1, packed.count || slice.length);
+                    if (!packed.count) continue;
+                    try {
+                        const pushRes = await callCenter(endpoint, "project-files", local.deviceId, {
+                            action: "push",
+                            syncId: lp.syncId,
+                            gzipBase64: packed.gzipBase64,
+                        });
+                        filesPushed += Number(pushRes?.written || packed.count || 0);
+                    } catch {
+                        // Tolerate older center without /project-files while preserving metadata sync
+                        break;
+                    }
+                }
+
+                // Pull remote missing or newer files in safe batches
+                for (let idx = 0; idx < toPull.length; idx += 80) {
+                    const slice = toPull.slice(idx, idx + 80);
+                    try {
+                        const pullRes = await callCenter(endpoint, "project-files", local.deviceId, {
+                            action: "pull",
+                            syncId: lp.syncId,
+                            paths: slice,
+                        });
+                        const unpacked = unpackProjectFiles(pullRes?.gzipBase64 || "");
+                        if (unpacked.length) {
+                            const applied = applyProjectFiles(lp.directory, unpacked, lp.syncId);
+                            filesPulled += applied.written;
+                        }
+                    } catch {
+                        break;
+                    }
+                }
+            }
+
+            if (filesPulled > 0 || filesPushed > 0) {
+                this.store.refreshLocalProjectsMetadata(deviceName());
+            }
+
             this.endpointOnline = true;
             this.lastProjectSync = {
                 time: Date.now(),
@@ -485,6 +556,8 @@ class DevicePairing {
                 updated: merged.updated,
                 removed: merged.removed,
                 contextApplied: merged.contextApplied,
+                filesPushed,
+                filesPulled,
                 pushedAdded: response.merged?.added || 0,
                 pushedUpdated: response.merged?.updated || 0,
                 pushedRemoved: response.merged?.removed || 0,
@@ -543,12 +616,13 @@ class DevicePairing {
             const skills = req.url === "/qlex/v1/skills";
             const memory = req.url === "/qlex/v1/memory";
             const projects = req.url === "/qlex/v1/projects";
-            if (req.method !== "POST" || (!join && !leave && !skills && !memory && !projects && req.url !== "/qlex/v1/status")) {
+            const projectFiles = req.url === "/qlex/v1/project-files";
+            if (req.method !== "POST" || (!join && !leave && !skills && !memory && !projects && !projectFiles && req.url !== "/qlex/v1/status")) {
                 reply(res, 404, {});
                 return;
             }
-            const maxBody = memory ? 4 * 1024 * 1024 : projects ? 2 * 1024 * 1024 : 4096;
-            const { id, credential, token, name, skill, bundle, projects: incomingProjects, deleted: incomingDeleted } = await readBody(req, maxBody);
+            const maxBody = projectFiles ? 14 * 1024 * 1024 : memory ? 4 * 1024 * 1024 : projects ? 4 * 1024 * 1024 : 4096;
+            const { id, credential, token, name, skill, bundle, projects: incomingProjects, deleted: incomingDeleted, fileTransfer } = await readBody(req, maxBody);
             if (typeof id !== "string" || !idPattern.test(id) || typeof credential !== "string" || !secretPattern.test(credential)) {
                 reply(res, 400, {});
                 return;
@@ -587,11 +661,12 @@ class DevicePairing {
                     return;
                 }
                 this.peerSeenAt.set(id, Date.now());
+                const dataDir = (0, node_path_1.dirname)(this.store.file);
                 const merged = this.store.mergeSharedProjects(
                     { projects: incomingProjects || [], deleted: incomingDeleted || [] },
                     { peerName: existing.name, applyContext: true }
                 );
-                const exported = this.store.exportSharedProjects(deviceName(), { includeContext: true });
+                const exported = this.store.exportSharedProjects(deviceName(), { includeContext: true, includeManifest: true, dataDir });
                 this.lastProjectSync = {
                     time: Date.now(),
                     role: "center",
@@ -606,6 +681,55 @@ class DevicePairing {
                 };
                 this.onChange?.("projects");
                 reply(res, 200, { ok: true, merged, projects: exported.projects, deleted: exported.deleted });
+                return;
+            }
+            if (projectFiles) {
+                if (existing?.status !== "connected" || existing.credentialHash !== credentialHash) {
+                    reply(res, 403, {});
+                    return;
+                }
+                this.peerSeenAt.set(id, Date.now());
+                const syncId = typeof fileTransfer?.syncId === "string" ? fileTransfer.syncId.trim() : "";
+                if (!syncId) {
+                    reply(res, 400, {});
+                    return;
+                }
+                const dataDir = (0, node_path_1.dirname)(this.store.file);
+                const bound = (this.store.snapshot().projects || []).find(p => p.syncId === syncId);
+                const targetDir = bound ? bound.directory : getProjectMirrorDir(dataDir, syncId);
+
+                if (fileTransfer.action === "pull") {
+                    const paths = Array.isArray(fileTransfer.paths) ? fileTransfer.paths.slice(0, 100) : [];
+                    const packed = packProjectFiles(targetDir, paths);
+                    reply(res, 200, { ok: true, syncId, ...packed });
+                    return;
+                }
+                if (fileTransfer.action === "push") {
+                    const unpacked = unpackProjectFiles(fileTransfer.gzipBase64 || "");
+                    const applied = applyProjectFiles(targetDir, unpacked, syncId);
+                    if (bound) {
+                        this.store.refreshLocalProjectsMetadata(deviceName());
+                    } else {
+                        // Update remoteProjects mirror fileCount & totalBytes so Center UI shows real file count immediately
+                        const scanned = scanProjectFiles(targetDir);
+                        const cur = this.store.snapshot();
+                        const nextRemotes = (cur.remoteProjects || []).map(r =>
+                            r.syncId === syncId ? { ...r, fileCount: scanned.fileCount, totalBytes: scanned.totalBytes } : r
+                        );
+                        this.store.update({ remoteProjects: nextRemotes });
+                    }
+                    this.lastProjectSync = {
+                        ...(this.lastProjectSync || {}),
+                        time: Date.now(),
+                        role: "center",
+                        peer: existing.name,
+                        filesPulled: (this.lastProjectSync?.filesPulled || 0) + applied.written,
+                    };
+                    this.onChange?.("projects");
+                    reply(res, 200, { ok: true, syncId, ...applied });
+                    return;
+                }
+                reply(res, 400, {});
                 return;
             }
             if (skills) {

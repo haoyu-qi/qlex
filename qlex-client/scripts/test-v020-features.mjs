@@ -21,7 +21,16 @@ const { collectAllNative, extractRealUserText } = require(path.join(root, "deskt
 const { createTailscaleManager, isTailscaleIp, isMagicDnsHost, findEmbeddedTsnetBin } = require(path.join(root, "desktop/src/tailscale.js"));
 const { DevicePairing, isValidHost, isTailscaleIPv4, addresses } = require(path.join(root, "desktop/src/pairing.js"));
 const { LocalStore } = require(path.join(root, "desktop/src/state.js"));
-const { findAutoMatchDirectory } = require(path.join(root, "desktop/src/project-sync.js"));
+const {
+    findAutoMatchDirectory,
+    scanProjectFiles,
+    diffFileManifests,
+    packProjectFiles,
+    unpackProjectFiles,
+    applyProjectFiles,
+    getProjectMirrorDir,
+    materializeMirrorToDirectory,
+} = require(path.join(root, "desktop/src/project-sync.js"));
 const { createSkillSync } = require(path.join(root, "desktop/src/skill-sync.js"));
 const { createCognitiveMemoryEngine } = require(path.join(root, "desktop/src/memory-core.js"));
 const { createUpdater, compareVersions, parseChecksumsText } = require(path.join(root, "desktop/src/updater.js"));
@@ -315,13 +324,45 @@ try {
     skEngine.syncLocal(["hermes", "codex"]);
     assert.equal(fs.existsSync(path.join(codexSkills, "private-only/SKILL.md")), true, "Un-excluded skill must sync cleanly");
 
-    console.log("ALL QLEX v0.3.0-beta.5 CORE SYNC / SKILL POLICY / COLLECTOR / TAILSCALE / UPDATER TESTS PASSED!", JSON.stringify({
+    // ---- 6. Full Workspace File Sync (Source + Docs + Task Files + Center Mirror Materialization) ----
+    const wsSrc = path.join(tmpHome, "ws-src");
+    const wsEmptyDst = path.join(tmpHome, "ws-empty-dst");
+    const mirrorDataDir = path.join(tmpHome, "center-data");
+    fs.mkdirSync(path.join(wsSrc, "src"), { recursive: true });
+    fs.mkdirSync(path.join(wsSrc, "node_modules/pkg"), { recursive: true });
+    fs.writeFileSync(path.join(wsSrc, "README.md"), "# Demo Project\n");
+    fs.writeFileSync(path.join(wsSrc, "TASKS.md"), "- [x] Sync project files\n");
+    fs.writeFileSync(path.join(wsSrc, "src/index.js"), "console.log('hello qlex');\n");
+    fs.writeFileSync(path.join(wsSrc, ".env"), "SECRET_KEY=must-never-sync\n");
+    fs.writeFileSync(path.join(wsSrc, "node_modules/pkg/a.js"), "// ignored\n");
+
+    const scannedSrc = scanProjectFiles(wsSrc);
+    const scannedPaths = scannedSrc.files.map(f => f.path).sort();
+    assert.deepEqual(scannedPaths, ["README.md", "TASKS.md", "src/index.js"], "Must include code/docs/tasks and skip .env and node_modules");
+
+    const diff0 = diffFileManifests([], scannedSrc.files);
+    assert.equal(diff0.toPull.length, 3);
+    const packedBatch = packProjectFiles(wsSrc, diff0.toPull);
+    assert.equal(packedBatch.count, 3);
+    const mirrorDir = getProjectMirrorDir(mirrorDataDir, "proj_demo");
+    const appliedMirror = applyProjectFiles(mirrorDir, unpackProjectFiles(packedBatch.gzipBase64), "proj_demo", path.join(tmpHome, "backups"));
+    assert.equal(appliedMirror.written, 3, "Center mirror must store all 3 workspace files");
+
+    // Bind empty folder on Center -> must materialize all 3 files immediately!
+    fs.mkdirSync(wsEmptyDst, { recursive: true });
+    const matRes = materializeMirrorToDirectory(mirrorDataDir, "proj_demo", wsEmptyDst, path.join(tmpHome, "backups"));
+    assert.equal(matRes.written, 3, "Empty bound folder must receive all 3 mirrored workspace files");
+    assert.equal(fs.readFileSync(path.join(wsEmptyDst, "TASKS.md"), "utf8"), "- [x] Sync project files\n");
+    assert.equal(fs.existsSync(path.join(wsEmptyDst, ".env")), false, "Sensitive .env must never be synced");
+
+    console.log("ALL QLEX v0.3.0-beta.6 CORE SYNC / WORKSPACE FILES / SKILL POLICY / COLLECTOR / TAILSCALE / UPDATER TESTS PASSED!", JSON.stringify({
         nativeTokens: nativeRes.today.total,
         embeddedTsnetBuilt: Boolean(findEmbeddedTsnetBin()),
         betaDetected: betaCheck.latest.version,
         stablePhase: stableCheck.phase,
         syncedMemoryBidirectional: true,
         syncedProjectBoundSyncId: syncId,
+        workspaceFilesSynced: matRes.written,
         liveHttpsProjectSyncPassed,
         skillPolicyVerified: true,
     }));

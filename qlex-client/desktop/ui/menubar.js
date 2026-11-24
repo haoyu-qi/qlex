@@ -16,10 +16,62 @@ let state = null;
 let busy = false;
 let lastAppearanceFp = "";
 let lastMaterialFp = "";
+const lastCountValues = new Map();
+let revealPulse = false;
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const fmtNum = (v) => new Intl.NumberFormat("zh-CN").format(Math.round(v || 0));
 const fmtShortTime = (ts) => ts ? new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : "待同步";
+
+function animateCounters(forceRoll = false) {
+    const nodes = document.querySelectorAll("[data-count-key]");
+    for (const el of nodes) {
+        const key = el.dataset.countKey;
+        const target = Number(el.dataset.countTo || 0);
+        const suffix = el.dataset.countSuffix || "";
+        const format = el.dataset.countFmt !== "raw";
+        const prev = lastCountValues.has(key) ? lastCountValues.get(key) : (forceRoll ? Math.round(target * 0.65) : target);
+        const startVal = forceRoll ? Math.max(0, Math.round(target * 0.55)) : prev;
+        lastCountValues.set(key, target);
+
+        if (startVal === target) {
+            el.textContent = (format ? fmtNum(target) : String(Math.round(target))) + suffix;
+            continue;
+        }
+        const duration = 520;
+        const t0 = performance.now();
+        const step = (now) => {
+            const p = Math.min(1, (now - t0) / duration);
+            const eased = 1 - Math.pow(1 - p, 3);
+            const cur = Math.round(startVal + (target - startVal) * eased);
+            el.textContent = (format ? fmtNum(cur) : String(cur)) + suffix;
+            if (p < 1) requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+    }
+}
+
+function triggerRevealAnimation() {
+    const shell = document.querySelector("#mbShell");
+    if (!shell) return;
+    shell.classList.remove("mb-reveal");
+    void shell.offsetWidth;
+    shell.classList.add("mb-reveal");
+    revealPulse = true;
+    animateCounters(true);
+    // Smoothly sweep rings from 0 to target on open
+    for (const ring of document.querySelectorAll(".mb-ring circle.fill[data-target-offset]")) {
+        const circ = ring.getAttribute("stroke-dasharray");
+        const targetOffset = ring.dataset.targetOffset;
+        ring.style.transition = "none";
+        ring.setAttribute("stroke-dashoffset", circ);
+        requestAnimationFrame(() => {
+            ring.style.transition = "";
+            ring.setAttribute("stroke-dashoffset", targetOffset);
+        });
+    }
+    setTimeout(() => { revealPulse = false; }, 600);
+}
 
 function patchHtml(el, html) {
     if (!el || el.__mbHtml === html) return;
@@ -64,7 +116,7 @@ function ringSvg(pct, label, tone = "") {
       <div class="mb-ring" title="${esc(label)} ${clamped}%">
         <svg viewBox="0 0 36 36">
           <circle class="track" cx="18" cy="18" r="${r}" />
-          <circle class="fill ${tone}" cx="18" cy="18" r="${r}" stroke-dasharray="${circ.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}" />
+          <circle class="fill ${tone}" cx="18" cy="18" r="${r}" stroke-dasharray="${circ.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}" data-target-offset="${offset.toFixed(1)}" />
         </svg>
         <span class="mb-ring-label">${esc(label)}</span>
       </div>
@@ -98,6 +150,9 @@ function render() {
 
     const health = computeHealth(state);
     healthIcon.className = `mb-health-icon ${health.phase}`;
+    healthScore.dataset.countKey = "health";
+    healthScore.dataset.countTo = String(health.score);
+    healthScore.dataset.countFmt = "raw";
     healthScore.textContent = String(health.score);
     healthLabel.textContent = health.label;
     mbSyncTopBtn.disabled = syncSt.phase === "syncing" || busy;
@@ -124,7 +179,7 @@ function render() {
         : net.mode === "endpoint" ? `${net.endpoint?.name || net.endpoint?.address || "中心节点"}`
         : "可随时设为中心或接入";
     const eqLit = net.mode === "local" ? 5 : net.online ? 9 : 2;
-    const eqBars = Array.from({ length: 10 }, (_, i) => `<span class="mb-eq-bar ${i < eqLit ? (net.online || net.mode === "local" ? "on" : "warn") : ""}"></span>`).join("");
+    const eqBars = Array.from({ length: 10 }, (_, i) => `<span class="mb-eq-bar ${i < eqLit ? (net.online || net.mode === "local" ? "on" : "warn") : ""}" style="--eq-i:${i}"></span>`).join("");
 
     // 2. 同步状态卡片
     const syncTagClass = syncSt.phase === "synced" ? "ok" : syncSt.phase === "syncing" ? "blue" : syncSt.phase === "error" ? "err" : "warn";
@@ -141,17 +196,18 @@ function render() {
     // 5. Tailscale 穿透卡片
     const tsTagClass = ts.online ? "ok" : "warn";
     const tsTagText = ts.mode === "embedded" && ts.online ? "tsnet" : ts.online ? "已穿透" : "未连接";
-    const tsMetric = ts.online ? `${(ts.discoveredCenters || []).length}<small> 台中心</small>` : "离线";
+    const tsMetric = ts.online ? `<span data-count-key="tsCenters" data-count-to="${(ts.discoveredCenters || []).length}" data-count-fmt="raw">${(ts.discoveredCenters || []).length}</span><small> 台中心</small>` : "离线";
     const tsSub = ts.online ? (ts.self?.dnsName || ts.self?.ip || "Tailnet 在线") : "支持一键启动内嵌 tsnet";
 
     // 6. Skills 同步卡片
     const skTagClass = sk.conflicts > 0 ? "warn" : sk.missingLinks > 0 ? "blue" : "ok";
     const skTagText = sk.conflicts > 0 ? `冲突 ${sk.conflicts}` : sk.missingLinks > 0 ? `待齐 ${sk.missingLinks}` : "已对齐";
 
+    const syncSpeed = syncSt.phase === "syncing" ? "1.3s" : "3.6s";
     patchHtml(mbBentoGrid, `
       <div class="mb-card" data-open-page="devices">
         <div class="mb-card-head">
-          <span class="mb-card-title"><i class="dot" style="background:var(--success)"></i>节点状态</span>
+          <span class="mb-card-title"><i class="dot live" style="background:var(--success)"></i>节点状态</span>
           <span class="mb-tag ${nodeTagClass}">${nodeTagText}</span>
         </div>
         <div class="mb-card-metric">${nodeMetric}</div>
@@ -161,55 +217,63 @@ function render() {
 
       <div class="mb-card" data-action="sync-now">
         <div class="mb-card-head">
-          <span class="mb-card-title"><i class="dot" style="background:var(--orange)"></i>双向同步</span>
+          <span class="mb-card-title"><i class="dot live" style="background:var(--orange)"></i>双向同步</span>
           <span class="mb-tag ${syncTagClass}">${esc(syncTimeText)}</span>
         </div>
         <div class="mb-card-metric">${esc(syncMetricText)}</div>
-        <svg class="mb-spark-svg" viewBox="0 0 120 18" preserveAspectRatio="none">
-          <path d="M0 13 L20 13 L35 11 L52 12 L68 9 L86 11 L102 7 L120 8" fill="none" stroke="var(--orange)" stroke-width="1.6" stroke-linecap="round"/>
+        <svg class="mb-spark-svg" viewBox="0 0 120 20" preserveAspectRatio="none">
+          <path id="mbSyncWavePath" d="M0 14 L20 13 L35 11 L52 13 L68 9 L86 12 L102 7 L120 9" fill="none" stroke="rgba(244,160,115,0.34)" stroke-width="1.6" stroke-linecap="round"/>
+          <path class="mb-spark-flow" d="M0 14 L20 13 L35 11 L52 13 L68 9 L86 12 L102 7 L120 9" fill="none" stroke="var(--orange)" stroke-width="1.9" stroke-linecap="round"/>
+          <circle r="2.6" fill="var(--orange)">
+            <animateMotion dur="${syncSpeed}" repeatCount="indefinite" path="M0 14 L20 13 L35 11 L52 13 L68 9 L86 12 L102 7 L120 9"/>
+          </circle>
         </svg>
         <div class="mb-card-sub">点击立即同步记忆 · 项目 · 技能</div>
       </div>
 
       <div class="mb-card" data-open-page="memory">
         <div class="mb-card-head">
-          <span class="mb-card-title"><i class="dot" style="background:var(--purple)"></i>记忆同步</span>
+          <span class="mb-card-title"><i class="dot live" style="background:var(--purple)"></i>记忆同步</span>
           <span class="mb-tag">压缩 ${mem.compressionRatio ?? 0}%</span>
         </div>
-        <div class="mb-card-metric">${fmtNum(cog.activeItems || 0)}<small>条</small></div>
+        <div class="mb-card-metric"><span data-count-key="memActive" data-count-to="${cog.activeItems || 0}">${fmtNum(cog.activeItems || 0)}</span><small>条</small></div>
         <div class="mb-prog-track"><div class="mb-prog-fill gold" style="width:${memRatio}%"></div></div>
         <div class="mb-card-sub">${cog.entities || 0} 实体 · ${cog.activeEdges || 0} 边 · 日${counts.daily}/周${counts.weekly}/月${counts.monthly}</div>
       </div>
 
       <div class="mb-card" data-open-page="projects">
         <div class="mb-card-head">
-          <span class="mb-card-title"><i class="dot" style="background:var(--blue)"></i>项目同步</span>
+          <span class="mb-card-title"><i class="dot live" style="background:var(--blue)"></i>项目同步</span>
           <span class="mb-tag ${remoteProjects.length ? "warn" : "ok"}">${remoteProjects.length ? `${remoteProjects.length} 待绑定` : "已对齐"}</span>
         </div>
-        <div class="mb-card-metric">${boundProjects.length}<small>/${totalProj} 项目</small></div>
+        <div class="mb-card-metric"><span data-count-key="projBound" data-count-to="${boundProjects.length}" data-count-fmt="raw">${boundProjects.length}</span><small>/${totalProj} 项目</small></div>
         <div class="mb-prog-track"><div class="mb-prog-fill blue" style="width:${boundPct}%"></div></div>
-        <div class="mb-card-sub">${remoteProjects.length ? `有 ${remoteProjects.length} 个跨端共享项目待绑定` : "跨设备工作区已同步"}</div>
+        <div class="mb-card-sub">${remoteProjects.length ? `有 ${remoteProjects.length} 个跨端共享项目待绑定` : `${boundProjects.reduce((s, p) => s + (p.fileCount || 0), 0)} 个工作区文件已对齐`}</div>
       </div>
 
       <div class="mb-card" data-action="tailscale-scan">
         <div class="mb-card-head">
-          <span class="mb-card-title"><i class="dot" style="background:var(--accent)"></i>内网穿透</span>
+          <span class="mb-card-title"><i class="dot live" style="background:var(--accent)"></i>内网穿透</span>
           <span class="mb-tag ${tsTagClass}">${tsTagText}</span>
         </div>
         <div class="mb-card-metric">${tsMetric}</div>
-        <svg class="mb-spark-svg" viewBox="0 0 120 18" preserveAspectRatio="none">
-          <path d="M0 14 Q 25 13, 45 11 T 78 6 T 120 12" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
-          <path d="M0 15 Q 30 14, 60 12 T 120 14" fill="none" stroke="var(--blue)" stroke-width="1.2" opacity="0.7"/>
+        <svg class="mb-spark-svg" viewBox="0 0 120 20" preserveAspectRatio="none">
+          <path d="M0 15 Q 25 14, 45 11 T 78 6 T 120 12" fill="none" stroke="rgba(183,234,212,0.34)" stroke-width="1.6"/>
+          <path class="mb-spark-flow" d="M0 15 Q 25 14, 45 11 T 78 6 T 120 12" fill="none" stroke="var(--accent)" stroke-width="1.9"/>
+          <path d="M0 16 Q 30 15, 60 12 T 120 15" fill="none" stroke="var(--blue)" stroke-width="1.2" opacity="0.65"/>
+          <circle r="2.6" fill="var(--accent)">
+            <animateMotion dur="4.2s" repeatCount="indefinite" path="M0 15 Q 25 14, 45 11 T 78 6 T 120 12"/>
+          </circle>
         </svg>
         <div class="mb-card-sub">${esc(tsSub)}</div>
       </div>
 
-      <div class="mb-card" data-open-page="devices">
+      <div class="mb-card" data-open-page="projects">
         <div class="mb-card-head">
-          <span class="mb-card-title"><i class="dot" style="background:var(--success)"></i>Skills 同步</span>
+          <span class="mb-card-title"><i class="dot live" style="background:var(--success)"></i>Skills 同步</span>
           <span class="mb-tag ${skTagClass}">${skTagText}</span>
         </div>
-        <div class="mb-card-metric">${sk.uniqueSkills ?? 0}<small>项</small></div>
+        <div class="mb-card-metric"><span data-count-key="skCount" data-count-to="${sk.uniqueSkills ?? 0}">${sk.uniqueSkills ?? 0}</span><small>项</small></div>
         <div class="mb-seg-actions">
           <button type="button" class="mb-seg-btn active" data-action="sync-skills">对齐</button>
           <button type="button" class="mb-seg-btn ${sk.conflicts > 0 ? "warn" : ""}" data-action="resolve-conflicts">${sk.conflicts > 0 ? `解冲突` : "无冲突"}</button>
@@ -224,12 +288,12 @@ function render() {
     const netPct = ts.online ? 100 : net.online ? 85 : 50;
     patchHtml(mbRingsCard, `
       <div class="mb-card-head">
-        <span class="mb-card-title"><i class="dot" style="background:var(--success)"></i>跨 Agent 检索技能 · qlex-memory</span>
-        <span class="mb-tag ${agentPct === 100 ? "ok" : "warn"}">部署 ${ms.installedCount || 0}/${ms.totalCount || 6}</span>
+        <span class="mb-card-title"><i class="dot live" style="background:var(--success)"></i>跨 Agent 检索技能 · qlex-memory</span>
+        <span class="mb-tag ${agentPct === 100 ? "ok" : "warn"}">部署 ${ms.installedCount || 0}/${ms.totalCount || 9}</span>
       </div>
       <div class="mb-rings-body">
         <div class="mb-rings-info">
-          <div class="mb-card-metric">${agentPct}%<small style="margin-left:5px">${ms.installedCount || 0} 工具就绪</small></div>
+          <div class="mb-card-metric"><span data-count-key="agentPct" data-count-to="${agentPct}" data-count-suffix="%" data-count-fmt="raw">${agentPct}%</span><small style="margin-left:5px">${ms.installedCount || 0} 工具就绪</small></div>
           <div class="mb-card-sub" title="Codex · Claude · Hermes · Antigravity · DSH · WorkBuddy · ZCode · T3 Code">Codex · Claude · Hermes · WorkBuddy · ZCode · T3</div>
         </div>
         <div class="mb-rings-group">
@@ -244,14 +308,14 @@ function render() {
     const rows = [
         ...remoteProjects.slice(0, 2).map(rp => ({
             name: rp.name,
-            col1: "远端共享",
+            col1: rp.fileCount ? `${rp.fileCount} 文件` : "远端共享",
             col1Cls: "warn",
             col2: "待绑定",
             action: `bind-remote:${rp.syncId}`,
         })),
         ...boundProjects.slice(0, 4).map(p => ({
             name: p.name,
-            col1: "已同步",
+            col1: p.fileCount ? `${p.fileCount} 文件` : "已同步",
             col1Cls: "ok",
             col2: "打开 ↗",
             action: `open-project:${p.id}`,
@@ -299,19 +363,21 @@ function render() {
       </div>
       <div class="mb-footer-kpis">
         <div class="mb-kpi" data-open-page="memory">
-          <strong>${fmtNum(cog.activeItems || 0)}</strong>
+          <strong data-count-key="kpiMem" data-count-to="${cog.activeItems || 0}">${fmtNum(cog.activeItems || 0)}</strong>
           <span>活跃记忆</span>
         </div>
-        <div class="mb-kpi" data-open-page="devices">
-          <strong>${fmtNum(sk.uniqueSkills || 0)}</strong>
+        <div class="mb-kpi" data-open-page="projects">
+          <strong data-count-key="kpiSk" data-count-to="${sk.uniqueSkills || 0}">${fmtNum(sk.uniqueSkills || 0)}</strong>
           <span>本机技能</span>
         </div>
         <div class="mb-kpi" data-open-page="projects">
-          <strong>${boundProjects.length}</strong>
+          <strong data-count-key="kpiProj" data-count-to="${boundProjects.length}" data-count-fmt="raw">${boundProjects.length}</strong>
           <span>同步项目</span>
         </div>
       </div>
     `);
+
+    if (!revealPulse) animateCounters(false);
 
     requestAnimationFrame(() => {
         const shell = document.querySelector("#mbShell");
@@ -386,11 +452,16 @@ window.qlex.onNativeMaterial?.((mat) => {
     window.QlexTheme?.applyNativeMaterial(mat);
 });
 
+window.qlex.onMenubarShown?.(() => {
+    triggerRevealAnimation();
+});
+
 (async () => {
     try {
         state = await window.qlex.getState();
         const mat = await window.qlex.getNativeMaterial();
         if (mat) state.nativeMaterial = mat;
         render();
+        triggerRevealAnimation();
     } catch { /* ignore */ }
 })();

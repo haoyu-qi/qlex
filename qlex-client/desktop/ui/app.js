@@ -929,14 +929,17 @@ function renderXStage() {
     const syncStripTone = projSync?.error ? "err"
         : net.mode === "endpoint" && !net.online ? "warn"
         : projSync?.time ? "ok" : "";
+    const syncFileDetail = (projSync?.filesPushed || projSync?.filesPulled)
+        ? ` · ↑${projSync.filesPushed || 0}/↓${projSync.filesPulled || 0} 文件`
+        : projSync?.contextApplied ? ` · ${projSync.contextApplied} 份上下文` : "";
     const syncStripText = projSync?.error
         ? `⚠ 同步异常：${projSync.error}`
         : net.mode === "endpoint"
             ? (net.online
-                ? `⇄ 已连中心 ${cleanHost(net.endpoint?.name || net.endpoint?.address || "中心")} · ${projSync?.time ? `已同步 ${fmtShortTime(projSync.time)}（共 ${projSync.totalShared ?? (state.projects?.length || 0)} 项${projSync.contextApplied ? ` · ${projSync.contextApplied} 份上下文` : ""}）` : "点击「⟳ 同步」立即对齐"}`
+                ? `⇄ 已连中心 ${cleanHost(net.endpoint?.name || net.endpoint?.address || "中心")} · ${projSync?.time ? `已同步 ${fmtShortTime(projSync.time)}（共 ${projSync.totalShared ?? (state.projects?.length || 0)} 项${syncFileDetail}）` : "点击「⟳ 同步」立即对齐"}`
                 : `⚠ 中心离线（${cleanHost(net.endpoint?.name || "")}），恢复连接后自动同步`)
             : net.mode === "center"
-                ? `◉ 本机为中心点 · 托管 ${(state.projects || []).length + (state.remoteProjects || []).length} 个共享项目 · ${onlinePeersCount} 台接入点在线${projSync?.time ? ` · 最近同步 ${fmtShortTime(projSync.time)}` : ""}`
+                ? `◉ 本机为中心点 · 托管 ${(state.projects || []).length + (state.remoteProjects || []).length} 个共享项目 · ${onlinePeersCount} 台接入点在线${projSync?.time ? ` · 最近同步 ${fmtShortTime(projSync.time)}${projSync.filesPulled ? `（收 ${projSync.filesPulled} 文件）` : ""}` : ""}`
                 : `本机单机模式 · 前往「互联」连接中心点即可跨设备同步项目与工作区`;
 
     let projectsLeftHtml = "";
@@ -992,7 +995,7 @@ function renderXStage() {
                     <div class="item-row">
                       <div class="item-text">
                         <div class="item-title">${esc(rp.name)}</div>
-                        <div class="item-sub">来自 ${esc(cleanHost(rp.originDevice || "中心节点"))}${rp.gitBranch ? ` · ${esc(rp.gitBranch)}` : ""}${rp.contextFiles?.length ? ` · ${rp.contextFiles.length} 份上下文` : ""}</div>
+                        <div class="item-sub">来自 ${esc(cleanHost(rp.originDevice || "中心节点"))}${rp.gitBranch ? ` · ${esc(rp.gitBranch)}` : ""}${rp.fileCount ? ` · ${rp.fileCount} 文件 (${fmtBytes(rp.totalBytes || 0)})` : ""}${rp.contextFiles?.length ? ` · ${rp.contextFiles.length} 份上下文` : ""}</div>
                         ${match ? `<div class="item-sub" style="color:var(--accent)">⚡ 检测到本机同名目录（${esc(match.reason)}）：${esc(match.directory)}</div>` : ""}
                       </div>
                       <div class="btn-row" style="flex-wrap:nowrap">
@@ -1023,12 +1026,13 @@ function renderXStage() {
                         <div class="item-sub">${esc(p.directory)}</div>
                         <div class="proj-meta-badges">
                           ${p.gitBranch ? `<span class="mini-pill">${esc(p.gitBranch)}${p.gitCommit ? ` @ ${esc(p.gitCommit)}` : ""}</span>` : ""}
+                          ${p.fileCount ? `<span class="mini-pill">${p.fileCount} 文件 · ${fmtBytes(p.totalBytes || 0)}</span>` : ""}
                           ${(p.syncedDevices || []).length > 1
                               ? `<span class="mini-pill" style="color:var(--success);border-color:rgba(var(--success-rgb),0.3)">⇄ 已同步 ${p.syncedDevices.length} 设备</span>`
                               : p.lastSyncedAt
                                   ? `<span class="mini-pill" style="color:var(--accent)">✓ 已推送中心</span>`
                                   : ""}
-                          ${p.contextFilesCount ? `<span class="mini-pill">${p.contextFilesCount} 份 AI 上下文</span>` : ""}
+                          ${p.contextFilesCount ? `<span class="mini-pill">${p.contextFilesCount} 份上下文</span>` : ""}
                         </div>
                       </div>
                     </div>
@@ -1812,6 +1816,8 @@ document.addEventListener("click", (event) => {
                     if (r.added) parts.push(`新增 ${r.added}`);
                     if (r.updated) parts.push(`更新 ${r.updated}`);
                     if (r.removed) parts.push(`移出 ${r.removed}`);
+                    if (r.filesPushed) parts.push(`推送 ${r.filesPushed} 文件`);
+                    if (r.filesPulled) parts.push(`拉取 ${r.filesPulled} 文件`);
                     if (r.contextApplied) parts.push(`同步 ${r.contextApplied} 份上下文`);
                     notify(`跨端项目同步完成：${parts.join(" · ")}`);
                 } else if (r?.role === "center") {
