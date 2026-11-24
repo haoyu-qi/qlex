@@ -135,6 +135,16 @@ function createMemoryArchiver({ getArchiveDir, getProjects, getUsageSnapshot, ge
         return { ...found, content };
     }
 
+    function exportSyncBundle(meta) {
+        return engine.exportSyncBundle(meta);
+    }
+
+    function mergeSyncBundle(bundle) {
+        const res = engine.mergeSyncBundle(bundle);
+        loadExistingIndex();
+        return res;
+    }
+
     loadExistingIndex();
 
     return {
@@ -146,6 +156,8 @@ function createMemoryArchiver({ getArchiveDir, getProjects, getUsageSnapshot, ge
         browse,
         forget,
         readEntry,
+        exportSyncBundle,
+        mergeSyncBundle,
         reloadIndex: loadExistingIndex,
         snapshot: () => structuredClone(state),
     };

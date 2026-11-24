@@ -172,16 +172,23 @@ function desktopState(state = store.snapshot()) {
 async function runUnifiedSync() {
     if (syncRunning) return syncRunning;
     syncRunning = (async () => {
-        syncState = { phase: "syncing", label: "同步中…", detail: "正在同步配对、本机 Skills、记忆引擎与 Agent 检索技能", time: syncState.time };
+        syncState = { phase: "syncing", label: "双向同步中…", detail: "正在同步中心/接入点记忆、项目、本机 Skills 与 Agent 检索技能", time: syncState.time };
         broadcastState();
         const snap = store.snapshot();
         try {
-            const jobs = [usage.refresh().catch(() => {})];
             if (pairing.view().mode !== "local") {
-                jobs.push(pairing.refresh().catch(() => {}));
+                await pairing.refresh().catch(() => {});
             }
-            await Promise.all(jobs);
 
+            // 1. Core: Bidirectional Memory Sync & Project Sync (Endpoint <-> Center)
+            if (pairing.view().mode === "endpoint" && pairing.view().endpoint?.status === "connected") {
+                await Promise.all([
+                    pairing.syncMemory().catch(() => {}),
+                    pairing.syncProjects().catch(() => {}),
+                ]);
+            }
+
+            // 2. Core: Local Cognitive Memory Compression + Universal Agent Skill
             if (snap.skillSyncEnabled) {
                 installMemorySkill({ namespaces: snap.localSkillNamespaces });
                 skills.syncLocal(snap.localSkillNamespaces);
@@ -195,6 +202,10 @@ async function runUnifiedSync() {
             if (snap.memoryAutoCompress !== false) {
                 await memoryArchive.compressNow();
             }
+
+            // 3. Auxiliary: background usage & Tailscale peer scan
+            void usage.refresh().catch(() => {});
+            void tailscale?.refreshAndDiscover().catch(() => {});
 
             syncState = { phase: "synced", label: "已同步", detail: "", time: Date.now() };
         } catch (err) {
@@ -716,7 +727,34 @@ function registerHandlers() {
             const result = await electron_1.dialog.showOpenDialog(window, { properties: ["openDirectory"] });
             if (result.canceled || !result.filePaths[0])
                 return desktopState();
-            return broadcastState(store.addProject((0, node_fs_1.realpathSync)(result.filePaths[0])));
+            const next = store.addProject((0, node_fs_1.realpathSync)(result.filePaths[0]));
+            if (pairing.view().mode === "endpoint") void pairing.syncProjects().catch(() => {});
+            return broadcastState(next);
+        },
+        "qlex:bind-remote-project": async (syncId) => {
+            if (!window || !store.snapshot().configured)
+                throw new Error("请先完成首次设置");
+            const result = await electron_1.dialog.showOpenDialog(window, { properties: ["openDirectory"] });
+            if (result.canceled || !result.filePaths[0])
+                return desktopState();
+            const next = store.bindRemoteProject(syncId, (0, node_fs_1.realpathSync)(result.filePaths[0]));
+            if (pairing.view().mode === "endpoint") void pairing.syncProjects().catch(() => {});
+            return broadcastState(next);
+        },
+        "qlex:sync-memory-now": async () => {
+            let remote = null;
+            if (pairing.view().mode === "endpoint") {
+                remote = await pairing.syncMemory();
+            }
+            await memoryArchive.compressNow();
+            return { remote, state: broadcastState() };
+        },
+        "qlex:sync-projects-now": async () => {
+            let remote = null;
+            if (pairing.view().mode === "endpoint") {
+                remote = await pairing.syncProjects();
+            }
+            return { remote, state: broadcastState() };
         },
     };
 
@@ -747,6 +785,12 @@ function registerHandlers() {
                     latestDaily: mem.items?.daily?.[0] || null,
                     skill: getMemorySkillStatus({ namespaces: store.snapshot().localSkillNamespaces }),
                 },
+                projects: {
+                    boundCount: store.snapshot().projects.length,
+                    remoteCount: (store.snapshot().remoteProjects || []).length,
+                    items: store.snapshot().projects.slice(0, 4).map(p => ({ name: p.name, directory: p.directory })),
+                    remoteItems: (store.snapshot().remoteProjects || []).slice(0, 3).map(r => ({ name: r.name, originDevice: r.originDevice })),
+                },
                 sync: {
                     mode, online, center: endpoint?.name, status: endpoint?.status,
                     paired: peers.filter(peer => peer.status === "connected").length,
@@ -756,6 +800,7 @@ function registerHandlers() {
                     tailscaleOnline: Boolean(tailscale?.snapshot().online),
                     tailscaleIp: tailscale?.snapshot().self?.ip || "",
                     discoveredCount: tailscale?.snapshot().discoveredCenters?.length || 0,
+                    syncMeta: pairing.view().syncMeta,
                 },
                 updater: updater ? {
                     phase: updater.snapshot().phase,
@@ -893,7 +938,7 @@ else {
         pairing = new pairing_1.DevicePairing(store, undefined, skills, () => {
             const ts = tailscale.snapshot();
             return [ts.self?.dnsName, ts.self?.ip].filter(Boolean);
-        });
+        }, memoryArchive);
         edgeDock = createEdgeDock({
             BrowserWindow: electron_1.BrowserWindow,
             screen: electron_1.screen,
@@ -921,6 +966,10 @@ else {
             setInterval(() => void usage.refresh().catch(console.warn), 300_000).unref();
             setInterval(() => void tailscale.refreshAndDiscover().catch(console.warn), 45_000).unref();
             setInterval(() => {
+                if (pairing.view().mode === "endpoint" && pairing.view().endpoint?.status === "connected") {
+                    void pairing.syncMemory().catch(console.warn);
+                    void pairing.syncProjects().catch(console.warn);
+                }
                 if (store.snapshot().skillSyncEnabled) void skills.refresh(pairing, store.snapshot().localSkillNamespaces);
             }, 60_000).unref();
             // Auto daily/weekly/monthly memory compression every 30 minutes

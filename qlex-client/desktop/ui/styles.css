@@ -1639,6 +1639,64 @@ html.native-liquid-glass :is(.tabs, .utility-actions button, .window-actions but
   background: rgba(var(--overlay-rgb), 0.035);
 }
 
+/* ---- Core Center/Endpoint Sync Hub Hero (Replaces Token Monitor Hero on Core Views) ---- */
+.hub-panel {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 8px;
+  padding: 2px 2px 10px;
+  border-bottom: 1px solid rgba(var(--line-rgb), 0.12);
+  flex: 0 0 auto;
+}
+.hub-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.hub-role-headline {
+  font-family: var(--display-font);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.hub-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.hub-kpi-card {
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(var(--line-rgb), 0.14);
+  background: rgba(var(--overlay-rgb), 0.045);
+  cursor: pointer;
+  text-align: left;
+  transition: transform 220ms var(--spring-snappy), border-color 150ms ease, background 150ms ease;
+}
+.hub-kpi-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--overlay-rgb), 0.3);
+  background: rgba(var(--overlay-rgb), 0.085);
+}
+.hub-kpi-card:active { transform: scale(0.95); }
+.hub-kpi-card span { font-size: 0.5625rem; color: var(--muted); }
+.hub-kpi-card strong {
+  font-family: var(--display-font);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--number);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.hub-kpi-card small { font-size: 0.5625rem; color: var(--readable-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* ---- Notice Toast ---- */
 .notice {
   position: fixed;

@@ -68,6 +68,30 @@ function defaultMemoryDir() {
     return (0, node_path_1.join)((0, node_os_1.homedir)(), "Documents", "QLEX-Memory");
 }
 
+function projectSyncSlug(name) {
+    return String(name || "project").trim().toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64) || "project";
+}
+
+function normalizeProjects(list) {
+    if (!Array.isArray(list)) return [];
+    return list.map(p => ({
+        ...p,
+        syncId: typeof p.syncId === "string" && p.syncId.trim() ? p.syncId.trim() : `proj_${projectSyncSlug(p.name)}`,
+        shared: typeof p.shared === "boolean" ? p.shared : true,
+        updatedAt: Number.isFinite(Number(p.updatedAt)) ? Number(p.updatedAt) : Date.now(),
+    }));
+}
+
+function normalizeRemoteProjects(list) {
+    if (!Array.isArray(list)) return [];
+    return list.filter(p => p && typeof p.syncId === "string" && typeof p.name === "string").map(p => ({
+        syncId: p.syncId.trim(),
+        name: p.name.trim().slice(0, 120),
+        originDevice: typeof p.originDevice === "string" ? p.originDevice.slice(0, 100) : "",
+        updatedAt: Number.isFinite(Number(p.updatedAt)) ? Number(p.updatedAt) : Date.now(),
+    }));
+}
+
 const defaultState = () => ({
     version: 1,
     deviceId: (0, node_crypto_1.randomUUID)(),
@@ -83,6 +107,7 @@ const defaultState = () => ({
     autoCheckUpdates: true,
     collectorPaths: {},
     projects: [],
+    remoteProjects: [],
     appearance: { ...DEFAULT_APPEARANCE },
 });
 
@@ -111,6 +136,8 @@ class LocalStore {
                 updateChannel: VALID_UPDATE_CHANNELS.has(value.updateChannel) ? value.updateChannel : "beta",
                 autoCheckUpdates: typeof value.autoCheckUpdates === "boolean" ? value.autoCheckUpdates : true,
                 collectorPaths: value.collectorPaths && typeof value.collectorPaths === "object" && !Array.isArray(value.collectorPaths) ? value.collectorPaths : {},
+                projects: normalizeProjects(value.projects),
+                remoteProjects: normalizeRemoteProjects(value.remoteProjects),
                 appearance: normalizeAppearance(value.appearance),
                 ...(normalizeBounds(value.windowBounds) ? { windowBounds: normalizeBounds(value.windowBounds) } : {}),
             };
@@ -143,15 +170,75 @@ class LocalStore {
         if (!normalized) return this.snapshot();
         return this.update({ windowBounds: normalized });
     }
-    addProject(directory) {
+    addProject(directory, syncId = "") {
         const normalized = (0, node_path_1.resolve)(directory);
         if (!(0, node_path_1.basename)(normalized))
             throw new Error("请选择一个项目目录，文件系统根目录不能绑定为项目。");
         if (this.state.projects.some((project) => project.directory === normalized)) {
             return this.snapshot();
         }
-        const project = { id: (0, node_crypto_1.randomUUID)(), name: (0, node_path_1.basename)(normalized), directory: normalized };
-        return this.update({ projects: [...this.state.projects, project] });
+        const name = (0, node_path_1.basename)(normalized);
+        const resolvedSyncId = syncId || `proj_${projectSyncSlug(name)}`;
+        const project = {
+            id: (0, node_crypto_1.randomUUID)(),
+            syncId: resolvedSyncId,
+            name,
+            directory: normalized,
+            shared: true,
+            updatedAt: Date.now(),
+        };
+        const remoteProjects = (this.state.remoteProjects || []).filter(r => r.syncId !== resolvedSyncId);
+        return this.update({ projects: [...this.state.projects, project], remoteProjects });
+    }
+    exportSharedProjects(originDevice = (0, node_os_1.hostname)()) {
+        const map = new Map();
+        for (const r of this.state.remoteProjects || []) {
+            map.set(r.syncId, { syncId: r.syncId, name: r.name, originDevice: r.originDevice || originDevice, updatedAt: r.updatedAt || Date.now() });
+        }
+        for (const p of this.state.projects || []) {
+            if (p.shared === false) continue;
+            map.set(p.syncId, { syncId: p.syncId, name: p.name, originDevice, updatedAt: p.updatedAt || Date.now() });
+        }
+        return [...map.values()];
+    }
+    mergeSharedProjects(incomingList = []) {
+        const localBySync = new Map((this.state.projects || []).map(p => [p.syncId, p]));
+        const remoteBySync = new Map((this.state.remoteProjects || []).map(r => [r.syncId, r]));
+        let added = 0;
+        let updated = 0;
+        for (const inc of normalizeRemoteProjects(incomingList)) {
+            const local = localBySync.get(inc.syncId);
+            if (local) {
+                if (inc.updatedAt > (local.updatedAt || 0) && inc.name !== local.name) {
+                    local.name = inc.name;
+                    local.updatedAt = inc.updatedAt;
+                    updated++;
+                }
+                remoteBySync.delete(inc.syncId);
+                continue;
+            }
+            const cur = remoteBySync.get(inc.syncId);
+            if (!cur) {
+                remoteBySync.set(inc.syncId, inc);
+                added++;
+            } else if (inc.updatedAt > (cur.updatedAt || 0)) {
+                remoteBySync.set(inc.syncId, inc);
+                updated++;
+            }
+        }
+        this.update({ projects: [...localBySync.values()], remoteProjects: [...remoteBySync.values()] });
+        return { added, updated, remotePending: remoteBySync.size, totalShared: localBySync.size + remoteBySync.size };
+    }
+    bindRemoteProject(syncId, directory) {
+        const remote = (this.state.remoteProjects || []).find(r => r.syncId === syncId);
+        if (!remote) throw new Error("该远端共享项目已不存在或已完成绑定。");
+        const next = this.addProject(directory, remote.syncId);
+        // Preserve canonical shared project name
+        const created = next.projects.find(p => p.syncId === remote.syncId);
+        if (created && created.name !== remote.name) {
+            return this.renameProject(created.id, remote.name);
+        }
+        return next;
     }
     setEdgeDock(side) {
         if (!["off", "left", "right"].includes(side))

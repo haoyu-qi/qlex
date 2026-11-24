@@ -21,6 +21,7 @@ const { collectAllNative, extractRealUserText } = require(path.join(root, "deskt
 const { createTailscaleManager, isTailscaleIp, isMagicDnsHost, findEmbeddedTsnetBin } = require(path.join(root, "desktop/src/tailscale.js"));
 const { DevicePairing, isValidHost, isTailscaleIPv4, addresses } = require(path.join(root, "desktop/src/pairing.js"));
 const { LocalStore } = require(path.join(root, "desktop/src/state.js"));
+const { createCognitiveMemoryEngine } = require(path.join(root, "desktop/src/memory-core.js"));
 const { createUpdater, compareVersions, parseChecksumsText } = require(path.join(root, "desktop/src/updater.js"));
 
 const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "qlex-v020-test-"));
@@ -157,11 +158,49 @@ try {
     const stableCheck = await stableUpdater.checkForUpdates({ mockReleases });
     assert.equal(stableCheck.phase, "up-to-date", "Stable channel must ignore beta pre-releases");
 
-    console.log("ALL QLEX v0.2.0 COLLECTOR / TAILSCALE / UPDATER TESTS PASSED!", JSON.stringify({
+    // ---- 4. Center <-> Endpoint Bidirectional Memory Sync & Project Sync Tests ----
+    const centerMemDir = path.join(tmpHome, "center-mem");
+    const endpointMemDir = path.join(tmpHome, "endpoint-mem");
+    const centerMem = createCognitiveMemoryEngine({ getArchiveDir: () => centerMemDir, home: tmpHome });
+    const endpointMem = createCognitiveMemoryEngine({ getArchiveDir: () => endpointMemDir, home: tmpHome });
+
+    const cAdd = centerMem.retain({ title: "中心端架构决策", content: "Mac mini 作为 QLEX 中心点托管共享记忆与项目。", bank: "world", project: "workcontext" });
+    const eAdd = endpointMem.retain({ title: "接入端偏好", content: "MacBook 接入点偏好使用 Tailscale 直连中心。", bank: "opinion", project: "workcontext" });
+
+    // Simulate Endpoint -> Center merge, then Center -> Endpoint merge (single roundtrip!)
+    const epBundle = endpointMem.exportSyncBundle({ deviceId: "ep-1", deviceName: "MacBook" });
+    const centerMerge = centerMem.mergeSyncBundle(epBundle);
+    assert.equal(centerMerge.itemsAdded, 1, "Center must receive Endpoint memory item");
+    const ctrBundle = centerMem.exportSyncBundle({ deviceId: "ctr-1", deviceName: "MacMini" });
+    const epMerge = endpointMem.mergeSyncBundle(ctrBundle);
+    assert.equal(epMerge.itemsAdded, 1, "Endpoint must receive Center memory item");
+    assert.ok(endpointMem.recall("Mac mini 中心点", { level: "L0" }).results.some(r => r.id === cAdd.item.id));
+    assert.ok(centerMem.recall("Tailscale 直连", { level: "L0" }).results.some(r => r.id === eAdd.item.id));
+
+    // Simulate Cross-Device Project Sync + Bind Remote Project
+    const centerStore = new LocalStore(path.join(tmpHome, "center-state.json"));
+    const epStore = new LocalStore(path.join(tmpHome, "ep-state.json"));
+    const fakeProjA = path.join(tmpHome, "proj-alpha");
+    const fakeProjB = path.join(tmpHome, "ep-proj-alpha");
+    fs.mkdirSync(fakeProjA, { recursive: true });
+    fs.mkdirSync(fakeProjB, { recursive: true });
+    centerStore.addProject(fakeProjA);
+    const sharedFromCenter = centerStore.exportSharedProjects("MacMini");
+    const mergeProjRes = epStore.mergeSharedProjects(sharedFromCenter);
+    assert.equal(mergeProjRes.added, 1);
+    assert.equal(epStore.snapshot().remoteProjects.length, 1);
+    const syncId = epStore.snapshot().remoteProjects[0].syncId;
+    epStore.bindRemoteProject(syncId, fakeProjB);
+    assert.equal(epStore.snapshot().remoteProjects.length, 0);
+    assert.equal(epStore.snapshot().projects[0].syncId, syncId, "Bound local directory must preserve cross-device syncId");
+
+    console.log("ALL QLEX v0.2.1 CORE SYNC / COLLECTOR / TAILSCALE / UPDATER TESTS PASSED!", JSON.stringify({
         nativeTokens: nativeRes.today.total,
         embeddedTsnetBuilt: Boolean(findEmbeddedTsnetBin()),
         betaDetected: betaCheck.latest.version,
         stablePhase: stableCheck.phase,
+        syncedMemoryBidirectional: true,
+        syncedProjectBoundSyncId: syncId,
     }));
 } finally {
     fs.rmSync(tmpHome, { recursive: true, force: true });

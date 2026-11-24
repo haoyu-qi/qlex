@@ -61,16 +61,6 @@ function updateRailBadges() {
     const phase = data?.syncStatus?.phase || "idle";
     syncRailDot.className = `dock-status-dot ${phase}`;
     syncRailSvg.classList.toggle("is-spinning", phase === "syncing");
-
-    const windows = data?.quotas?.codex?.windows?.filter(w => !w.resetsAt || w.resetsAt > Date.now());
-    if (!windows?.length) {
-        quotaRingText.textContent = "—";
-        quotaRingFill.style.strokeDashoffset = "81.68";
-        return;
-    }
-    const rem = Math.max(0, Math.min(100, Math.round(Math.min(...windows.map(w => 100 - w.used)))));
-    quotaRingText.textContent = `${rem}`;
-    quotaRingFill.style.strokeDashoffset = String((81.68 * (100 - rem)) / 100);
 }
 
 function render() {
@@ -106,9 +96,9 @@ function render() {
     }
 
     if (!item) return;
-    const titles = { sync: "同步与本机技能", usage: "今日用量", limits: "Codex 订阅额度", memory: "记忆压缩归档" };
-    const targets = { sync: "devices", usage: "usage", limits: "limits", memory: "memory" };
-    const openLabels = { sync: "管理设备与 Skills ", usage: "查看工具用量 ", limits: "查看额度详情 ", memory: "打开记忆归档 " };
+    const titles = { sync: "中心点与接入点", memory: "记忆同步与图谱", projects: "项目跨端同步", usage: "工具用量（辅助）" };
+    const targets = { sync: "devices", memory: "memory", projects: "projects", usage: "usage" };
+    const openLabels = { sync: "管理中心/接入点 ", memory: "打开记忆同步 ", projects: "管理项目工作区 ", usage: "查看用量统计 " };
     document.querySelector("#title").textContent = titles[item] || "QLEX";
     openBtn.dataset.page = targets[item] || "overview";
     openBtn.firstChild.textContent = openLabels[item] || "打开工作台 ";
@@ -123,26 +113,37 @@ function render() {
         const { mode, online, status, center, paired, attachedOnline, pending, projects, name } = data.sync;
         list.append(row("同步状态", st.label, st.detail || ""));
         if (mode === "center") {
-            list.append(row("中心点", online ? "在线" : "未启动", `${attachedOnline}/${paired} 附加在线 · ${pending} 待确认`));
+            list.append(row("中心点", online ? "运行中" : "未启动", `${attachedOnline}/${paired} 接入在线 · ${pending} 待确认`));
         } else if (mode === "endpoint") {
-            list.append(row(center || "中心点", status === "pending" ? "待确认" : online ? "已连接" : "未连接"));
+            list.append(row(center || "接入中心", status === "pending" ? "待确认" : online ? "已连接" : "离线"));
         } else {
-            list.append(row("本机设备", "单机模式", name));
+            list.append(row("节点角色", "单机模式", name));
         }
-        list.append(row("本机 Skills", `${data.skills?.uniqueSkills ?? 0} 项`, data.skills?.missingLinks ? `${data.skills.missingLinks} 项待同步对齐` : "各工具已对齐"));
         if (data.sync?.tailscaleOnline) {
             list.append(row("Tailscale 内网", data.sync.tailscaleIp || "在线", data.sync.discoveredCount ? `发现 ${data.sync.discoveredCount} 台 QLEX 中心` : "自动穿透就绪"));
         }
+        list.append(row("本机 Skills", `${data.skills?.uniqueSkills ?? 0} 项`, data.skills?.conflicts ? `冲突 ${data.skills.conflicts}` : data.skills?.missingLinks ? `${data.skills.missingLinks} 项待对齐` : "已对齐"));
         if (data.updater?.phase === "available" || data.updater?.phase === "ready") {
             list.append(row("版本更新推送", data.updater.latestVersion, data.updater.phase === "ready" ? "已校验待安装" : "可下载更新"));
         }
-        list.append(row("登记项目", `${projects} 个`));
 
         quickAction.hidden = false;
         quickAction.dataset.quick = "sync";
         quickAction.classList.add(st.phase);
         quickAction.disabled = st.phase === "syncing";
-        quickAction.textContent = st.phase === "syncing" ? "⟳ 正在同步…" : `⟳ 立即同步（${st.label}）`;
+        quickAction.textContent = st.phase === "syncing" ? "⟳ 双向同步中…" : "⟳ 同步记忆 · 项目 · 技能";
+    } else if (item === "projects") {
+        const pr = data.projects || { boundCount: 0, remoteCount: 0, items: [], remoteItems: [] };
+        list.append(row("本机已绑定项目", `${pr.boundCount} 个`, pr.remoteCount ? `${pr.remoteCount} 个跨端共享项目待绑定` : "跨端目录已同步"));
+        for (const p of pr.items || []) {
+            list.append(row(p.name, "已绑定", p.directory));
+        }
+        for (const r of pr.remoteItems || []) {
+            list.append(row(r.name, "待绑定", `来自 ${r.originDevice || "中心节点"}`));
+        }
+        quickAction.hidden = false;
+        quickAction.dataset.quick = "sync";
+        quickAction.textContent = "⟳ 同步跨端项目";
     } else if (item === "usage") {
         const value = document.createElement("p");
         value.className = "value";
@@ -155,19 +156,6 @@ function render() {
         for (const [tool, usage] of tools) {
             list.append(row(sources[tool] || tool, usage.tokens.toLocaleString("zh-CN")));
         }
-    } else if (item === "limits") {
-        const codex = data.quotas?.codex;
-        if (!codex?.windows?.length) {
-            const p = document.createElement("p");
-            p.textContent = "暂无本机 Codex 额度采样";
-            details.append(p);
-        } else {
-            for (const w of codex.windows) {
-                const expired = w.resetsAt && w.resetsAt <= Date.now();
-                const rem = expired ? "已重置" : `剩余 ${Math.round(100 - w.used)}%`;
-                list.append(row(w.minutes ? `${w.minutes} 分钟窗口` : "当前周期", rem, w.resetsAt ? `重置 ${new Date(w.resetsAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : ""));
-            }
-        }
     } else if (item === "memory") {
         const mem = data.memory;
         const c = mem?.counts || { daily: 0, weekly: 0, monthly: 0 };
@@ -178,7 +166,7 @@ function render() {
         list.append(row("Agent 检索技能", `已部署 ${sk.installedCount ?? 0}/${sk.totalCount ?? 6}`, "qlex-memory (L0/L1/L2)"));
         quickAction.hidden = false;
         quickAction.dataset.quick = "memory";
-        quickAction.textContent = "⚡ 压缩并反思记忆";
+        quickAction.textContent = "⚡ 同步并压缩记忆";
     }
     if (list.childElementCount) details.append(list);
 }

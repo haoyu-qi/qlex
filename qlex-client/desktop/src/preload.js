@@ -88,8 +88,11 @@ electron_1.contextBridge.exposeInMainWorld("qlex", {
     approveDevice: (id) => electron_1.ipcRenderer.invoke("qlex:approve-device", id),
     removeDevice: (id) => electron_1.ipcRenderer.invoke("qlex:remove-device", id),
 
-    // Projects
+    // Projects & cross-device project sync
     chooseProject: () => electron_1.ipcRenderer.invoke("qlex:choose-project"),
+    bindRemoteProject: (syncId) => electron_1.ipcRenderer.invoke("qlex:bind-remote-project", syncId),
+    syncMemoryNow: () => electron_1.ipcRenderer.invoke("qlex:sync-memory-now"),
+    syncProjectsNow: () => electron_1.ipcRenderer.invoke("qlex:sync-projects-now"),
     addDiscoveredProject: (directory) => electron_1.ipcRenderer.invoke("qlex:add-discovered-project", directory),
     openDiscoveredProject: (directory) => electron_1.ipcRenderer.invoke("qlex:open-discovered-project", directory),
     openProject: (id) => electron_1.ipcRenderer.invoke("qlex:open-project", id),

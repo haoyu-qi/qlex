@@ -6,6 +6,7 @@ const rolePill = document.querySelector("#rolePill");
 const periodTabs = document.querySelector("#periodTabs");
 const onboardingPanel = document.querySelector("#onboardingPanel");
 const settingsPanel = document.querySelector("#settingsPanel");
+const hubPanel = document.querySelector("#hubPanel");
 const totalPanel = document.querySelector("#totalPanel");
 const totalLabel = document.querySelector("#totalLabel");
 const usageUpdated = document.querySelector("#usageUpdated");
@@ -51,14 +52,14 @@ const SOURCE_NAMES = {
 const ROLES = { local: "本机", center: "中心点", endpoint: "接入点" };
 const PERIODS = { 1: "今日", 7: "近 7 天", 30: "近 30 天", 90: "近 90 天" };
 const VIEWS = [
-    { id: "home", label: "首页概览", icon: "icons/views/home.svg" },
-    { id: "usage", label: "工具用量", icon: "icons/views/tool.svg" },
-    { id: "limits", label: "订阅额度", icon: "icons/views/limits.svg" },
-    { id: "memory", label: "记忆归档", icon: "icons/views/status.svg" },
-    { id: "projects", label: "项目工作区", icon: "icons/views/project.svg" },
+    { id: "home", label: "同步总览", icon: "icons/views/home.svg" },
+    { id: "memory", label: "记忆同步", icon: "icons/views/status.svg" },
+    { id: "projects", label: "项目同步", icon: "icons/views/project.svg" },
+    { id: "devices", label: "中心与接入点", icon: "icons/views/device.svg" },
     { id: "sessions", label: "会话记录", icon: "icons/views/session.svg" },
-    { id: "trends", label: "用量趋势", icon: "icons/views/trends.svg" },
-    { id: "devices", label: "同步与技能", icon: "icons/views/device.svg" },
+    { id: "usage", label: "用量统计（辅助）", icon: "icons/views/tool.svg" },
+    { id: "limits", label: "额度监控（辅助）", icon: "icons/views/limits.svg" },
+    { id: "trends", label: "用量趋势（辅助）", icon: "icons/views/trends.svg" },
 ];
 
 let state = null;
@@ -230,21 +231,21 @@ function renderOnboarding() {
         <img src="../../docs/assets/brand/logo.png" alt="" />
         <div>
           <h1>欢迎使用 QLEX</h1>
-          <small>本地优先 AI 工作台 · 原生毛玻璃客户端</small>
+          <small>跨设备记忆同步 · 项目同步 · 中心点 / 接入点工作台</small>
         </div>
       </div>
       <div class="mode-list">
         <label class="mode-option">
-          <input type="radio" name="mode" value="local" checked />
-          <span><strong>仅在本机使用</strong><small>本机多工具用量、Skills 同步、每日/周/月记忆压缩归档与悬停侧边吸附。</small></span>
-        </label>
-        <label class="mode-option">
-          <input type="radio" name="mode" value="center" />
-          <span><strong>设为中心</strong><small>在本机启动 HTTPS 配对服务，邀请其他设备加入并同步 Skills。</small></span>
+          <input type="radio" name="mode" value="center" checked />
+          <span><strong>设为中心点（推荐主力机 / Mac mini）</strong><small>启动加密 HTTPS 同步中心，接纳其他电脑接入，双向同步记忆、项目目录与本机 Skills。</small></span>
         </label>
         <label class="mode-option">
           <input type="radio" name="mode" value="endpoint" />
-          <span><strong>加入中心</strong><small>粘贴中心设备生成的一次性邀请码完成安全配对。</small></span>
+          <span><strong>作为接入点加入中心</strong><small>通过一次性配对邀请或 Tailscale 内网直连加入中心，与中心双向同步记忆与项目。</small></span>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="mode" value="local" />
+          <span><strong>暂仅本机使用</strong><small>先在本机运行认知记忆引擎、项目工作区与 6 工具 Skills 对齐，随时可切换为中心点或接入点。</small></span>
         </label>
       </div>
       <div id="onboardingInviteBox" class="hidden">
@@ -438,41 +439,68 @@ function renderSettings() {
         section("updates", "版本下载与更新推送", "icons/views/trends.svg", updSummary, updateBody);
 }
 
-function renderHome() {
-    const report = selectedReport();
+function renderSyncHubHeader() {
     const net = state.pairing;
-    const quota = state.usage?.quotas?.codex;
+    const ts = state.tailscale || {};
+    const mem = state.memoryArchive || {};
+    const cog = mem.cognitive || { activeItems: 0, entities: 0, activeEdges: 0 };
+    const boundCount = (state.projects || []).length;
+    const remoteCount = (state.remoteProjects || []).length;
+    const connectedPeers = (net.peers || []).filter(p => p.status === "connected").length;
+    const onlinePeers = (net.peers || []).filter(p => p.online).length;
+
+    const headline = net.mode === "center"
+        ? (net.online ? "中心点 · 运行中" : "中心点 · 未启动")
+        : net.mode === "endpoint"
+            ? (net.endpoint?.status === "pending" ? "接入点 · 等待确认" : net.online ? `接入点 · 已连 ${net.endpoint?.name || "中心"}` : "接入点 · 离线缓存")
+            : "单机模式 · 可设为中心或接入";
+
+    const subAddr = ts.online && ts.self?.ip
+        ? `Tailscale ${ts.self.ip}${ts.self.dnsName ? ` · ${ts.self.dnsName}` : ""}`
+        : net.mode === "center" ? `监听端口 ${net.port} · 等待接入设备` : `设备：${state.deviceName}`;
+
+    hubPanel.innerHTML = `
+      <div class="hub-head-row">
+        <div class="hub-role-headline">${escapeHtml(headline)}</div>
+        <button type="button" class="glass-btn sm" data-jump-view="devices">${net.mode === "local" ? "设为中心 / 加入" : "节点管理 ›"}</button>
+      </div>
+      <div class="row-subtitle">${escapeHtml(subAddr)}</div>
+      <div class="hub-kpi-grid">
+        <button type="button" class="hub-kpi-card" data-jump-view="memory">
+          <span>同步记忆</span>
+          <strong>${fmtNum(cog.activeItems || 0)}</strong>
+          <small>${cog.entities || 0} 实体 · ${cog.activeEdges || 0} 边</small>
+        </button>
+        <button type="button" class="hub-kpi-card" data-jump-view="projects">
+          <span>同步项目</span>
+          <strong>${boundCount}${remoteCount ? `+${remoteCount}` : ""}</strong>
+          <small>${remoteCount ? `${remoteCount} 待绑定` : "跨端已对齐"}</small>
+        </button>
+        <button type="button" class="hub-kpi-card" data-jump-view="devices">
+          <span>${net.mode === "center" ? "接入节点" : "穿透网络"}</span>
+          <strong>${net.mode === "center" ? `${onlinePeers}/${connectedPeers}` : (ts.online ? "TS" : ROLES[net.mode])}</strong>
+          <small>${ts.online ? "Tailscale 在线" : (net.online ? "连接正常" : "本机就绪")}</small>
+        </button>
+      </div>
+    `;
+}
+
+function renderHome() {
+    const net = state.pairing;
+    const ts = state.tailscale || {};
     const sk = state.skills || {};
     const mem = state.memoryArchive || {};
     const st = state.syncStatus || { phase: "idle", label: "待同步" };
-
     const syncDotColor = st.phase === "synced" ? "var(--success)"
         : st.phase === "syncing" ? "var(--blue)"
         : st.phase === "error" ? "var(--red)" : "var(--orange)";
 
-    const toolRows = Object.entries(SOURCE_NAMES)
-        .map(([key, label]) => ({ key, label, tokens: report?.totals?.[key]?.tokens || 0, sessions: report?.totals?.[key]?.sessions || 0 }))
-        .sort((a, b) => b.tokens - a.tokens)
-        .slice(0, 4);
-
-    const limitPreviewHtml = quota?.windows?.length
-        ? quota.windows.map(w => {
-            const expired = w.resetsAt && w.resetsAt <= Date.now();
-            const rem = expired ? 100 : Math.max(0, Math.min(100, Math.round(100 - w.used)));
-            const cls = rem <= 15 ? "danger" : rem <= 35 ? "warn" : "";
-            return `<div style="display:grid;gap:4px">
-              <div class="limit-window-text">
-                <span class="home-list-sub">${w.minutes ? `${fmtNum(w.minutes)} 分钟窗口` : "Codex 额度"}</span>
-                <span class="home-list-value">${expired ? "已重置" : `${rem}% 剩余`}</span>
-              </div>
-              <div class="limit-meter"><div class="limit-meter-fill ${cls}" style="width:${rem}%"></div></div>
-            </div>`;
-        }).join("")
-        : `<div class="home-list-sub">暂无本机 Codex 额度采样</div>`;
-
     const c = mem.counts || { daily: 0, weekly: 0, monthly: 0 };
     const cog = mem.cognitive || { activeItems: 0, entities: 0, activeEdges: 0, reflectionsCount: 0 };
     const memSkill = state.memorySkill || { installedCount: 0, totalCount: 6 };
+    const projects = state.projects || [];
+    const remoteProjects = state.remoteProjects || [];
+    const syncMeta = net.syncMeta || {};
     const upd = state.updater;
     const updateBannerHtml = upd && (upd.phase === "available" || upd.phase === "downloading" || upd.phase === "ready") ? `
       <div class="update-banner">
@@ -488,71 +516,98 @@ function renderHome() {
       </div>
     ` : "";
 
+    const roleDesc = net.mode === "center"
+        ? `中心点 · 端口 ${net.port} · ${(net.peers || []).filter(p => p.status === "connected").length} 台已接入`
+        : net.mode === "endpoint"
+            ? `接入点 · ${net.endpoint?.name || net.endpoint?.address || "中心"} (${net.online ? "在线" : "离线"})`
+            : "单机模式 · 点击设为中心点或作为接入点加入";
+
+    const projectRows = [
+        ...remoteProjects.slice(0, 2).map(rp => `
+          <div class="home-list-row" data-jump-view="projects">
+            <span class="home-dot" style="background:var(--orange)"></span>
+            <div class="home-list-main">
+              <span class="home-list-name">${escapeHtml(rp.name)} <small style="color:var(--orange)">(远端共享)</small></span>
+              <span class="home-list-sub">来自 ${escapeHtml(rp.originDevice || "中心")} · 待绑定本机目录</span>
+            </div>
+            <button type="button" class="glass-btn sm primary" data-bind-remote-project="${escapeHtml(rp.syncId)}">绑定</button>
+          </div>
+        `),
+        ...projects.slice(0, 3).map(p => `
+          <div class="home-list-row" data-project-detail="${escapeHtml(p.directory)}">
+            <span class="home-dot" style="background:var(--accent)"></span>
+            <div class="home-list-main">
+              <span class="home-list-name">${escapeHtml(p.name)}</span>
+              <span class="home-list-sub">${escapeHtml(p.directory)}</span>
+            </div>
+            <button type="button" class="glass-btn sm" data-action="open-project" data-id="${escapeHtml(p.id)}">打开</button>
+          </div>
+        `),
+    ].join("") || `<div class="home-list-sub" style="padding:2px 6px">暂未绑定同步项目，点击右侧「+ 添加」登记工作区并跨设备共享。</div>`;
+
     homePanel.innerHTML = updateBannerHtml + `
       <div class="home-module">
         <div class="home-module-head" data-jump-view="devices">
-          <span class="home-module-label">同步与本机 SKILLS</span>
-          <span class="home-module-meta">${escapeHtml(st.label)} ›</span>
+          <span class="home-module-label">中心点与接入点 · TAILSCALE</span>
+          <span class="home-module-meta">${ts.online ? "内网穿透在线" : escapeHtml(st.label)} ›</span>
         </div>
         <div class="home-list-row" data-jump-view="devices">
-          <span class="home-dot" style="background:${syncDotColor}"></span>
+          <span class="home-dot" style="background:${net.online || ts.online ? "var(--success)" : "var(--orange)"}"></span>
           <div class="home-list-main">
-            <span class="home-list-name">${ROLES[net.mode]} · 本机 ${sk.uniqueSkills ?? 0} 项技能</span>
-            <span class="home-list-sub">${sk.conflicts > 0 ? `发现 ${sk.conflicts} 项版本冲突，点击进入一键解决` : sk.missingLinks > 0 ? `${sk.missingLinks} 项跨工具技能待同步对齐` : "本机多工具技能已对齐"}</span>
+            <span class="home-list-name">${escapeHtml(roleDesc)}</span>
+            <span class="home-list-sub">${ts.online ? `Tailscale ${escapeHtml(ts.self?.ip || "")} · 发现 ${(ts.discoveredCenters || []).length} 台中心` : "支持 Tailscale 内网穿透自动发现与加密配对"}</span>
           </div>
-          <button type="button" class="glass-btn sm" data-action="sync-local-skills">同步技能</button>
+          <button type="button" class="glass-btn sm" data-action="tailscale-scan">扫描</button>
         </div>
       </div>
 
       <div class="home-module">
         <div class="home-module-head" data-jump-view="memory">
-          <span class="home-module-label">认知记忆与知识图谱</span>
+          <span class="home-module-label">记忆同步与跨 AGENT 召回</span>
           <span class="home-module-meta">Agent 技能 ${memSkill.installedCount}/${memSkill.totalCount} ›</span>
         </div>
         <div class="home-list-row" data-jump-view="memory">
           <span class="home-dot" style="background:var(--purple)"></span>
           <div class="home-list-main">
             <span class="home-list-name">记忆 ${cog.activeItems ?? 0} · 图谱 ${cog.entities ?? 0} 实体/${cog.activeEdges ?? 0} 边</span>
-            <span class="home-list-sub">每日 ${c.daily} · 每周 ${c.weekly} · 每月 ${c.monthly} · 压缩率 ${mem.compressionRatio ?? 0}%</span>
+            <span class="home-list-sub">${syncMeta.lastMemorySync ? `最近跨端同步 ${fmtTime(syncMeta.lastMemorySync.time)}` : `每日 ${c.daily} · 每周 ${c.weekly} · 每月 ${c.monthly} · 压缩率 ${mem.compressionRatio ?? 0}%`}</span>
           </div>
-          <button type="button" class="glass-btn sm" data-action="compress-memory">压缩</button>
+          <button type="button" class="glass-btn sm primary" data-action="sync-memory-now">同步</button>
         </div>
       </div>
 
       <div class="home-module">
-        <div class="home-module-head" data-jump-view="usage">
-          <span class="home-module-label">工具用量</span>
-          <span class="home-module-meta">${PERIODS[period]} ›</span>
+        <div class="home-module-head" data-jump-view="projects">
+          <span class="home-module-label">项目同步与工作区</span>
+          <span class="home-module-meta">本机 ${projects.length} · 远端 ${remoteProjects.length} ›</span>
         </div>
-        ${toolRows.map(t => `
-          <div class="home-list-row" data-jump-tool="${t.key}">
-            <span class="home-dot" style="background:${sourceColor(t.key)}"></span>
-            <div class="home-list-main">
-              <span class="home-list-name">${t.label}</span>
-              <span class="home-list-sub">${fmtNum(t.sessions)} 次会话</span>
-            </div>
-            <span class="home-list-value">${fmtNum(t.tokens)}</span>
-          </div>
-        `).join("")}
+        ${projectRows}
       </div>
 
       <div class="home-module">
-        <div class="home-module-head" data-jump-view="limits">
-          <span class="home-module-label">订阅额度</span>
-          <span class="home-module-meta">Codex ›</span>
+        <div class="home-module-head" data-jump-view="devices">
+          <span class="home-module-label">本机 SKILLS 技能同步</span>
+          <span class="home-module-meta">${sk.conflicts > 0 ? `冲突 ${sk.conflicts}` : `${sk.uniqueSkills ?? 0} 项`} ›</span>
         </div>
-        ${limitPreviewHtml}
+        <div class="home-list-row" data-jump-view="devices">
+          <span class="home-dot" style="background:${syncDotColor}"></span>
+          <div class="home-list-main">
+            <span class="home-list-name">6 大 AI 工具技能一致化</span>
+            <span class="home-list-sub">${sk.conflicts > 0 ? `发现 ${sk.conflicts} 项冲突，点此一键解决` : sk.missingLinks > 0 ? `${sk.missingLinks} 项待同步对齐` : "全部工具目录已对齐"}</span>
+          </div>
+          <button type="button" class="glass-btn sm" data-action="sync-local-skills">对齐</button>
+        </div>
       </div>
 
       <div class="home-module">
         <div class="quick-actions-row">
-          <button type="button" class="quick-chip" data-action="open-dashboard">
-            <div><strong>大屏看板</strong><small>完整图表与分布</small></div>
+          <button type="button" class="quick-chip" data-action="open-memory-dir">
+            <div><strong>记忆目录</strong><small>统一归档与图谱</small></div>
             <span>↗</span>
           </button>
-          <button type="button" class="quick-chip" data-action="open-memory-dir">
-            <div><strong>归档目录</strong><small>日/周/月压缩文件</small></div>
-            <span>↗</span>
+          <button type="button" class="quick-chip" data-jump-view="usage">
+            <div><strong>用量统计</strong><small>辅助工具监控</small></div>
+            <span>›</span>
           </button>
         </div>
       </div>
@@ -708,7 +763,7 @@ function renderMemoryArchiveView() {
         </div>
         <div class="memory-path-line">${escapeHtml(mem.archiveDir || state.memoryArchiveDir || "")}</div>
         <div class="row-actions-inline">
-          <button type="button" class="glass-btn sm primary" data-action="compress-memory">${mem.phase === "compressing" ? "压缩中…" : "⚡ 压缩归档"}</button>
+          <button type="button" class="glass-btn sm primary" data-action="sync-memory-now">${mem.phase === "compressing" ? "同步中…" : "⟳ 同步并压缩"}</button>
           <button type="button" class="glass-btn sm" data-action="install-memory-skill">✦ 部署 Agent 技能</button>
           <button type="button" class="glass-btn sm" data-action="toggle-retain-form">+ 写入记忆</button>
           <button type="button" class="glass-btn sm" data-action="reflect-memory">反思</button>
@@ -837,11 +892,30 @@ function renderProjects() {
     }
 
     const q = projectQuery.trim().toLowerCase();
+    const remoteProjects = (state.remoteProjects || []).filter(rp => !q || rp.name.toLowerCase().includes(q));
     const managed = state.projects.filter(p => !q || p.name.toLowerCase().includes(q) || p.directory.toLowerCase().includes(q));
     const managedSet = new Set(state.projects.map(p => p.directory));
     const discovered = (state.usage?.week?.projects || []).filter(p =>
         !managedSet.has(p.directory) && (!q || p.name.toLowerCase().includes(q) || p.directory.toLowerCase().includes(q))
     );
+
+    const remoteHtml = remoteProjects.length ? `
+      <div class="conflict-panel" style="border-color:rgba(var(--accent-rgb),0.34);background:rgba(var(--accent-rgb),0.06)">
+        <div class="row-head">
+          <span class="row-title" style="color:var(--accent)">来自中心/其他节点的共享项目 (${remoteProjects.length})</span>
+          <button type="button" class="glass-btn sm" data-action="sync-projects-now">⟳ 同步</button>
+        </div>
+        ${remoteProjects.map(rp => `
+          <div class="ts-peer-card">
+            <div style="min-width:0">
+              <div class="row-title">${escapeHtml(rp.name)}</div>
+              <div class="row-subtitle">来源设备：${escapeHtml(rp.originDevice || "中心节点")} · ID ${escapeHtml(rp.syncId)}</div>
+            </div>
+            <button type="button" class="glass-btn sm primary" data-bind-remote-project="${escapeHtml(rp.syncId)}">绑定本机目录</button>
+          </div>
+        `).join("")}
+      </div>
+    ` : "";
 
     const managedHtml = managed.length ? managed.map(p => {
         const id = escapeHtml(p.id);
@@ -891,7 +965,7 @@ function renderProjects() {
         </div>
       `).join("")}` : "";
 
-    mainListPanel.innerHTML = managedHtml + discoveredHtml;
+    mainListPanel.innerHTML = remoteHtml + managedHtml + discoveredHtml;
 }
 
 function renderSessions() {
@@ -1231,7 +1305,7 @@ function render() {
         tab.classList.toggle("active", Number(tab.dataset.period) === period);
     }
 
-    for (const el of [onboardingPanel, settingsPanel, totalPanel, viewBackRow, searchHost, homePanel, mainListPanel, limitsPanel, trendsPanel, footer]) {
+    for (const el of [onboardingPanel, settingsPanel, hubPanel, totalPanel, viewBackRow, searchHost, homePanel, mainListPanel, limitsPanel, trendsPanel, footer]) {
         el.classList.add("hidden");
     }
 
@@ -1250,13 +1324,21 @@ function render() {
         return;
     }
 
-    const report = selectedReport();
-    const totalSessions = report ? Object.values(report.totals || {}).reduce((s, x) => s + (x.sessions || 0), 0) : 0;
-    totalPanel.classList.remove("hidden");
-    totalLabel.textContent = `${PERIODS[period]} TOTAL TOKENS`;
-    usageUpdated.textContent = usageNotice();
-    animateTotalNumber(report?.total ?? 0);
-    totalSubline.textContent = `${fmtNum(totalSessions)} 会话 · ${fmtNum(report?.projects?.length || 0)} 工作区 · ${ROLES[state.pairing.mode]}`;
+    const isUsageView = view === "usage" || view === "limits" || view === "trends" || view === "sessions";
+    periodTabs.classList.toggle("hidden", !isUsageView);
+
+    if (isUsageView) {
+        const report = selectedReport();
+        const totalSessions = report ? Object.values(report.totals || {}).reduce((s, x) => s + (x.sessions || 0), 0) : 0;
+        totalPanel.classList.remove("hidden");
+        totalLabel.textContent = `${PERIODS[period]} 辅助用量统计`;
+        usageUpdated.textContent = usageNotice();
+        animateTotalNumber(report?.total ?? 0);
+        totalSubline.textContent = `${fmtNum(totalSessions)} 会话 · ${fmtNum(report?.projects?.length || 0)} 工作区 · ${ROLES[state.pairing.mode]}`;
+    } else {
+        hubPanel.classList.remove("hidden");
+        renderSyncHubHeader();
+    }
 
     const canSearch = view === "projects" || view === "sessions";
     searchToggleBtn.classList.toggle("hidden", !canSearch || Boolean(projectDetail));
@@ -1268,10 +1350,10 @@ function render() {
             backButtonLabel.textContent = "返回项目列表";
             viewHeaderActions.innerHTML = "";
         } else if (view === "projects") {
-            backButtonLabel.textContent = "返回首页";
-            viewHeaderActions.innerHTML = `<button type="button" class="glass-btn sm primary" data-action="add-project">+ 添加项目</button>`;
+            backButtonLabel.textContent = "返回总览";
+            viewHeaderActions.innerHTML = `<div class="row-actions-inline" style="margin:0"><button type="button" class="glass-btn sm" data-action="sync-projects-now">⟳ 同步项目</button><button type="button" class="glass-btn sm primary" data-action="add-project">+ 添加项目</button></div>`;
         } else {
-            backButtonLabel.textContent = "返回首页";
+            backButtonLabel.textContent = "返回总览";
             viewHeaderActions.innerHTML = "";
         }
     }
@@ -1490,6 +1572,13 @@ document.addEventListener("click", (event) => {
         return;
     }
 
+    const bindRemoteBtn = target.closest("[data-bind-remote-project]");
+    if (bindRemoteBtn && state) {
+        const syncId = bindRemoteBtn.dataset.bindRemoteProject;
+        void runAction(bindRemoteBtn, () => window.qlex.bindRemoteProject(syncId), { success: "已将跨端共享项目绑定到本机目录" });
+        return;
+    }
+
     const resolveBtn = target.closest("[data-resolve-skill]");
     if (resolveBtn && state) {
         const [name, sourceNs] = resolveBtn.dataset.resolveSkill.split(":");
@@ -1527,6 +1616,18 @@ document.addEventListener("click", (event) => {
             void window.qlex.openSkillDir(btn.dataset.ns || "agents");
         } else if (action === "compress-memory") {
             void runAction(btn, () => window.qlex.compressMemory(), { success: "记忆已压缩归档并更新知识图谱" });
+        } else if (action === "sync-memory-now") {
+            void runAction(btn, async () => {
+                const res = await window.qlex.syncMemoryNow();
+                notify(res.remote ? `记忆已与中心双向同步（+${res.remote.pulledAdded || 0} 拉取 / +${res.remote.pushedAdded || 0} 推送）` : "本机记忆已压缩并更新知识图谱");
+                return res.state;
+            });
+        } else if (action === "sync-projects-now") {
+            void runAction(btn, async () => {
+                const res = await window.qlex.syncProjectsNow();
+                notify(res.remote ? `跨端项目已同步（共 ${res.remote.totalShared || 0} 个共享项目）` : "当前为单机/中心模式，已刷新本机项目列表");
+                return res.state;
+            });
         } else if (action === "reflect-memory") {
             void runAction(btn, async () => {
                 const res = await window.qlex.memoryReflect({});

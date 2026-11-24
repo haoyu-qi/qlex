@@ -12,7 +12,7 @@ const { applyVibrancyMask } = require("../vendor/token-monitor/macVibrancyMask")
 const { createMacLiquidGlass } = require("../vendor/token-monitor/macLiquidGlass");
 const { createCardWindowVisibility } = require("../vendor/token-monitor/cardWindow");
 
-const items = ["sync", "usage", "limits", "memory"];
+const items = ["sync", "memory", "projects", "usage"];
 const metrics = {
     ...EDGE_DOCK_METRICS,
     railWidth: 50,

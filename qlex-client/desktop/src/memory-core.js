@@ -2000,6 +2000,123 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         };
     }
 
+    function exportSyncBundle({ deviceId = "", deviceName = "" } = {}) {
+        const p = pathsOf();
+        const itemStore = loadItemStore(p);
+        const graphStore = loadGraphStore(p);
+        return {
+            version: 2,
+            engineVersion: ENGINE_VERSION,
+            deviceId,
+            deviceName,
+            exportedAt: Date.now(),
+            items: itemStore.items.slice(-500),
+            entities: graphStore.entities.slice(-400),
+            edges: graphStore.edges.slice(-800),
+        };
+    }
+
+    function mergeSyncBundle(bundle) {
+        if (!bundle || typeof bundle !== "object" || !Array.isArray(bundle.items)) {
+            return { itemsAdded: 0, itemsUpdated: 0, entitiesAdded: 0, edgesAdded: 0, edgesUpdated: 0 };
+        }
+        const p = pathsOf();
+        ensureDirs(p);
+        const itemStore = loadItemStore(p);
+        const graphStore = loadGraphStore(p);
+
+        const itemById = new Map(itemStore.items.map(it => [it.id, it]));
+        let itemsAdded = 0;
+        let itemsUpdated = 0;
+
+        for (const inc of bundle.items.slice(0, 600)) {
+            if (!inc || typeof inc.id !== "string" || typeof inc.l0 !== "string") continue;
+            const clean = {
+                ...inc,
+                title: sanitizeSnippet(inc.title || inc.l0, 90),
+                l0: sanitizeSnippet(inc.l0, 160),
+                l1: scrubSecrets(String(inc.l1 || inc.l0)).slice(0, 1200),
+                l2: scrubSecrets(String(inc.l2 || inc.l1 || inc.l0)).slice(0, 12000),
+            };
+            const cur = itemById.get(clean.id);
+            if (!cur) {
+                itemStore.items.push(clean);
+                itemById.set(clean.id, clean);
+                itemsAdded++;
+            } else {
+                const incVer = Number(clean.version || 1);
+                const curVer = Number(cur.version || 1);
+                const incUpd = Number(clean.updatedAt || 0);
+                const curUpd = Number(cur.updatedAt || 0);
+                if (incVer > curVer || (incVer === curVer && incUpd > curUpd)) {
+                    Object.assign(cur, clean, {
+                        evidence: [...new Set([...(cur.evidence || []), ...(clean.evidence || [])])].slice(0, 20),
+                        tags: [...new Set([...(cur.tags || []), ...(clean.tags || [])])].slice(0, 12),
+                    });
+                    itemsUpdated++;
+                } else if (clean.status === "superseded" && cur.status === "active" && clean.validTo) {
+                    cur.status = "superseded";
+                    cur.validTo = clean.validTo;
+                    cur.supersededBy = clean.supersededBy || cur.supersededBy;
+                    itemsUpdated++;
+                }
+            }
+        }
+
+        const entById = new Map(graphStore.entities.map(e => [e.id, e]));
+        let entitiesAdded = 0;
+        for (const ent of Array.isArray(bundle.entities) ? bundle.entities.slice(0, 500) : []) {
+            if (!ent || typeof ent.id !== "string" || typeof ent.name !== "string") continue;
+            const cur = entById.get(ent.id);
+            if (!cur) {
+                graphStore.entities.push({ ...ent, name: sanitizeSnippet(ent.name, 64) });
+                entById.set(ent.id, graphStore.entities.at(-1));
+                entitiesAdded++;
+            } else {
+                cur.mentions = Math.max(cur.mentions || 1, ent.mentions || 1);
+                cur.lastSeenAt = Math.max(cur.lastSeenAt || 0, ent.lastSeenAt || 0);
+            }
+        }
+
+        const edgeById = new Map(graphStore.edges.map(e => [e.id, e]));
+        const edgeByKey = new Map(graphStore.edges.map(e => [`${e.subjectId}|${e.predicate}|${e.objectId}|${e.validFrom || 0}`, e]));
+        let edgesAdded = 0;
+        let edgesUpdated = 0;
+        for (const edge of Array.isArray(bundle.edges) ? bundle.edges.slice(0, 1000) : []) {
+            if (!edge || typeof edge.subjectId !== "string" || typeof edge.predicate !== "string" || typeof edge.objectId !== "string") continue;
+            const k = `${edge.subjectId}|${edge.predicate}|${edge.objectId}|${edge.validFrom || 0}`;
+            const cur = (edge.id && edgeById.get(edge.id)) || edgeByKey.get(k);
+            if (!cur) {
+                graphStore.edges.push(edge);
+                if (edge.id) edgeById.set(edge.id, edge);
+                edgeByKey.set(k, edge);
+                edgesAdded++;
+            } else {
+                let changed = false;
+                if (edge.validTo && !cur.validTo) {
+                    cur.validTo = edge.validTo;
+                    cur.supersededBy = edge.supersededBy || cur.supersededBy;
+                    changed = true;
+                }
+                const mergedEv = [...new Set([...(cur.evidence || []), ...(edge.evidence || [])])].slice(0, 20);
+                if (mergedEv.length !== (cur.evidence || []).length) {
+                    cur.evidence = mergedEv;
+                    changed = true;
+                }
+                if (changed) edgesUpdated++;
+            }
+        }
+
+        if (itemsAdded || itemsUpdated || entitiesAdded || edgesAdded || edgesUpdated) {
+            saveItemStore(itemStore, p);
+            saveGraphStore(graphStore, p);
+            materializeViews(itemStore, graphStore, p);
+            syncIndexCognitiveStats(itemStore, graphStore, p);
+        }
+
+        return { itemsAdded, itemsUpdated, entitiesAdded, edgesAdded, edgesUpdated };
+    }
+
     return {
         pathsOf,
         retain,
@@ -2010,6 +2127,8 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         browse,
         compressSync,
         getStatus,
+        exportSyncBundle,
+        mergeSyncBundle,
     };
 }
 

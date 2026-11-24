@@ -18,26 +18,20 @@
   </svg>
 
   <nav id="rail" aria-label="QLEX 侧边吸附" hidden>
-    <button data-item="sync" aria-label="同步与本机技能" title="同步状态与本机 Skills">
+    <button data-item="sync" aria-label="中心点与接入点" title="中心点 / 接入点与双向同步">
       <span class="dock-icon-badge-wrap">
         <svg id="syncRailSvg" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a7.5 7.5 0 0 0-12-1L4 10m0 0V5m0 5h5m-4 6a7.5 7.5 0 0 0 12 1l3-3m0 0v5m0-5h-5"/></svg>
         <i id="syncRailDot" class="dock-status-dot"></i>
       </span>
     </button>
-    <button data-item="usage" aria-label="今日用量" title="今日用量">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 18v-5m7 5V6m7 12V9"/></svg>
-    </button>
-    <button data-item="limits" aria-label="订阅额度" title="Codex 订阅额度">
-      <span class="dock-ring-wrap">
-        <svg class="dock-ring-svg" viewBox="0 0 36 36" aria-hidden="true">
-          <circle class="dock-ring-track" cx="18" cy="18" r="13" />
-          <circle id="quotaRingFill" class="dock-ring-fill" cx="18" cy="18" r="13" stroke-dasharray="81.68" stroke-dashoffset="0" />
-        </svg>
-        <span id="quotaRingText" class="dock-ring-text">—</span>
-      </span>
-    </button>
-    <button data-item="memory" aria-label="记忆压缩归档" title="每日/每周/每月记忆归档">
+    <button data-item="memory" aria-label="记忆同步" title="记忆同步、知识图谱与 Agent 技能">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5 12 4l8 3.5-8 3.5-8-3.5Zm0 4.5 8 3.5 8-3.5M4 16.5 12 20l8-3.5"/></svg>
+    </button>
+    <button data-item="projects" aria-label="项目同步" title="项目工作区与跨端共享项目">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4.2l1.8 2H19a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 19 18H5a1.5 1.5 0 0 1-1.5-1.5v-9Z"/></svg>
+    </button>
+    <button data-item="usage" aria-label="用量统计（辅助）" title="本地工具用量（辅助）">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 18v-5m7 5V6m7 12V9"/></svg>
     </button>
   </nav>
 

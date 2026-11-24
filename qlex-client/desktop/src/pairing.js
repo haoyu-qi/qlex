@@ -129,11 +129,15 @@ function reply(response, status, body) {
     response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     response.end(JSON.stringify(body));
 }
-function callCenter(endpoint, route, id, skill) {
+function callCenter(endpoint, route, id, payload) {
     const { invite, credential } = endpoint;
     const pin = new node_crypto_1.X509Certificate(invite.cert).fingerprint256;
     const body = JSON.stringify({
-        id, credential, ...(route === "join" ? { token: invite.token, name: deviceName() } : {}), ...(skill ? { skill } : {}),
+        id, credential,
+        ...(route === "join" ? { token: invite.token, name: deviceName() } : {}),
+        ...(route === "skills" && payload ? { skill: payload } : {}),
+        ...(route === "memory" && payload ? { bundle: payload } : {}),
+        ...(route === "projects" && payload ? { projects: payload } : {}),
     });
     return new Promise((resolve, reject) => {
         const req = (0, node_https_1.request)({
@@ -147,11 +151,19 @@ function callCenter(endpoint, route, id, skill) {
                 if (res.statusCode === 403)
                     resolve(undefined);
                 else
-                    reject(new Error("中心暂时无法处理配对，请检查中心设置。"));
+                    reject(new Error("中心暂时无法处理同步请求，请检查中心设置。"));
                 return;
             }
             if (route === "skills") {
                 void readBody(res, 768 * 1024).then(resolve, reject);
+                return;
+            }
+            if (route === "memory") {
+                void readBody(res, 4 * 1024 * 1024).then(resolve, reject);
+                return;
+            }
+            if (route === "projects") {
+                void readBody(res, 512 * 1024).then(resolve, reject);
                 return;
             }
             void readBody(res).then((data) => {
@@ -161,7 +173,7 @@ function callCenter(endpoint, route, id, skill) {
                 resolve({ name: data.name, status: data.status });
             }).catch(() => reject(new Error("中心返回的配对状态无效。")));
         });
-        const timer = setTimeout(() => req.destroy(new Error("QLEX center timeout")), 4500);
+        const timer = setTimeout(() => req.destroy(new Error("QLEX center timeout")), route === "memory" ? 12_000 : 4500);
         req.once("error", () => reject(new Error("无法连接或验证中心。请检查网络、防火墙和配对邀请。")));
         req.once("close", () => clearTimeout(timer));
         req.end(body);
@@ -179,11 +191,14 @@ class DevicePairing {
     refreshing;
     starting = false;
     startError;
-    constructor(store, listenPort = port, skillSync, getExtraHosts = () => []) {
+    lastMemorySync = null;
+    lastProjectSync = null;
+    constructor(store, listenPort = port, skillSync, getExtraHosts = () => [], memoryArchive = null) {
         this.store = store;
         this.listenPort = listenPort;
         this.skillSync = skillSync;
         this.getExtraHosts = getExtraHosts;
+        this.memoryArchive = memoryArchive;
     }
     get config() {
         return this.store.snapshot().pairing ?? { mode: "local" };
@@ -211,6 +226,10 @@ class DevicePairing {
                 name: config.endpoint.name, status: config.endpoint.status,
                 address: `${config.endpoint.invite.host}:${config.endpoint.invite.port}`,
                 check: digest(config.endpoint.credential).slice(0, 6).toUpperCase(),
+            },
+            syncMeta: {
+                lastMemorySync: this.lastMemorySync,
+                lastProjectSync: this.lastProjectSync,
             },
         };
     }
@@ -349,6 +368,42 @@ class DevicePairing {
         if (!local.skillSyncEnabled || mode !== "endpoint" || endpoint?.status !== "connected") return;
         return callCenter(endpoint, "skills", local.deviceId, selection);
     }
+    async syncMemory() {
+        const { mode, endpoint } = this.config;
+        const local = this.store.snapshot();
+        if (mode !== "endpoint" || endpoint?.status !== "connected" || !this.memoryArchive) return null;
+        const localBundle = this.memoryArchive.exportSyncBundle({ deviceId: local.deviceId, deviceName: deviceName() });
+        const response = await callCenter(endpoint, "memory", local.deviceId, localBundle);
+        if (!response?.bundle) return null;
+        const mergedLocal = this.memoryArchive.mergeSyncBundle(response.bundle);
+        this.lastMemorySync = {
+            time: Date.now(),
+            peer: endpoint.name || endpoint.invite.host,
+            pulledAdded: mergedLocal.itemsAdded,
+            pulledUpdated: mergedLocal.itemsUpdated,
+            pushedAdded: response.merged?.itemsAdded || 0,
+            pushedUpdated: response.merged?.itemsUpdated || 0,
+        };
+        return this.lastMemorySync;
+    }
+    async syncProjects() {
+        const { mode, endpoint } = this.config;
+        const local = this.store.snapshot();
+        if (mode !== "endpoint" || endpoint?.status !== "connected") return null;
+        const localProjects = this.store.exportSharedProjects(deviceName());
+        const response = await callCenter(endpoint, "projects", local.deviceId, localProjects);
+        if (!Array.isArray(response?.projects)) return null;
+        const merged = this.store.mergeSharedProjects(response.projects);
+        this.lastProjectSync = {
+            time: Date.now(),
+            peer: endpoint.name || endpoint.invite.host,
+            added: merged.added,
+            updated: merged.updated,
+            remotePending: merged.remotePending,
+            totalShared: merged.totalShared,
+        };
+        return this.lastProjectSync;
+    }
     decide(id, approve) {
         const config = this.config;
         const center = config.center;
@@ -385,11 +440,14 @@ class DevicePairing {
             const join = req.url === "/qlex/v1/join";
             const leave = req.url === "/qlex/v1/leave";
             const skills = req.url === "/qlex/v1/skills";
-            if (req.method !== "POST" || (!join && !leave && !skills && req.url !== "/qlex/v1/status")) {
+            const memory = req.url === "/qlex/v1/memory";
+            const projects = req.url === "/qlex/v1/projects";
+            if (req.method !== "POST" || (!join && !leave && !skills && !memory && !projects && req.url !== "/qlex/v1/status")) {
                 reply(res, 404, {});
                 return;
             }
-            const { id, credential, token, name, skill } = await readBody(req);
+            const maxBody = memory ? 4 * 1024 * 1024 : projects ? 512 * 1024 : 4096;
+            const { id, credential, token, name, skill, bundle, projects: incomingProjects } = await readBody(req, maxBody);
             if (typeof id !== "string" || !idPattern.test(id) || typeof credential !== "string" || !secretPattern.test(credential)) {
                 reply(res, 400, {});
                 return;
@@ -402,6 +460,44 @@ class DevicePairing {
             }
             const credentialHash = digest(credential);
             const existing = center.peers.find((entry) => entry.id === id);
+            if (memory) {
+                if (existing?.status !== "connected" || existing.credentialHash !== credentialHash || !this.memoryArchive) {
+                    reply(res, 403, {});
+                    return;
+                }
+                this.peerSeenAt.set(id, Date.now());
+                const merged = this.memoryArchive.mergeSyncBundle(bundle);
+                const centerBundle = this.memoryArchive.exportSyncBundle({ deviceId: this.store.snapshot().deviceId, deviceName: deviceName() });
+                this.lastMemorySync = {
+                    time: Date.now(),
+                    peer: existing.name,
+                    pushedAdded: merged.itemsAdded,
+                    pushedUpdated: merged.itemsUpdated,
+                    pulledAdded: 0,
+                    pulledUpdated: 0,
+                };
+                reply(res, 200, { ok: true, merged, bundle: centerBundle });
+                return;
+            }
+            if (projects) {
+                if (existing?.status !== "connected" || existing.credentialHash !== credentialHash) {
+                    reply(res, 403, {});
+                    return;
+                }
+                this.peerSeenAt.set(id, Date.now());
+                const merged = this.store.mergeSharedProjects(incomingProjects || []);
+                const sharedList = this.store.exportSharedProjects(deviceName());
+                this.lastProjectSync = {
+                    time: Date.now(),
+                    peer: existing.name,
+                    added: merged.added,
+                    updated: merged.updated,
+                    remotePending: merged.remotePending,
+                    totalShared: sharedList.length,
+                };
+                reply(res, 200, { ok: true, merged, projects: sharedList });
+                return;
+            }
             if (skills) {
                 if (existing?.status !== "connected" || existing.credentialHash !== credentialHash ||
                     !this.store.snapshot().skillSyncEnabled || !this.skillSync) {
