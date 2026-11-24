@@ -4,8 +4,40 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORKSPACE_ROOT="$(cd "$ROOT/.." && pwd)"
 VERSION="$(node -p "require('$ROOT/package.json').version")"
-TEMPLATE_APP="${QLEX_TEMPLATE_APP:-$HOME/Downloads/QLEX.app}"
-KOFFI_SRC="${QLEX_KOFFI_SRC:-/Applications/Token Monitor.app/Contents/Resources/app.asar.unpacked/node_modules/koffi}"
+TMP_WORK="$(mktemp -d)"
+trap 'rm -rf "$TMP_WORK"' EXIT
+
+TEMPLATE_APP="${QLEX_TEMPLATE_APP:-}"
+if [[ -z "$TEMPLATE_APP" ]]; then
+  for cand in "/Applications/QLEX.app" "$HOME/Downloads/QLEX.app" "$ROOT/dist/QLEX.app"; do
+    if [[ -d "$cand" ]]; then
+      TEMPLATE_APP="$cand"
+      break
+    fi
+  done
+fi
+if [[ -z "$TEMPLATE_APP" ]]; then
+  LATEST_ZIP="$(ls -t "$WORKSPACE_ROOT/installers"/QLEX-*-macOS-arm64.zip 2>/dev/null | head -n 1 || true)"
+  if [[ -n "$LATEST_ZIP" && -f "$LATEST_ZIP" ]]; then
+    ditto -x -k "$LATEST_ZIP" "$TMP_WORK/unzipped"
+    if [[ -d "$TMP_WORK/unzipped/QLEX.app" ]]; then
+      TEMPLATE_APP="$TMP_WORK/unzipped/QLEX.app"
+    fi
+  fi
+fi
+KOFFI_SRC="${QLEX_KOFFI_SRC:-}"
+if [[ -z "$KOFFI_SRC" ]]; then
+  for cand in \
+    "/Applications/Token Monitor.app/Contents/Resources/app.asar.unpacked/node_modules/koffi" \
+    "/Applications/QLEX.app/Contents/Resources/app.asar.unpacked/node_modules/koffi" \
+    "$ROOT/dist/QLEX.app/Contents/Resources/app.asar.unpacked/node_modules/koffi" \
+    "${TEMPLATE_APP}/Contents/Resources/app.asar.unpacked/node_modules/koffi"; do
+    if [[ -n "$cand" && -d "$cand" ]]; then
+      KOFFI_SRC="$cand"
+      break
+    fi
+  done
+fi
 NODE_FORGE_SRC="${QLEX_NODE_FORGE_SRC:-}"
 
 OUT_DIR="$ROOT/dist"
@@ -15,13 +47,22 @@ INSTALLERS_DIR="$WORKSPACE_ROOT/installers"
 ZIP_OUT="$INSTALLERS_DIR/QLEX-${VERSION}-macOS-arm64.zip"
 PKG_OUT="$INSTALLERS_DIR/QLEX-${VERSION}-macOS-arm64.pkg"
 
-if [[ ! -d "$TEMPLATE_APP" ]]; then
-  echo "Error: template QLEX.app not found at $TEMPLATE_APP" >&2
+if [[ -z "$TEMPLATE_APP" || ! -d "$TEMPLATE_APP" ]]; then
+  echo "Error: template QLEX.app not found (checked /Applications/QLEX.app, ~/Downloads/QLEX.app, dist/QLEX.app, installers/*.zip)" >&2
   exit 1
 fi
-if [[ ! -d "$KOFFI_SRC" ]]; then
-  echo "Error: koffi prebuilt addon not found at $KOFFI_SRC" >&2
+if [[ -z "$KOFFI_SRC" || ! -d "$KOFFI_SRC" ]]; then
+  echo "Error: koffi prebuilt addon not found" >&2
   exit 1
+fi
+
+if [[ "$TEMPLATE_APP" == "$APP_OUT" ]]; then
+  ditto "$APP_OUT" "$TMP_WORK/template-QLEX.app"
+  TEMPLATE_APP="$TMP_WORK/template-QLEX.app"
+fi
+if [[ "$KOFFI_SRC" == "$APP_OUT"* ]]; then
+  cp -R "$KOFFI_SRC" "$TMP_WORK/koffi"
+  KOFFI_SRC="$TMP_WORK/koffi"
 fi
 
 rm -rf "$STAGE_DIR" "$APP_OUT"
@@ -43,10 +84,8 @@ cp -R "$ROOT/docs" "$STAGE_DIR/docs"
 if [[ -n "$NODE_FORGE_SRC" && -d "$NODE_FORGE_SRC" ]]; then
   cp -R "$NODE_FORGE_SRC" "$STAGE_DIR/node_modules/node-forge"
 else
-  TMP_EXTRACT="$(mktemp -d)"
-  trap 'rm -rf "$TMP_EXTRACT"' EXIT
-  npx --yes @electron/asar extract "$TEMPLATE_APP/Contents/Resources/app.asar" "$TMP_EXTRACT/old-app"
-  cp -R "$TMP_EXTRACT/old-app/node_modules/node-forge" "$STAGE_DIR/node_modules/node-forge"
+  npx --yes @electron/asar extract "$TEMPLATE_APP/Contents/Resources/app.asar" "$TMP_WORK/old-app"
+  cp -R "$TMP_WORK/old-app/node_modules/node-forge" "$STAGE_DIR/node_modules/node-forge"
 fi
 
 # Copy koffi (arm64 native N-API addon for macOS NSGlassEffectView & NSVisualEffectView maskImage)

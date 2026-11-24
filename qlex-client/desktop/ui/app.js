@@ -473,7 +473,9 @@ function renderSyncHubHeader() {
     patchHtml(hubPanel, `
       <div class="hub-head-row">
         <div class="hub-role-headline">${escapeHtml(headline)}</div>
-        <button type="button" class="glass-btn sm" data-jump-view="devices">${net.mode === "local" ? "设为中心 / 加入" : "节点管理 ›"}</button>
+        ${view === "devices"
+            ? `<button type="button" class="glass-btn sm" data-jump-view="home">返回总览</button>`
+            : `<button type="button" class="glass-btn sm" data-jump-view="devices">${net.mode === "local" ? "设为中心 / 加入" : "节点管理 ›"}</button>`}
       </div>
       <div class="row-subtitle">${escapeHtml(subAddr)}</div>
       <div class="hub-kpi-grid">
@@ -1116,36 +1118,41 @@ function renderDevices() {
             invitationAddress = net.activeInvite?.host || entries[0]?.host || "";
         }
         const choices = entries.map(e =>
-            `<option value="${escapeHtml(e.host)}" ${e.host === invitationAddress ? "selected" : ""}>${escapeHtml(e.label)}:${net.port}</option>`
+            `<option value="${escapeHtml(e.host)}" ${e.host === invitationAddress ? "selected" : ""}>${escapeHtml(e.label)}</option>`
         ).join("");
         const inv = net.activeInvite;
         const remainMin = inv ? Math.max(1, Math.ceil((inv.expiresAt - Date.now()) / 60_000)) : 0;
+        const compactCode = inv?.code
+            ? (inv.code.length > 44 ? `${inv.code.slice(0, 26)}…${inv.code.slice(-14)}` : inv.code)
+            : "";
         const invitePreviewHtml = inv ? `
           <div class="invite-code-box">
-            <div class="row-head">
-              <span style="color:var(--text);font-weight:600">当前一次性邀请码 · #${escapeHtml(inv.shortToken)}</span>
-              <span class="row-cost">${escapeHtml(inv.host)}:${inv.port} · 剩 ${remainMin} 分钟</span>
+            <div class="invite-code-head">
+              <span class="invite-code-title">一次性邀请码 · #${escapeHtml(inv.shortToken)}</span>
+              <span class="invite-code-expiry">剩 ${remainMin} 分钟</span>
             </div>
-            <div class="invite-code-value">${escapeHtml(inv.code)}</div>
+            <div class="invite-code-addr" title="${escapeHtml(inv.host)}:${inv.port}">接入地址：${escapeHtml(inv.host)}:${inv.port}</div>
+            <div class="invite-code-value" title="完整邀请码已可一键复制">${escapeHtml(compactCode)}</div>
             <div class="row-actions-inline" style="margin:0">
               <button type="button" class="glass-btn sm primary" data-action="copy-invite">复制邀请码</button>
               <button type="button" class="glass-btn sm" data-action="invite">⟳ 刷新邀请码</button>
-            </div>
-          </div>
-        ` : "";
-        actionHtml = `
-          <div class="row-detail-drawer">
-            <div style="display:flex;gap:6px;align-items:center">
-              <select id="centerAddress" class="glass-select" style="flex:1;min-width:0" ${choices ? "" : "disabled"}>
-                ${choices || "<option>无可用网络地址</option>"}
-              </select>
-              <button type="button" class="glass-btn sm primary" data-action="invite" ${choices && net.online ? "" : "disabled"}>${inv ? "⟳ 刷新邀请" : "生成并复制"}</button>
-            </div>
-            ${invitePreviewHtml}
-            <div class="row-actions-inline">
-              ${!net.online ? `<button type="button" class="glass-btn sm primary" data-action="enable-center">重试启动</button>` : ""}
               <button type="button" class="glass-btn sm danger" data-action="use-local">停止中心</button>
             </div>
+          </div>
+        ` : `
+          <div class="row-actions-inline" style="margin:0">
+            <button type="button" class="glass-btn sm primary" data-action="invite" ${choices && net.online ? "" : "disabled"}>生成并复制邀请码</button>
+            ${!net.online ? `<button type="button" class="glass-btn sm primary" data-action="enable-center">重试启动</button>` : ""}
+            <button type="button" class="glass-btn sm danger" data-action="use-local">停止中心</button>
+          </div>
+        `;
+        actionHtml = `
+          <div class="row-detail-drawer">
+            <div class="row-subtitle">选择供接入设备连接的本机地址（端口 ${net.port}）</div>
+            <select id="centerAddress" class="glass-select" ${choices ? "" : "disabled"}>
+              ${choices || "<option>无可用网络地址</option>"}
+            </select>
+            ${invitePreviewHtml}
           </div>`;
     } else if (isEndpoint) {
         actionHtml = `
@@ -1284,7 +1291,7 @@ function renderDevices() {
       </div>
     `;
 
-    patchHtml(mainListPanel, skillsSection + tsSection + `
+    patchHtml(mainListPanel, `
       <div class="sync-map">
         <div class="sync-node ${hubTone}">
           <span class="sync-node-icon">
@@ -1299,6 +1306,7 @@ function renderDevices() {
         ${peersHtml}
       </div>
       ${actionHtml}
+    ` + tsSection + skillsSection + `
       <div class="row" style="margin-top:2px">
         <div class="row-head"><span class="row-subtitle">本机设备</span><span class="row-value">${escapeHtml(state.deviceName)}</span></div>
         <div class="row-head"><span class="row-subtitle">系统平台</span><span class="row-value">${state.platform === "darwin" ? "macOS" : state.platform}</span></div>
@@ -1308,15 +1316,25 @@ function renderDevices() {
 
 function renderViewSwitcher() {
     const active = VIEWS.find(v => v.id === view) || VIEWS[0];
-    viewSwitcherIcon.style.webkitMaskImage = `url('${active.icon}')`;
-    viewSwitcherIcon.style.maskImage = `url('${active.icon}')`;
-    viewSwitcherLabel.textContent = active.label;
-    viewSwitcherMenu.innerHTML = VIEWS.map(v => `
+    const iconCss = `url('${active.icon}')`;
+    if (viewSwitcherIcon.style.maskImage !== iconCss) {
+        viewSwitcherIcon.style.webkitMaskImage = iconCss;
+        viewSwitcherIcon.style.maskImage = iconCss;
+    }
+    if (viewSwitcherLabel.textContent !== active.label) {
+        viewSwitcherLabel.textContent = active.label;
+    }
+    patchHtml(viewSwitcherMenu, VIEWS.map(v => `
       <button class="view-switcher-menu-item ${v.id === view ? "is-current" : ""}" type="button" role="menuitemradio" data-view="${v.id}">
         <span class="mask-icon" style="width:14px;height:14px;-webkit-mask-image:url('${v.icon}');mask-image:url('${v.icon}')"></span>
         <span>${v.label}</span>
       </button>
-    `).join("");
+    `).join(""));
+}
+
+function setVisible(el, visible) {
+    if (!el) return;
+    el.classList.toggle("hidden", !visible);
 }
 
 function render() {
@@ -1343,38 +1361,38 @@ function render() {
         tab.classList.toggle("active", Number(tab.dataset.period) === period);
     }
 
-    for (const el of [onboardingPanel, settingsPanel, hubPanel, totalPanel, viewBackRow, searchHost, homePanel, mainListPanel, limitsPanel, trendsPanel, footer]) {
-        el.classList.add("hidden");
-    }
-
     if (!state.configured) {
-        onboardingPanel.classList.remove("hidden");
+        setVisible(onboardingPanel, true);
+        for (const el of [settingsPanel, hubPanel, totalPanel, viewBackRow, searchHost, homePanel, mainListPanel, limitsPanel, trendsPanel, footer]) setVisible(el, false);
         renderOnboarding();
         return;
     }
 
-    footer.classList.remove("hidden");
+    setVisible(onboardingPanel, false);
+    setVisible(footer, true);
     renderViewSwitcher();
 
     if (settingsOpen) {
-        settingsPanel.classList.remove("hidden");
+        setVisible(settingsPanel, true);
+        for (const el of [hubPanel, totalPanel, viewBackRow, searchHost, homePanel, mainListPanel, limitsPanel, trendsPanel]) setVisible(el, false);
         renderSettings();
         return;
     }
 
+    setVisible(settingsPanel, false);
     const isUsageView = view === "usage" || view === "limits" || view === "trends" || view === "sessions";
     periodTabs.classList.toggle("hidden", !isUsageView);
 
+    setVisible(totalPanel, isUsageView);
+    setVisible(hubPanel, !isUsageView);
     if (isUsageView) {
         const report = selectedReport();
         const totalSessions = report ? Object.values(report.totals || {}).reduce((s, x) => s + (x.sessions || 0), 0) : 0;
-        totalPanel.classList.remove("hidden");
         totalLabel.textContent = `${PERIODS[period]} 辅助用量统计`;
         usageUpdated.textContent = usageNotice();
         animateTotalNumber(report?.total ?? 0);
         totalSubline.textContent = `${fmtNum(totalSessions)} 会话 · ${fmtNum(report?.projects?.length || 0)} 工作区 · ${ROLES[state.pairing.mode]}`;
     } else {
-        hubPanel.classList.remove("hidden");
         renderSyncHubHeader();
     }
 
@@ -1382,58 +1400,49 @@ function render() {
     searchToggleBtn.classList.toggle("hidden", !canSearch || Boolean(projectDetail));
     searchToggleBtn.classList.toggle("is-active", searchVisible);
 
-    if (view !== "home") {
-        viewBackRow.classList.remove("hidden");
+    const showBack = view !== "home";
+    setVisible(viewBackRow, showBack);
+    if (showBack) {
         if (view === "projects" && projectDetail) {
             backButtonLabel.textContent = "返回项目列表";
-            viewHeaderActions.innerHTML = "";
+            patchHtml(viewHeaderActions, "");
         } else if (view === "projects") {
             backButtonLabel.textContent = "返回总览";
-            viewHeaderActions.innerHTML = `<div class="row-actions-inline" style="margin:0"><button type="button" class="glass-btn sm" data-action="sync-projects-now">⟳ 同步项目</button><button type="button" class="glass-btn sm primary" data-action="add-project">+ 添加项目</button></div>`;
+            patchHtml(viewHeaderActions, `<div class="row-actions-inline" style="margin:0"><button type="button" class="glass-btn sm" data-action="sync-projects-now">⟳ 同步项目</button><button type="button" class="glass-btn sm primary" data-action="add-project">+ 添加项目</button></div>`);
         } else {
             backButtonLabel.textContent = "返回总览";
-            viewHeaderActions.innerHTML = "";
+            patchHtml(viewHeaderActions, "");
         }
     }
 
-    if (canSearch && searchVisible && !projectDetail) {
-        searchHost.classList.remove("hidden");
+    const showSearch = canSearch && searchVisible && !projectDetail;
+    setVisible(searchHost, showSearch);
+    if (showSearch) {
         searchInput.placeholder = view === "projects" ? "搜索项目名或路径…" : "搜索会话工作区…";
         if (searchInput.value !== projectQuery) searchInput.value = projectQuery;
         if (view === "sessions") {
             sessionSourceFilter.classList.remove("hidden");
-            sessionSourceFilter.innerHTML = `<option value="">全部工具</option>` +
-                Object.entries(SOURCE_NAMES).map(([k, l]) => `<option value="${k}" ${k === sessionSource ? "selected" : ""}>${l}</option>`).join("");
+            patchHtml(sessionSourceFilter, `<option value="">全部工具</option>` +
+                Object.entries(SOURCE_NAMES).map(([k, l]) => `<option value="${k}" ${k === sessionSource ? "selected" : ""}>${l}</option>`).join(""));
         } else {
             sessionSourceFilter.classList.add("hidden");
         }
     }
 
-    if (view === "home") {
-        homePanel.classList.remove("hidden");
-        renderHome();
-    } else if (view === "usage") {
-        mainListPanel.classList.remove("hidden");
-        renderUsageList();
-    } else if (view === "limits") {
-        limitsPanel.classList.remove("hidden");
-        renderLimits();
-    } else if (view === "memory") {
-        mainListPanel.classList.remove("hidden");
-        renderMemoryArchiveView();
-    } else if (view === "projects") {
-        mainListPanel.classList.remove("hidden");
-        renderProjects();
-    } else if (view === "sessions") {
-        mainListPanel.classList.remove("hidden");
-        renderSessions();
-    } else if (view === "trends") {
-        trendsPanel.classList.remove("hidden");
-        renderTrends();
-    } else if (view === "devices") {
-        mainListPanel.classList.remove("hidden");
-        renderDevices();
-    }
+    const showList = ["usage", "memory", "projects", "sessions", "devices"].includes(view);
+    setVisible(homePanel, view === "home");
+    setVisible(mainListPanel, showList);
+    setVisible(limitsPanel, view === "limits");
+    setVisible(trendsPanel, view === "trends");
+
+    if (view === "home") renderHome();
+    else if (view === "usage") renderUsageList();
+    else if (view === "limits") renderLimits();
+    else if (view === "memory") renderMemoryArchiveView();
+    else if (view === "projects") renderProjects();
+    else if (view === "sessions") renderSessions();
+    else if (view === "trends") renderTrends();
+    else if (view === "devices") renderDevices();
 }
 
 async function runAction(btn, fn, { goToView = null, success = "" } = {}) {
@@ -1455,22 +1464,24 @@ async function runAction(btn, fn, { goToView = null, success = "" } = {}) {
     }
 }
 
-function toggleViewMenu(force) {
-    const isOpen = viewSwitcherMenu.matches(":popover-open");
-    const wantOpen = force !== undefined ? force : !isOpen;
-    if (wantOpen && !isOpen) {
-        viewSwitcherMenu.showPopover();
-        viewSwitcher.classList.add("is-open");
-    } else if (!wantOpen && isOpen) {
-        viewSwitcherMenu.hidePopover();
-        viewSwitcher.classList.remove("is-open");
-    }
+function isViewMenuOpen() {
+    return !viewSwitcherMenu.classList.contains("hidden");
 }
 
-viewSwitcherCurrent.addEventListener("click", () => toggleViewMenu());
-viewSwitcherDisclosure.addEventListener("click", () => toggleViewMenu());
-viewSwitcherMenu.addEventListener("toggle", () => {
-    viewSwitcher.classList.toggle("is-open", viewSwitcherMenu.matches(":popover-open"));
+function toggleViewMenu(force) {
+    const isOpen = isViewMenuOpen();
+    const wantOpen = force !== undefined ? force : !isOpen;
+    viewSwitcherMenu.classList.toggle("hidden", !wantOpen);
+    viewSwitcher.classList.toggle("is-open", wantOpen);
+}
+
+viewSwitcherCurrent.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleViewMenu();
+});
+viewSwitcherDisclosure.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleViewMenu();
 });
 
 pinButton.addEventListener("click", () => void runAction(pinButton, () => window.qlex.togglePinWindow()));
@@ -1504,7 +1515,7 @@ backButton.addEventListener("click", () => {
 document.addEventListener("click", (event) => {
     const target = event.target;
 
-    if (viewSwitcherMenu.matches(":popover-open") && !viewSwitcher.contains(target) && !viewSwitcherMenu.contains(target)) {
+    if (isViewMenuOpen() && !viewSwitcher.contains(target) && !viewSwitcherMenu.contains(target)) {
         toggleViewMenu(false);
     }
 
@@ -1917,7 +1928,7 @@ document.addEventListener("submit", (event) => {
 
 document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
-        if (viewSwitcherMenu.matches(":popover-open")) toggleViewMenu(false);
+        if (isViewMenuOpen()) toggleViewMenu(false);
         else if (settingsOpen) { settingsOpen = false; render(); }
         else if (memoryPreview) { memoryPreview = null; renderMemoryArchiveView(); }
     }

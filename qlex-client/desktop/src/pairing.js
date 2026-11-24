@@ -219,7 +219,7 @@ class DevicePairing {
             addressEntries: hostList.map(h => ({
                 host: h,
                 kind: (h.endsWith(".ts.net") || isTailscaleIPv4(h)) ? "tailscale" : "lan",
-                label: h.endsWith(".ts.net") ? `${h} (Tailscale MagicDNS)` : isTailscaleIPv4(h) ? `${h} (Tailscale)` : `${h} (局域网)`,
+                label: h.endsWith(".ts.net") ? `Tailscale · ${h}` : isTailscaleIPv4(h) ? `Tailscale · ${h}` : `局域网 · ${h}`,
             })),
             port: this.serverPort(),
             activeInvite: config.mode === "center" && this.activeInvite && this.activeInviteCode ? {
