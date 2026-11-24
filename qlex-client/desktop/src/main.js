@@ -40,7 +40,7 @@ const dockUrl = (0, node_url_1.pathToFileURL)(dockPath).href;
 const logo = (0, node_path_1.join)(electron_1.app.getAppPath(), "docs/assets/brand/logo.png");
 
 const DEFAULT_WINDOW = { width: 372, height: 676 };
-const MENUBAR_POPOVER = { width: 386, height: 672 };
+const MENUBAR_POPOVER = { width: 396, height: 688 };
 const WINDOW_LIMITS = { minWidth: 280, minHeight: 380, maxWidth: 1200, maxHeight: 1400 };
 const LIQUID_GLASS_SUPPORTED = process.platform === "darwin" && Number.parseInt(node_os_1.release(), 10) >= 25;
 
@@ -373,13 +373,17 @@ function openDashboardWindow(tab = "activity") {
     return created;
 }
 
-function positionMenubarPopover(win) {
+let lastMenubarHeight = MENUBAR_POPOVER.height;
+
+function positionMenubarPopover(win, targetHeight = lastMenubarHeight) {
     if (!win || win.isDestroyed() || !tray) return;
     const tb = tray.getBounds();
     const display = electron_1.screen.getDisplayNearestPoint({ x: tb.x, y: tb.y });
     const area = display?.workArea || electron_1.screen.getPrimaryDisplay().workArea;
     const width = MENUBAR_POPOVER.width;
-    const height = Math.min(MENUBAR_POPOVER.height, Math.max(460, area.height - 16));
+    const desired = Number.isFinite(targetHeight) && targetHeight > 300 ? Math.ceil(targetHeight) : MENUBAR_POPOVER.height;
+    const height = Math.min(Math.max(460, desired), Math.max(460, area.height - 20));
+    lastMenubarHeight = height;
     const rawX = Math.round(tb.x + tb.width / 2 - width / 2);
     const x = Math.max(area.x + 8, Math.min(area.x + area.width - width - 8, rawX));
     const y = process.platform === "darwin"
@@ -652,6 +656,14 @@ function registerHandlers() {
         "qlex:close-menubar-popover": () => {
             if (menubarWindow && !menubarWindow.isDestroyed() && menubarWindow.isVisible()) {
                 menubarWindow.hide();
+            }
+        },
+        "qlex:resize-menubar-popover": (height) => {
+            if (menubarWindow && !menubarWindow.isDestroyed()) {
+                const clamped = Math.max(460, Math.min(820, Math.ceil(Number(height) || MENUBAR_POPOVER.height)));
+                if (Math.abs(clamped - lastMenubarHeight) >= 2) {
+                    positionMenubarPopover(menubarWindow, clamped);
+                }
             }
         },
         "qlex:open-dashboard": (tab) => {

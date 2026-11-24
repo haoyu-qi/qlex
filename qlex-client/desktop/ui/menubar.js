@@ -56,15 +56,15 @@ function computeHealth(st) {
 }
 
 function ringSvg(pct, label, tone = "") {
-    const r = 15;
+    const r = 14;
     const circ = 2 * Math.PI * r;
     const clamped = Math.max(0, Math.min(100, pct));
     const offset = circ * (1 - clamped / 100);
     return `
       <div class="mb-ring" title="${esc(label)} ${clamped}%">
-        <svg viewBox="0 0 38 38">
-          <circle class="track" cx="19" cy="19" r="${r}" />
-          <circle class="fill ${tone}" cx="19" cy="19" r="${r}" stroke-dasharray="${circ.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}" />
+        <svg viewBox="0 0 36 36">
+          <circle class="track" cx="18" cy="18" r="${r}" />
+          <circle class="fill ${tone}" cx="18" cy="18" r="${r}" stroke-dasharray="${circ.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}" />
         </svg>
         <span class="mb-ring-label">${esc(label)}</span>
       </div>
@@ -104,12 +104,12 @@ function render() {
     mbSyncTopBtn.textContent = syncSt.phase === "syncing" ? "⟳ 同步中" : "⟳ 同步";
 
     const pills = [
-        ROLES[net.mode] || "单机模式",
-        state.deviceName || "macOS",
-        ts.online && ts.self?.ip ? `TS ${ts.self.ip}` : "局域网",
-        `v${state.version || "0.2.2"}`,
+        { text: ROLES[net.mode] || "单机模式", flex: false },
+        { text: (state.deviceName || "macOS").replace(/\.local$/i, ""), flex: true },
+        { text: ts.online && ts.self?.ip ? `TS ${ts.self.ip}` : "局域网", flex: false },
+        { text: `v${state.version || "0.2.2"}`, flex: false },
     ];
-    patchHtml(mbMetaPills, pills.map(p => `<span class="mb-meta-pill">${esc(p)}</span>`).join(""));
+    patchHtml(mbMetaPills, pills.map(p => `<span class="mb-meta-pill${p.flex ? " flex" : ""}" title="${esc(p.text)}">${esc(p.text)}</span>`).join(""));
 
     // 1. 状态卡片（中心点/接入点）
     const connectedPeers = (net.peers || []).filter(p => p.status === "connected").length;
@@ -212,8 +212,8 @@ function render() {
         <div class="mb-card-metric">${sk.uniqueSkills ?? 0}<small>项</small></div>
         <div class="mb-seg-actions">
           <button type="button" class="mb-seg-btn active" data-action="sync-skills">对齐</button>
-          <button type="button" class="mb-seg-btn ${sk.conflicts > 0 ? "warn" : ""}" data-action="resolve-conflicts">${sk.conflicts > 0 ? `解冲突(${sk.conflicts})` : "无冲突"}</button>
-          <button type="button" class="mb-seg-btn" data-action="install-mem-skill">Agent技能</button>
+          <button type="button" class="mb-seg-btn ${sk.conflicts > 0 ? "warn" : ""}" data-action="resolve-conflicts">${sk.conflicts > 0 ? `冲突 ${sk.conflicts}` : "无冲突"}</button>
+          <button type="button" class="mb-seg-btn" data-action="install-mem-skill">部署</button>
         </div>
       </div>
     `);
@@ -228,9 +228,9 @@ function render() {
         <span class="mb-tag ${agentPct === 100 ? "ok" : "warn"}">部署 ${ms.installedCount || 0}/${ms.totalCount || 6}</span>
       </div>
       <div class="mb-rings-body">
-        <div style="min-width:0">
+        <div class="mb-rings-info">
           <div class="mb-card-metric">${agentPct}%<small style="margin-left:5px">${ms.installedCount || 0} 个工具就绪</small></div>
-          <div class="mb-card-sub">Codex · Claude · Hermes · Antigravity · DSH · Agents</div>
+          <div class="mb-card-sub" title="Codex · Claude · Hermes · Antigravity · DSH · Agents">Codex · Claude · Hermes · Antigravity · DSH</div>
         </div>
         <div class="mb-rings-group">
           ${ringSvg(agentPct, "技能", agentPct === 100 ? "" : "warn")}
@@ -281,7 +281,7 @@ function render() {
           <span class="mb-table-col ${r.col1Cls}">${esc(r.col1)}</span>
           <span class="mb-table-col">${esc(r.col2)}</span>
         </div>
-      `).join("") : `<div class="mb-card-sub" style="padding:4px 0">暂未登记跨端项目，点击下方「项目同步」添加工作区。</div>`}
+      `).join("") : `<div class="mb-card-sub" data-open-page="projects" style="padding:3px 0;cursor:pointer">暂未登记跨端项目，点击此处前往添加工作区 ↗</div>`}
     `);
 
     // Footer Quick Actions + 3 Summary KPIs
@@ -312,6 +312,15 @@ function render() {
         </div>
       </div>
     `);
+
+    requestAnimationFrame(() => {
+        const shell = document.querySelector("#mbShell");
+        if (!shell) return;
+        const needed = Math.ceil(shell.scrollHeight);
+        if (needed > 300) {
+            void window.qlex.resizeMenubarPopover?.(needed);
+        }
+    });
 }
 
 async function runBusy(fn) {
