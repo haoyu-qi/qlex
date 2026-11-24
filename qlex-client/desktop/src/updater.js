@@ -4,7 +4,7 @@
  * QLEX Version Download & Update Push Engine (Stable / Beta Dual-Channel)
  *
  * Features:
- *  - Checks GitHub Releases API (`haoyu-qi/workcontext`) with ETag caching
+ *  - Checks GitHub Releases API (`haoyu-qi/qlex`) with ETag caching
  *  - Supports `beta` (includes Pre-releases) and `stable` channels
  *  - Parses `update-manifest.json` or falls back to Release assets (`.pkg`/`.zip` + `SHA256SUMS.txt`)
  *  - Streaming download with live progress callbacks + mandatory SHA-256 checksum verification
@@ -16,7 +16,7 @@ const os = require("node:os");
 const https = require("node:https");
 const { createHash } = require("node:crypto");
 
-const DEFAULT_REPO = "haoyu-qi/workcontext";
+const DEFAULT_REPO = "haoyu-qi/qlex";
 
 function parseSemver(raw) {
     const clean = String(raw || "").trim().replace(/^v/i, "");

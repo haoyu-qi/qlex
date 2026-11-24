@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'" />
+  <title>QLEX 菜单栏状态面板</title>
+  <link rel="stylesheet" href="menubar.css" />
+  <script src="../vendor/token-monitor/glassRendering.js" defer></script>
+  <script src="theme.js" defer></script>
+  <script src="menubar.js" defer></script>
+</head>
+<body>
+  <main id="mbShell" class="mb-shell">
+    <!-- Top Health & Role Summary Header -->
+    <header class="mb-header">
+      <div class="mb-score-row">
+        <div class="mb-score-left">
+          <span id="healthIcon" class="mb-health-icon ok" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2.3M12 19.2v2.3M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2.5 12h2.3M19.2 12h2.3M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"/></svg>
+          </span>
+          <span id="healthScore" class="mb-score-num">98</span>
+          <span id="healthLabel" class="mb-score-label">很好</span>
+        </div>
+        <div class="mb-header-actions">
+          <button id="mbSyncTopBtn" class="mb-mini-btn" type="button" title="立即双向同步">⟳ 同步</button>
+          <button id="mbOpenMainBtn" class="mb-mini-btn primary" type="button" title="打开 QLEX 主窗口">工作台 ↗</button>
+        </div>
+      </div>
+      <div id="mbMetaPills" class="mb-meta-pills"></div>
+    </header>
+
+    <!-- 2x3 Modular Bento Grid (状态 / 同步 / 记忆 / 项目 / 穿透 / Skills) -->
+    <section id="mbBentoGrid" class="mb-bento-grid"></section>
+
+    <!-- Agent Skill & Sync Coverage Ring Card (matches reference Battery + 3 Rings card) -->
+    <section id="mbRingsCard" class="mb-wide-card"></section>
+
+    <!-- Active Projects / Nodes List Card (matches reference Process Table) -->
+    <section id="mbListCard" class="mb-wide-card mb-list-card"></section>
+
+    <!-- Bottom Quick Controls + 3 Summary KPIs -->
+    <footer id="mbFooterCard" class="mb-wide-card mb-footer-card"></footer>
+  </main>
+</body>
+</html>

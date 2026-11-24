@@ -134,7 +134,7 @@ try {
             name: "QLEX 0.2.0-beta.2",
             prerelease: true,
             draft: false,
-            html_url: "https://github.com/haoyu-qi/workcontext/releases/tag/v0.6.0-beta.2",
+            html_url: "https://github.com/haoyu-qi/qlex/releases/tag/v0.6.0-beta.2",
             assets: [{ name: "QLEX-0.2.0-beta.2-macOS-arm64.pkg", browser_download_url: "https://example.invalid/pkg", size: 1234 }],
         },
         {
@@ -142,7 +142,7 @@ try {
             name: "QLEX 0.1.9",
             prerelease: false,
             draft: false,
-            html_url: "https://github.com/haoyu-qi/workcontext/releases/tag/v0.5.0",
+            html_url: "https://github.com/haoyu-qi/qlex/releases/tag/v0.5.0",
             assets: [{ name: "QLEX-0.1.9-macOS-arm64.pkg", browser_download_url: "https://example.invalid/old", size: 1000 }],
         },
     ];

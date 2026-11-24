@@ -17,7 +17,7 @@ for (let i = 0; i < args.length; i++) {
 
 const version = flags.version || JSON.parse(fs.readFileSync(path.resolve("qlex-client/package.json"), "utf8")).version;
 const tag = flags.tag || `v${version}`;
-const repo = flags.repo || "haoyu-qi/workcontext";
+const repo = flags.repo || "haoyu-qi/qlex";
 const installersDir = path.resolve(flags.dir || "installers");
 const channel = flags.channel || (/-beta|-rc|-alpha/i.test(version) ? "beta" : "stable");
 const notes = flags.notes || `QLEX ${version} (${channel})`;

@@ -1,4 +1,6 @@
-# Personal identity and long-term memory
+# QLEX — Personal identity and long-term memory
+
+> 本文档说明 QLEX（原 WorkContext）的长期记忆服务与 Relay 机制；命令行兼容 `qlex` 与 `workcontext` 两种入口。
 
 Mini Hermes owns the personal digital-twin role, task coordination and durable memory. MacBook is the local work entry point, collector and execution node. Keep each node's model, credentials, native memory and original session files independent. Windows execution remains optional.
 

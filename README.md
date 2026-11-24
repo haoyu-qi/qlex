@@ -1,49 +1,60 @@
-# WorkContext
+# QLEX
 
-**换一个会话、Agent 或设备，工作也能接着做。**
+**多端 AI 工作台互联中枢：换一台设备、换一个 Agent，你的记忆、项目与技能始终在线。**
 
-WorkContext 把分散在 Codex、Claude Code、Hermes、DeepSeek Harness 和 Antigravity 里的工作记录汇到你自己的 Mac mini。下次接手同一个项目时，你可以找回当时的决定、验证结果和已经跑通的方法，并沿着引用读到原始记录。
+QLEX（原 WorkContext）把分散在 **Codex、Claude Code、Antigravity、Hermes、DeepSeek Harness（DSH）** 等本机 AI 工具中的工作记忆、项目目录和本地 Skills 统一组织起来，通过 **中心点 / 接入点** 双向同步与内嵌 **Tailscale（tsnet）** 内网穿透，实现跨设备无缝接续。
 
-## 它能帮你做什么
+## 核心能力
 
-| 场景 | 你可以怎么用 |
+| 模块 | 说明 |
 | --- | --- |
-| 接续项目 | 在 Hermes、MCP 或网页工作台按项目找回决定、任务摘要和来源记录，核对上次停在哪里。 |
-| 复用经验 | 把已验证的方法存成 `experience`，写清适用条件、步骤和验证结果。后续可以单独检索经验，修订时仍保留历史版本。 |
-| 回看一天的工作 | 按北京时间列出已归档的会话和记录，检查当日覆盖范围。也可以离线查看 MacBook 已采集的记录。 |
-| 跨设备执行 | 把有明确权限的任务交给符合系统、工作区和能力要求的节点，并查看执行状态和验证结果。 |
+| **中心点与接入点** | 一台设备（如 Mac mini）设为中心点，其余设备（如 MacBook）通过一次性邀请码接入，支持审批、吊销、心跳保活与自签 TLS 加密传输。 |
+| **双向记忆同步与认知引擎** | 融合原子记忆消解、双时态知识图谱、L0/L1/L2 分层上下文（`qlex://`）与日 / 周 / 月自动压缩归档（`~/Documents/QLEX-Memory`），支持中心点与接入点增量双向同步。 |
+| **跨 Agent 检索技能（`qlex-memory`）** | 自动向本机 6 大 AI 工具技能目录分发通用检索技能，任意 Agent 均可通过统一 CLI 检索、写入与反思历史工作记忆。 |
+| **跨端项目同步** | 中心点与接入点共享工作区清单，新设备一键绑定本机目录，保持项目标识跨端对齐。 |
+| **本地 Skills 同步与冲突解决** | 跨多款本地 AI 工具自动对齐 Skills 目录，发现同名版本冲突时支持一键合并、按最新覆盖并自动备份到 `~/.qlex-skill-backups`。 |
+| **内网穿透与自动发现** | 集成系统 Tailscale 检测、内嵌 Go `tailscale.com/tsnet` SDK Sidecar 及局域网 UDP 广播，自动发现中心节点。 |
+| **macOS 菜单栏状态面板 & 侧边吸附** | 点击菜单栏 QLEX 图标展开模块化毛玻璃状态面板（节点状态、双向同步、记忆、项目、穿透、Skills、跨 Agent 覆盖环与快捷操作），右键打开快捷菜单；亦支持屏幕侧边悬浮吸附。 |
+| **双通道自动更新** | 支持 `Beta` / `Stable` 双通道检测、进度下载与强制 SHA-256 校验，从 GitHub Releases 自动获取新版本。 |
 
-例如，在处理采集端断线时，用下面的参数查找以前已经验证过的重试方法。
+## 安装与使用（QLEX 桌面客户端）
 
-```json
-{"query":"断线重试","project":"workcontext","kind":"experience"}
-```
+### 方式一：直接下载安装包（推荐，macOS Apple Silicon）
 
-MCP 工具名是 `workcontext_memory.search`。Mini 上的原生 Hermes 工具接受相同参数，网页工作台也提供项目和类型筛选。打开一条记忆可以继续查看它引用的来源。
+前往 [GitHub Releases](https://github.com/haoyu-qi/qlex/releases) 下载最新版本的 `.pkg` 安装包或 `.zip` 压缩包（附 `SHA256SUMS.txt` 校验文件）：
 
-## 从两台设备开始
+- **Beta 通道**：获取最新功能与体验改进（含 Pre-release）
+- **Stable 通道**：仅接收正式稳定版更新
 
-- **MacBook** 是日常工作入口。Relay 只采集已授权目录的记录，离线时先写入本机队列，收到 Mini 的持久化回执后才确认送达。
-- **Mac mini** 保存原始记录和带版本的记忆笔记，提供 Hermes 自动召回、MCP 和浏览器工作台。网页可以用一次性配对码连接，服务凭证保留在部署端。
-- **Obsidian** 保存你可以直接编辑的原文和日报。WorkContext 在 Mini 存摘要和原文引用，Obsidian 文件在两台设备间继续由现有同步插件处理。
-
-需要跑 Windows 专属任务时，再按能力登记 Windows 节点。也可以通过校验清单将选定的操作技能分发到不同节点。
-
-## 开始使用
-
-需要 Python 3.9 或更新版本。从 GitHub Releases 下载 wheel 后安装，也可以在仓库根目录运行 `python -m pip install .`。
+### 方式二：从源码运行与构建
 
 ```sh
-python -m pip install ./workcontext_services-0.4.1-py3-none-any.whl
-workcontext selfcheck
-workcontext --help
+cd qlex-client
+npm install
+npm start
+
+# 运行测试套件
+node scripts/test-memory-framework.mjs
+node scripts/test-v020-features.mjs
+
+# 打包 macOS arm64 安装包（.app / .zip / .pkg）
+bash scripts/build-macos-app.sh
 ```
 
-仓库提供示例配置和 Hermes 插件。按使用场景选择部署入口。
+## 服务端与 CLI 套件（Python）
 
-- [配置 Mini 记忆服务、MacBook Relay 和 Hermes](public-docs/LONG-TERM-MEMORY.md)
-- [打开浏览器工作台、设置设备配对](public-docs/OPERATIONS.md#browser-console)
-- [配置跨设备执行和技能分发](public-docs/OPERATIONS.md)
-- [了解服务架构、数据范围和权限](public-docs/ARCHITECTURE.md)
+仓库同时保留服务端与 CLI 伴随套件（Python 3.9+，兼容保留 `workcontext` 模块导入与命令名，新增 `qlex` 命令入口），可用于无界面服务器部署、Relay 采集、MCP 记忆服务与受控技能分发：
 
-工作记忆借鉴了 Hy Memory 对工作事实和可复用经验的区分。WorkContext 使用本地 SQLite 和关键词召回，经验由助手根据已核对的结果显式保存。 [Hy Memory Working 与 Coding 设计](https://github.com/Tencent-Hunyuan/Hy-Memory/blob/23cb604ec4e27b69905a361cb38553e1c350480d/docs/scene_coding_usage.md)
+```sh
+python -m pip install .
+qlex selfcheck
+qlex --help
+```
+
+## 相关文档
+
+- [QLEX 桌面端与记忆架构设计](public-docs/QLEX-ARCHITECTURE.md)
+- [QLEX 版本规划与迭代记录](public-docs/QLEX-NEXT-VERSION-PLAN.md)
+- [长期记忆与跨端 Relay 部署说明](public-docs/LONG-TERM-MEMORY.md)
+- [服务端运维、浏览器控制台与技能分发](public-docs/OPERATIONS.md)
+- [整体服务架构与边界说明](public-docs/ARCHITECTURE.md)

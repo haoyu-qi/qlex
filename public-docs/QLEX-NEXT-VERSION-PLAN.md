@@ -99,8 +99,8 @@ flowchart TB
        "notes": "## 更新摘要...",
        "assets": {
          "darwin-arm64": {
-           "pkgUrl": "https://github.com/haoyu-qi/workcontext/releases/download/...",
-           "zipUrl": "https://github.com/haoyu-qi/workcontext/releases/download/...",
+           "pkgUrl": "https://github.com/haoyu-qi/qlex/releases/download/...",
+           "zipUrl": "https://github.com/haoyu-qi/qlex/releases/download/...",
            "sha256": "...",
            "size": 112295399
          }

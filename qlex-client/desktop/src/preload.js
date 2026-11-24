@@ -20,6 +20,8 @@ electron_1.contextBridge.exposeInMainWorld("qlex", {
     minimizeWindow: () => electron_1.ipcRenderer.invoke("qlex:window-minimize"),
     closeWindow: () => electron_1.ipcRenderer.invoke("qlex:window-close"),
     togglePinWindow: () => electron_1.ipcRenderer.invoke("qlex:window-toggle-pin"),
+    openMainPage: (page) => electron_1.ipcRenderer.invoke("qlex:open-main-page", page),
+    closeMenubarPopover: () => electron_1.ipcRenderer.invoke("qlex:close-menubar-popover"),
     openDashboard: (tab) => electron_1.ipcRenderer.invoke("qlex:open-dashboard", tab),
     onDashboardTab: (fn) => electron_1.ipcRenderer.on("qlex:dashboard-tab", (_, tab) => fn(tab)),
 

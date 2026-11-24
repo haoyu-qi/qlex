@@ -1,8 +1,10 @@
-# Architecture and current boundary
+# QLEX — Architecture and current boundary
+
+> 注：本项目已正式更名为 **QLEX**（原 WorkContext）。桌面客户端架构见 [QLEX-ARCHITECTURE.md](QLEX-ARCHITECTURE.md)；下文说明保留的 Python 服务端与 Relay 伴随套件（模块导入与配置字段兼容保留 `workcontext` 命名）。
 
 MacBook Agent sources (dsh, Codex, Claude Code, Hermes) feed an explicit local archive and a scoped durable relay. Mini owns the personal digital-twin main role, long-term memory, central context/query service and execution coordinator. MacBook, Mini and optional Windows workers execute registered capabilities according to actual OS, workspace and code-revision requirements. Results are stored with attempt IDs and evidence; shared skills are distributed through a versioned manifest.
 
-Memory has three complementary surfaces: source logs for process evidence, Obsidian personal notes and daily reports for human-readable originals, and Mini summaries for recall. The user's existing Obsidian plugin handles file synchronization. Each Hermes accesses its own locally synchronized vault; the shared skill defines read/write/verify rules and summary references. WorkContext does not manage vault synchronization, and automatic indexing of every note edit remains separate.
+Memory has three complementary surfaces: source logs for process evidence, Obsidian personal notes and daily reports for human-readable originals, and Mini summaries for recall. The user's existing Obsidian plugin handles file synchronization. Each Hermes accesses its own locally synchronized vault; the shared skill defines read/write/verify rules and summary references. QLEX does not manage vault synchronization, and automatic indexing of every note edit remains separate.
 
 The Python package contains:
 

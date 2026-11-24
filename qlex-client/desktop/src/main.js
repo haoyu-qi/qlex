@@ -33,11 +33,14 @@ const uiPath = (0, node_path_1.join)(__dirname, "../ui/index.html");
 const uiUrl = (0, node_url_1.pathToFileURL)(uiPath).href;
 const dashboardPath = (0, node_path_1.join)(__dirname, "../ui/dashboard.html");
 const dashboardUrl = (0, node_url_1.pathToFileURL)(dashboardPath).href;
+const menubarPath = (0, node_path_1.join)(__dirname, "../ui/menubar.html");
+const menubarUrl = (0, node_url_1.pathToFileURL)(menubarPath).href;
 const dockPath = (0, node_path_1.join)(__dirname, "../ui/dock.html");
 const dockUrl = (0, node_url_1.pathToFileURL)(dockPath).href;
 const logo = (0, node_path_1.join)(electron_1.app.getAppPath(), "docs/assets/brand/logo.png");
 
 const DEFAULT_WINDOW = { width: 372, height: 676 };
+const MENUBAR_POPOVER = { width: 386, height: 672 };
 const WINDOW_LIMITS = { minWidth: 280, minHeight: 380, maxWidth: 1200, maxHeight: 1400 };
 const LIQUID_GLASS_SUPPORTED = process.platform === "darwin" && Number.parseInt(node_os_1.release(), 10) >= 25;
 
@@ -54,7 +57,10 @@ let syncRunning = null;
 let syncState = { phase: "idle", label: "待同步", detail: "", time: 0 };
 let window;
 let dashboardWindow;
+let menubarWindow;
+let lastMenubarShowAt = 0;
 let tray;
+let trayContextMenu;
 let trayStatus;
 let queuedPage;
 let persistBoundsTimer;
@@ -90,6 +96,9 @@ function applyAllNativeMaterials(appearance = store?.snapshot().appearance) {
     }
     if (dashboardWindow && !dashboardWindow.isDestroyed()) {
         syncNativeMaterialVisibility(dashboardWindow, nativeMaterialOptions(appearance, true));
+    }
+    if (menubarWindow && !menubarWindow.isDestroyed()) {
+        syncNativeMaterialVisibility(menubarWindow, { ...nativeMaterialOptions(appearance, false), radius: 16 });
     }
     edgeDock?.syncMaterial();
 }
@@ -145,7 +154,7 @@ function broadcastState(state, { force = false } = {}) {
         return payload;
     }
     lastBroadcastFp = fp;
-    for (const target of [window, dashboardWindow]) {
+    for (const target of [window, dashboardWindow, menubarWindow]) {
         if (target && !target.isDestroyed()) {
             target.webContents.send("qlex:state-changed", payload);
         }
@@ -364,6 +373,91 @@ function openDashboardWindow(tab = "activity") {
     return created;
 }
 
+function positionMenubarPopover(win) {
+    if (!win || win.isDestroyed() || !tray) return;
+    const tb = tray.getBounds();
+    const display = electron_1.screen.getDisplayNearestPoint({ x: tb.x, y: tb.y });
+    const area = display?.workArea || electron_1.screen.getPrimaryDisplay().workArea;
+    const width = MENUBAR_POPOVER.width;
+    const height = Math.min(MENUBAR_POPOVER.height, Math.max(460, area.height - 16));
+    const rawX = Math.round(tb.x + tb.width / 2 - width / 2);
+    const x = Math.max(area.x + 8, Math.min(area.x + area.width - width - 8, rawX));
+    const y = process.platform === "darwin"
+        ? Math.round(tb.y + tb.height + 6)
+        : Math.max(area.y + 8, Math.round(tb.y - height - 6));
+    win.setBounds({ x, y, width, height }, false);
+}
+
+function createMenubarPopover() {
+    if (menubarWindow && !menubarWindow.isDestroyed()) return menubarWindow;
+    const created = new electron_1.BrowserWindow({
+        width: MENUBAR_POPOVER.width,
+        height: MENUBAR_POPOVER.height,
+        title: "QLEX 菜单栏状态面板",
+        icon: logo,
+        frame: false,
+        transparent: true,
+        resizable: false,
+        movable: false,
+        minimizable: false,
+        maximizable: false,
+        fullscreenable: false,
+        skipTaskbar: true,
+        alwaysOnTop: true,
+        backgroundColor: "#00000000",
+        ...(process.platform === "darwin" ? { vibrancy: "hud", visualEffectState: "active" } : {}),
+        show: false,
+        webPreferences: {
+            preload: (0, node_path_1.join)(__dirname, "preload.js"),
+            contextIsolation: true,
+            sandbox: true,
+            nodeIntegration: false,
+        },
+    });
+    menubarWindow = created;
+    if (process.platform === "darwin") {
+        created.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    }
+    const matOpts = () => ({ ...nativeMaterialOptions(store.snapshot().appearance, false), radius: 16 });
+    attachNativeMaterialVisibility(created, matOpts);
+    syncNativeMaterialVisibility(created, matOpts());
+    created.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    created.webContents.on("will-navigate", (event) => event.preventDefault());
+    created.on("blur", () => {
+        if (Date.now() - lastMenubarShowAt < 250) return;
+        if (!created.isDestroyed() && created.isVisible()) {
+            created.hide();
+        }
+    });
+    created.on("closed", () => {
+        if (menubarWindow === created) menubarWindow = undefined;
+    });
+    void created.loadFile(menubarPath).then(() => {
+        syncNativeMaterialVisibility(created, matOpts());
+        if (!created.isDestroyed()) {
+            created.webContents.send("qlex:state-changed", desktopState());
+        }
+    }).catch(console.error);
+    return created;
+}
+
+function toggleMenubarPopover(forceShow = false) {
+    if (smoke) return;
+    const target = createMenubarPopover();
+    if (!forceShow && target.isVisible()) {
+        target.hide();
+        return;
+    }
+    positionMenubarPopover(target);
+    lastMenubarShowAt = Date.now();
+    if (!target.webContents.isLoadingMainFrame()) {
+        target.webContents.send("qlex:state-changed", desktopState());
+    }
+    syncNativeMaterialVisibility(target, { ...nativeMaterialOptions(store.snapshot().appearance, false), radius: 16 });
+    target.show();
+    target.focus();
+}
+
 function navigateDashboard(page) {
     const hadWindow = Boolean(window && !window.isDestroyed());
     const target = showWindow();
@@ -399,10 +493,14 @@ function createTray() {
     mark.setTemplateImage(process.platform === "darwin");
     tray = new electron_1.Tray(mark);
     tray.on("click", () => {
-        if (window && !window.isDestroyed() && window.isVisible() && window.isFocused()) {
-            window.hide();
-        } else {
-            showWindow();
+        toggleMenubarPopover(false);
+    });
+    tray.on("right-click", () => {
+        if (menubarWindow && !menubarWindow.isDestroyed() && menubarWindow.isVisible()) {
+            menubarWindow.hide();
+        }
+        if (trayContextMenu) {
+            tray.popUpContextMenu(trayContextMenu);
         }
     });
     updateTray();
@@ -415,6 +513,8 @@ function updateTray() {
     const snap = store.snapshot();
     const appearance = snap.appearance;
     const syncInfo = computeSyncSummary();
+    const sk = skills.snapshot();
+    const pendingPeers = (network.peers || []).filter(p => p.status === "pending").length;
     let status = "仅在本机使用";
     if (network.mode === "center")
         status = network.online ? "中心点 · 运行中" : "中心点 · 未启动";
@@ -423,11 +523,17 @@ function updateTray() {
     }
     const dockSide = edgeDock?.side() || "off";
     const dockMode = snap.edgeDockMode || "autoHide";
-    const fingerprint = `${status}|${syncInfo.label}|${dockSide}|${dockMode}|${appearance?.alwaysOnTop}|${appearance?.macBackdrop}`;
+    const trayBadge = syncInfo.phase === "syncing" ? " ⟳"
+        : sk.conflicts > 0 ? " !"
+        : pendingPeers > 0 ? " •" : "";
+    const fingerprint = `${status}|${syncInfo.label}|${trayBadge}|${dockSide}|${dockMode}|${appearance?.alwaysOnTop}|${appearance?.macBackdrop}`;
     if (trayStatus === fingerprint)
         return;
     trayStatus = fingerprint;
     tray.setToolTip(`QLEX · ${status} · ${syncInfo.label}`);
+    if (process.platform === "darwin") {
+        tray.setTitle(trayBadge);
+    }
     const backdropSubmenu = [
         { label: "经典毛玻璃 (HUD Vibrancy)", type: "radio", checked: appearance.macBackdrop === "vibrancy", click: () => { const next = store.setAppearance({ macBackdrop: "vibrancy", systemGlass: true }); applyAllNativeMaterials(next.appearance); broadcastState(next); } },
         ...(LIQUID_GLASS_SUPPORTED ? [
@@ -436,7 +542,8 @@ function updateTray() {
         ] : []),
     ];
     const menu = electron_1.Menu.buildFromTemplate([
-        { label: "打开 QLEX", click: () => { showWindow(); } },
+        { label: "打开菜单栏状态面板", click: () => { toggleMenubarPopover(true); } },
+        { label: "打开 QLEX 主窗口", click: () => { showWindow(); } },
         { label: "打开用量大屏看板", click: () => { openDashboardWindow("activity"); } },
         { label: `立即同步（${syncInfo.label}）`, click: () => { void runUnifiedSync(); } },
         { label: status, enabled: false },
@@ -458,7 +565,10 @@ function updateTray() {
         { type: "separator" },
         { label: "退出 QLEX", click: () => electron_1.app.quit() },
     ]);
-    tray.setContextMenu(menu);
+    trayContextMenu = menu;
+    if (process.platform !== "darwin") {
+        tray.setContextMenu(menu);
+    }
 }
 
 async function changeRole(operation) {
@@ -500,6 +610,7 @@ async function openDirectory(directory) {
 function isMainOrDashboardSender(event) {
     if (event.sender === window?.webContents && event.senderFrame?.url === uiUrl) return "main";
     if (event.sender === dashboardWindow?.webContents && event.senderFrame?.url.startsWith(dashboardUrl)) return "dashboard";
+    if (event.sender === menubarWindow?.webContents && event.senderFrame?.url === menubarUrl) return "menubar";
     return null;
 }
 
@@ -508,7 +619,9 @@ function registerHandlers() {
         "qlex:state": () => desktopState(),
         "qlex:sync-now": () => runUnifiedSync(),
         "qlex:native-material": (_value, event) => {
-            const target = event.sender === dashboardWindow?.webContents ? dashboardWindow : window;
+            const target = event.sender === dashboardWindow?.webContents ? dashboardWindow
+                : event.sender === menubarWindow?.webContents ? menubarWindow
+                : window;
             return target && !target.isDestroyed() ? getNativeMaterialState(target) : null;
         },
         "qlex:update-appearance": (patch) => {
@@ -528,6 +641,18 @@ function registerHandlers() {
             const next = store.setAppearance({ alwaysOnTop: !store.snapshot().appearance?.alwaysOnTop });
             applyAllNativeMaterials(next.appearance);
             return broadcastState(next);
+        },
+        "qlex:open-main-page": (page) => {
+            if (menubarWindow && !menubarWindow.isDestroyed() && menubarWindow.isVisible()) {
+                menubarWindow.hide();
+            }
+            navigateDashboard(page || "home");
+            return desktopState();
+        },
+        "qlex:close-menubar-popover": () => {
+            if (menubarWindow && !menubarWindow.isDestroyed() && menubarWindow.isVisible()) {
+                menubarWindow.hide();
+            }
         },
         "qlex:open-dashboard": (tab) => {
             openDashboardWindow(tab);
@@ -678,7 +803,7 @@ function registerHandlers() {
             return desktopState();
         },
         "qlex:update-open-release": async () => {
-            const url = updater.snapshot().latest?.htmlUrl || "https://github.com/haoyu-qi/workcontext/releases";
+            const url = updater.snapshot().latest?.htmlUrl || "https://github.com/haoyu-qi/qlex/releases";
             await electron_1.shell.openExternal(url);
             return desktopState();
         },
@@ -748,9 +873,15 @@ function registerHandlers() {
             return broadcastState(next);
         },
         "qlex:bind-remote-project": async (syncId) => {
-            if (!window || !store.snapshot().configured)
+            if (!store.snapshot().configured)
                 throw new Error("请先完成首次设置");
-            const result = await electron_1.dialog.showOpenDialog(window, { properties: ["openDirectory"] });
+            if (menubarWindow && !menubarWindow.isDestroyed() && menubarWindow.isVisible()) {
+                menubarWindow.hide();
+            }
+            const parent = window && !window.isDestroyed() && window.isVisible() ? window : undefined;
+            const result = parent
+                ? await electron_1.dialog.showOpenDialog(parent, { properties: ["openDirectory"] })
+                : await electron_1.dialog.showOpenDialog({ properties: ["openDirectory"] });
             if (result.canceled || !result.filePaths[0])
                 return desktopState();
             const next = store.bindRemoteProject(syncId, (0, node_fs_1.realpathSync)(result.filePaths[0]));
@@ -848,7 +979,8 @@ function registerHandlers() {
     }
     for (const [channel, handler] of Object.entries(mainOnlyHandlers)) {
         electron_1.ipcMain.handle(channel, (event, value) => {
-            if (isMainOrDashboardSender(event) !== "main")
+            const sender = isMainOrDashboardSender(event);
+            if (sender !== "main" && sender !== "menubar")
                 throw new Error("QLEX IPC source rejected");
             return handler(value, event);
         });
@@ -903,6 +1035,9 @@ else {
         pairing?.stop();
         tailscale?.stop();
         edgeDock?.close();
+        if (menubarWindow && !menubarWindow.isDestroyed()) {
+            menubarWindow.destroy();
+        }
         if (smokeDirectory)
             (0, node_fs_1.rmSync)(smokeDirectory, { recursive: true, force: true });
     });
@@ -932,12 +1067,20 @@ else {
                 const v = pairing?.view();
                 return v ? { mode: v.mode, online: v.online, port: v.port, deviceId: store.snapshot().deviceId, version: APP_VERSION } : null;
             },
-            onChange: () => { if (window && !window.isDestroyed()) broadcastState(); },
+            onChange: () => {
+                if ((window && !window.isDestroyed()) || (menubarWindow && !menubarWindow.isDestroyed() && menubarWindow.isVisible())) {
+                    broadcastState();
+                }
+            },
         });
         updater = createUpdater({
             currentVersion: APP_VERSION,
             getChannel: () => store.snapshot().updateChannel || "beta",
-            onChange: () => { if (window && !window.isDestroyed()) broadcastState(); },
+            onChange: () => {
+                if ((window && !window.isDestroyed()) || (menubarWindow && !menubarWindow.isDestroyed() && menubarWindow.isVisible())) {
+                    broadcastState();
+                }
+            },
             onUpdateFound: (latest) => {
                 try {
                     if (!smoke && electron_1.Notification?.isSupported?.()) {

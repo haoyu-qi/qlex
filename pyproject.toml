@@ -3,13 +3,14 @@ requires = ["setuptools>=58", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "workcontext-services"
-version = "0.4.1"
-description = "Agent context, capability-based execution, local log adapters and controlled skill sync"
+name = "qlex-services"
+version = "0.4.2"
+description = "QLEX (formerly WorkContext) backend services: agent context, long-term memory, capability-based execution, local log adapters and controlled skill sync"
 requires-python = ">=3.9"
 dependencies = ["tzdata; platform_system == 'Windows'"]
 
 [project.scripts]
+qlex = "workcontext.__main__:main"
 workcontext = "workcontext.__main__:main"
 
 [tool.setuptools.packages.find]

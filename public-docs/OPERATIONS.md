@@ -1,4 +1,6 @@
-# WorkContext service bundle
+# QLEX service bundle (Python CLI & Relay)
+
+> 本项目已更名为 **QLEX**（原 WorkContext）。Python 伴随套件新增 `qlex` 命令入口，并完整兼容既有 `workcontext` CLI 命令与配置。
 
 Roles: MacBook gathers local Agent work records; Mini provides task context, coordination and memory-related query surfaces; any compatible registered node can execute. Windows support is optional and is not required for the two-Mac workflow.
 
