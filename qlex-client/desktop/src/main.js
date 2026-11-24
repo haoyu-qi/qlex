@@ -713,6 +713,11 @@ function registerHandlers() {
             const result = skills.resolveAllConflicts(strategy || "latest", snap.localSkillNamespaces);
             return { result, state: broadcastState() };
         },
+        "qlex:repair-skill-anomalies": () => {
+            const snap = store.snapshot();
+            const result = skills.repairAnomalies(snap.localSkillNamespaces);
+            return { result, state: broadcastState() };
+        },
         "qlex:open-skill-backup-dir": async () => {
             const dir = skills.snapshot().backupRoot;
             node_fs_1.mkdirSync(dir, { recursive: true });

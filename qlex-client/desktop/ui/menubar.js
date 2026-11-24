@@ -230,7 +230,7 @@ function render() {
       <div class="mb-rings-body">
         <div class="mb-rings-info">
           <div class="mb-card-metric">${agentPct}%<small style="margin-left:5px">${ms.installedCount || 0} 工具就绪</small></div>
-          <div class="mb-card-sub" title="Codex · Claude · Hermes · Antigravity · DSH · Agents">Codex · Claude · Hermes · Antigravity · DSH</div>
+          <div class="mb-card-sub" title="Codex · Claude · Hermes · Antigravity · DSH · WorkBuddy · ZCode · T3 Code">Codex · Claude · Hermes · WorkBuddy · ZCode · T3</div>
         </div>
         <div class="mb-rings-group">
           ${ringSvg(agentPct, "技能", agentPct === 100 ? "" : "warn")}

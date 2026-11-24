@@ -19,13 +19,16 @@ const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 
 const execFileAsync = promisify(execFile);
-const SOURCES = ["antigravity", "codex", "claude", "hermes", "dsh"];
+const SOURCES = ["antigravity", "codex", "claude", "hermes", "dsh", "workbuddy", "zcode", "t3code"];
 const SOURCE_LABELS = {
     antigravity: "Antigravity",
     codex: "Codex",
     claude: "Claude Code",
     hermes: "Hermes",
     dsh: "DSH",
+    workbuddy: "WorkBuddy",
+    zcode: "ZCode",
+    t3code: "T3 Code",
 };
 
 const SECRET_PATTERN = /(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|Bearer\s+[A-Za-z0-9._-]{16,}|(?:password|api[_-]?key|access[_-]?token)\s*[:=]\s*["']?[^\s"',;]{6,}["']?)/gi;
@@ -493,6 +496,156 @@ function parseDshFile(fileInfo, cache) {
 }
 
 /**
+ * 6. WorkBuddy Collector (~/.workbuddy-ai/workbuddy.db + ~/.workbuddy)
+ */
+async function collectWorkBuddySessions(home, env, customPath, sinceMs) {
+    const dbCandidates = [
+        customPath && (customPath.endsWith(".db") ? customPath : path.join(customPath, "workbuddy.db")),
+        env.WORKBUDDY_HOME && path.join(env.WORKBUDDY_HOME, "workbuddy.db"),
+        path.join(home, ".workbuddy-ai", "workbuddy.db"),
+        path.join(home, ".workbuddy", "workbuddy.db"),
+    ].filter(p => p && fs.existsSync(p));
+    const sessions = [];
+
+    for (const dbPath of dbCandidates) {
+        const sql = `SELECT s.id, s.cwd, COALESCE(NULLIF(s.custom_title,''), s.title) AS title, COALESCE(s.last_activity_at, s.updated_at, s.created_at) AS ts, COALESCE(u.used, 0) AS used_tokens FROM sessions s LEFT JOIN session_usage u ON u.session_id = s.id WHERE s.deleted_at IS NULL ORDER BY ts DESC LIMIT 500;`;
+        try {
+            const { stdout } = await execFileAsync("sqlite3", ["-readonly", "-json", dbPath, sql], { timeout: 8000, maxBuffer: 8 * 1024 * 1024 });
+            const rows = JSON.parse(stdout || "[]");
+            for (const r of rows) {
+                const rawTs = num(r.ts);
+                const ts = rawTs > 1e12 ? rawTs : rawTs * 1000;
+                if (!ts || ts < sinceMs) continue;
+                const date = localDateKey(ts);
+                const tokens = num(r.used_tokens);
+                const workspace = typeof r.cwd === "string" && path.isAbsolute(r.cwd) ? path.normalize(r.cwd) : "";
+                const topics = r.title ? [{ date, ts, source: "workbuddy", project: workspace ? path.basename(workspace) : "", text: sanitizeTopic(r.title, 180) }] : [];
+                sessions.push({
+                    source: "workbuddy",
+                    sessionId: String(r.id),
+                    workspace,
+                    lastActive: ts,
+                    dailyBuckets: tokens > 0 ? { [date]: { input: tokens, output: 0, cacheRead: 0, cacheWrite: 0, tokens } } : {},
+                    topics,
+                });
+            }
+        } catch { /* sqlite3 unavailable or schema mismatch */ }
+    }
+    const existingRoots = [
+        ...dbCandidates,
+        path.join(home, ".workbuddy"),
+        path.join(home, ".workbuddy-ai"),
+    ].filter((p, idx, arr) => p && fs.existsSync(p) && arr.indexOf(p) === idx);
+    return { paths: existingRoots, filesScanned: dbCandidates.length, sessions };
+}
+
+/**
+ * 7. ZCode Collector (~/.zcode/sessions, ~/.zcode/projects, Application Support/ZCode)
+ */
+function parseZCodeFile(fileInfo, cache) {
+    const sig = `${fileInfo.mtimeMs}:${fileInfo.size}`;
+    const cached = cache.get(fileInfo.path, sig);
+    if (cached) return cached;
+
+    const sessionId = path.basename(fileInfo.path, path.extname(fileInfo.path));
+    let workspace = "";
+    let lastActive = fileInfo.mtimeMs;
+    const dailyBuckets = {};
+    const topics = [];
+
+    try {
+        const raw = fs.readFileSync(fileInfo.path, "utf8");
+        const lines = fileInfo.path.endsWith(".json") ? [raw] : raw.split("\n");
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) continue;
+            let parsedRow;
+            try { parsedRow = JSON.parse(trimmed); } catch { continue; }
+            const items = Array.isArray(parsedRow) ? parsedRow : [parsedRow];
+            for (const row of items) {
+                if (!row || typeof row !== "object") continue;
+                const rawTs = row.timestamp || row.updatedAt || row.createdAt || row.ts;
+                const ts = typeof rawTs === "number" ? (rawTs < 1e12 ? rawTs * 1000 : rawTs) : (Date.parse(rawTs || "") || fileInfo.mtimeMs);
+                if (ts > lastActive) lastActive = ts;
+                const cwd = row.cwd || row.workspace || row.projectPath;
+                if (!workspace && typeof cwd === "string" && path.isAbsolute(cwd)) workspace = path.normalize(cwd);
+                const u = row.usage || row.tokenUsage || row.message?.usage;
+                if (u && typeof u === "object") {
+                    const input = num(u.input_tokens || u.prompt_tokens || u.input);
+                    const output = num(u.output_tokens || u.completion_tokens || u.output);
+                    const cacheRead = num(u.cache_read_input_tokens || u.cached_tokens || u.cacheRead);
+                    const cacheWrite = num(u.cache_creation_input_tokens || u.cacheWrite);
+                    const tokens = input + output + cacheRead + cacheWrite || num(u.total_tokens || u.total);
+                    if (tokens > 0) {
+                        const date = localDateKey(ts);
+                        const b = dailyBuckets[date] || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, tokens: 0 };
+                        b.input += input || tokens;
+                        b.output += output;
+                        b.cacheRead += cacheRead;
+                        b.cacheWrite += cacheWrite;
+                        b.tokens += tokens;
+                        dailyBuckets[date] = b;
+                    }
+                }
+                if (topics.length < 10 && (row.role === "user" || row.type === "user" || row.title)) {
+                    const txt = typeof row.content === "string" ? row.content : typeof row.title === "string" ? row.title : "";
+                    const clean = extractRealUserText(txt);
+                    if (clean.length >= 4) topics.push({ date: localDateKey(ts), ts, source: "zcode", project: workspace ? path.basename(workspace) : "", text: clean });
+                }
+            }
+        }
+    } catch { /* ignore */ }
+
+    const parsed = { source: "zcode", sessionId, workspace, lastActive, dailyBuckets, topics };
+    cache.set(fileInfo.path, sig, parsed);
+    return parsed;
+}
+
+/**
+ * 8. T3 Code Collector (~/.t3/userdata/statev2.sqlite — threads & workspaces)
+ */
+async function collectT3CodeSessions(home, env, customPath, sinceMs) {
+    const dbCandidates = [
+        customPath && (customPath.endsWith(".sqlite") ? customPath : path.join(customPath, "statev2.sqlite")),
+        env.T3_HOME && path.join(env.T3_HOME, "userdata", "statev2.sqlite"),
+        path.join(home, ".t3", "userdata", "statev2.sqlite"),
+    ].filter(p => p && fs.existsSync(p));
+    const sessions = [];
+
+    for (const dbPath of dbCandidates) {
+        const sqlV2 = `SELECT t.thread_id AS id, t.title, t.updated_at, t.created_at, p.workspace_root AS cwd FROM orchestration_v2_projection_threads t LEFT JOIN projection_projects p ON p.project_id = t.project_id WHERE t.deleted_at IS NULL ORDER BY t.updated_at DESC LIMIT 400;`;
+        const sqlV1 = `SELECT t.thread_id AS id, t.title, t.updated_at, t.created_at, p.workspace_root AS cwd FROM projection_threads t LEFT JOIN projection_projects p ON p.project_id = t.project_id WHERE t.deleted_at IS NULL ORDER BY t.updated_at DESC LIMIT 400;`;
+        let rows = [];
+        try {
+            const { stdout } = await execFileAsync("sqlite3", ["-readonly", "-json", dbPath, sqlV2], { timeout: 8000, maxBuffer: 8 * 1024 * 1024 });
+            rows = JSON.parse(stdout || "[]");
+        } catch {
+            try {
+                const { stdout } = await execFileAsync("sqlite3", ["-readonly", "-json", dbPath, sqlV1], { timeout: 8000, maxBuffer: 8 * 1024 * 1024 });
+                rows = JSON.parse(stdout || "[]");
+            } catch { /* ignore */ }
+        }
+        for (const r of rows) {
+            const ts = Date.parse(r.updated_at || r.created_at || "") || 0;
+            if (!ts || ts < sinceMs) continue;
+            const date = localDateKey(ts);
+            const workspace = typeof r.cwd === "string" && path.isAbsolute(r.cwd) ? path.normalize(r.cwd) : "";
+            const title = sanitizeTopic(r.title || "", 180);
+            const topics = title && title !== "New thread" ? [{ date, ts, source: "t3code", project: workspace ? path.basename(workspace) : "", text: title }] : [];
+            sessions.push({
+                source: "t3code",
+                sessionId: String(r.id),
+                workspace,
+                lastActive: ts,
+                dailyBuckets: {},
+                topics,
+            });
+        }
+    }
+    return { paths: dbCandidates, filesScanned: dbCandidates.length, sessions };
+}
+
+/**
  * Aggregate native parsed sessions into QLEX Usage Report + Diagnostics + Topics
  */
 function buildWindowReport(parsedSessions, sinceDateKey) {
@@ -651,6 +804,53 @@ async function collectAllNative({ home = homedir(), env = process.env, cachePath
         sessionsFound: dshSessions.length,
         lastActive: dshFiles[0]?.mtimeMs || 0,
         status: dshFiles.length ? "ok" : (dshRoots.length ? "empty" : "missing"),
+    };
+
+    // 6. WorkBuddy
+    const wbRes = await collectWorkBuddySessions(home, env, customPaths.workbuddy, minMtimeMs);
+    allSessions.push(...wbRes.sessions);
+    diagnostics.workbuddy = {
+        source: "workbuddy", label: SOURCE_LABELS.workbuddy,
+        paths: wbRes.paths,
+        filesScanned: wbRes.filesScanned,
+        sessionsFound: wbRes.sessions.length,
+        lastActive: wbRes.sessions[0]?.lastActive || 0,
+        status: wbRes.sessions.length ? "ok" : (wbRes.paths.length ? "empty" : "missing"),
+    };
+
+    // 7. ZCode
+    const zcodeRoots = [
+        customPaths.zcode,
+        env.ZCODE_HOME,
+        path.join(home, ".zcode", "sessions"),
+        path.join(home, ".zcode", "projects"),
+        path.join(home, "Library/Application Support/ZCode/sessions"),
+    ].filter(p => p && fs.existsSync(p));
+    const zcodeFiles = [];
+    for (const root of zcodeRoots) {
+        zcodeFiles.push(...walkFiles(root, name => /\.(?:jsonl|json)$/i.test(name), { maxDepth: 4, maxFiles: 200, minMtimeMs }));
+    }
+    const zcodeSessions = zcodeFiles.map(f => parseZCodeFile(f, cache));
+    allSessions.push(...zcodeSessions);
+    diagnostics.zcode = {
+        source: "zcode", label: SOURCE_LABELS.zcode,
+        paths: zcodeRoots,
+        filesScanned: zcodeFiles.length,
+        sessionsFound: zcodeSessions.length,
+        lastActive: zcodeFiles[0]?.mtimeMs || 0,
+        status: zcodeFiles.length ? "ok" : (zcodeRoots.length ? "empty" : "missing"),
+    };
+
+    // 8. T3 Code
+    const t3Res = await collectT3CodeSessions(home, env, customPaths.t3code, minMtimeMs);
+    allSessions.push(...t3Res.sessions);
+    diagnostics.t3code = {
+        source: "t3code", label: SOURCE_LABELS.t3code,
+        paths: t3Res.paths,
+        filesScanned: t3Res.filesScanned,
+        sessionsFound: t3Res.sessions.length,
+        lastActive: t3Res.sessions[0]?.lastActive || 0,
+        status: t3Res.sessions.length ? "ok" : (t3Res.paths.length ? "empty" : "missing"),
     };
 
     cache.flush();

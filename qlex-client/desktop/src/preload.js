@@ -62,6 +62,7 @@ electron_1.contextBridge.exposeInMainWorld("qlex", {
     syncLocalSkills: () => electron_1.ipcRenderer.invoke("qlex:sync-local-skills"),
     resolveSkillConflict: (name, sourceNs) => electron_1.ipcRenderer.invoke("qlex:resolve-skill-conflict", { name, sourceNs }),
     resolveAllSkillConflicts: (strategy) => electron_1.ipcRenderer.invoke("qlex:resolve-all-skill-conflicts", strategy),
+    repairSkillAnomalies: () => electron_1.ipcRenderer.invoke("qlex:repair-skill-anomalies"),
     openSkillBackupDir: () => electron_1.ipcRenderer.invoke("qlex:open-skill-backup-dir"),
     openSkillDir: (namespace) => electron_1.ipcRenderer.invoke("qlex:open-skill-dir", namespace),
 

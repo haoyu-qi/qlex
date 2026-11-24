@@ -150,8 +150,8 @@ try {
     // 9. Universal Agent Retrieval Skill (`qlex-memory`) Generation, Multi-Agent Install & Real CLI Execution
     const installRes = installMemorySkill({ home: tmpHome });
     assert.equal(installRes.failed.length, 0);
-    assert.equal(installRes.status.installedCount, 6);
-    assert.equal(installRes.status.upToDateCount, 6);
+    assert.equal(installRes.status.installedCount, 9);
+    assert.equal(installRes.status.upToDateCount, 9);
 
     // Ensure skill-sync.js recognizes and validates `qlex-memory` cleanly (safeFile + size limits)
     const skillSync = createSkillSync(dataDir, tmpHome);

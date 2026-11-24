@@ -17,7 +17,7 @@ const DEFAULT_APPEARANCE = Object.freeze({
     dashboardFlat: false,
 });
 
-const DEFAULT_SKILL_NAMESPACES = Object.freeze(["agents", "codex", "claude", "hermes", "antigravity", "dsh"]);
+const DEFAULT_SKILL_NAMESPACES = Object.freeze(["agents", "codex", "claude", "hermes", "antigravity", "dsh", "workbuddy", "zcode", "t3code"]);
 const VALID_THEMES = new Set(["default", "obsidian", "porcelain"]);
 const VALID_BACKDROPS = new Set(["vibrancy", "liquid-glass", "liquid-glass-clear"]);
 const VALID_DOCK_MODES = new Set(["autoHide", "always"]);
@@ -276,7 +276,7 @@ class LocalStore {
         return this.update({ autoCheckUpdates: enabled });
     }
     setCollectorPath(source, dir) {
-        if (!["codex", "claude", "antigravity", "hermes", "dsh"].includes(source)) throw new Error("未知的采集源。");
+        if (!["codex", "claude", "antigravity", "hermes", "dsh", "workbuddy", "zcode", "t3code"].includes(source)) throw new Error("未知的采集源。");
         const next = { ...(this.state.collectorPaths || {}) };
         if (!dir || !String(dir).trim()) delete next[source];
         else next[source] = (0, node_path_1.resolve)(String(dir).trim());

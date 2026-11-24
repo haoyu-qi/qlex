@@ -12,6 +12,9 @@ const roots = {
     hermes: ".hermes/skills",
     antigravity: ".gemini/config/skills",
     dsh: ".dsh/skills",
+    workbuddy: ".workbuddy/skills",
+    zcode: ".zcode/skills",
+    t3code: ".t3/skills",
 };
 const namespaceLabels = {
     agents: "Agents",
@@ -20,8 +23,11 @@ const namespaceLabels = {
     hermes: "Hermes",
     antigravity: "Antigravity",
     dsh: "DSH",
+    workbuddy: "WorkBuddy",
+    zcode: "ZCode",
+    t3code: "T3 Code",
 };
-const preferredOrder = ["codex", "claude", "agents", "antigravity", "hermes", "dsh"];
+const preferredOrder = ["codex", "claude", "agents", "antigravity", "hermes", "dsh", "workbuddy", "t3code", "zcode"];
 
 const itemLimit = 512;
 const fileLimit = 128;
@@ -165,6 +171,8 @@ function createSkillSync(dataDir, home = homedir()) {
         localSynced: 0,
         conflicts: 0,
         conflictDetails: [],
+        anomalies: [],
+        lastErrors: [],
         backupRoot,
         lastBackupDir: "",
         time: 0,
@@ -286,6 +294,7 @@ function createSkillSync(dataDir, home = homedir()) {
         const targetList = selected.length ? selected : Object.keys(roots);
         const namespaces = {};
         const bySkill = new Map();
+        const anomalies = [];
 
         for (const ns of Object.keys(roots)) {
             const root = rootAt(home, ns);
@@ -293,9 +302,74 @@ function createSkillSync(dataDir, home = homedir()) {
             let count = 0;
             if (root) {
                 for (const entry of subdirectories(root)) {
-                    if (!entry.isDirectory() || !idPattern.test(entry.name)) continue;
                     const skillPath = path.join(root, entry.name);
-                    if (!fs.existsSync(path.join(skillPath, "SKILL.md"))) continue;
+                    if (entry.name.startsWith(".qlex-skill-") || entry.name.startsWith(".qlex-backup-")) {
+                        if (targetList.includes(ns)) {
+                            anomalies.push({
+                                type: "stale-temp",
+                                severity: "warn",
+                                name: entry.name,
+                                ns,
+                                label: namespaceLabels[ns],
+                                path: skillPath,
+                                reason: "检测到上次同步中断残留的临时目录",
+                                suggestion: "可一键安全清理",
+                                fixable: true,
+                            });
+                        }
+                        continue;
+                    }
+                    if (entry.isSymbolicLink()) {
+                        let targetOk = false;
+                        try { targetOk = fs.statSync(skillPath).isDirectory(); } catch { targetOk = false; }
+                        if (!targetOk && targetList.includes(ns)) {
+                            anomalies.push({
+                                type: "broken-symlink",
+                                severity: "error",
+                                name: entry.name,
+                                ns,
+                                label: namespaceLabels[ns],
+                                path: skillPath,
+                                reason: "技能软链接目标已失效或被删除",
+                                suggestion: "清理无效软链接后重新同步",
+                                fixable: true,
+                            });
+                        }
+                        continue;
+                    }
+                    if (!entry.isDirectory()) continue;
+                    if (!idPattern.test(entry.name)) {
+                        if (!entry.name.startsWith(".") && targetList.includes(ns)) {
+                            anomalies.push({
+                                type: "invalid-name",
+                                severity: "warn",
+                                name: entry.name,
+                                ns,
+                                label: namespaceLabels[ns],
+                                path: skillPath,
+                                reason: "技能目录名包含非规范字符（仅允许字母/数字/._-）",
+                                suggestion: "打开目录重命名规范名称",
+                                fixable: false,
+                            });
+                        }
+                        continue;
+                    }
+                    if (!fs.existsSync(path.join(skillPath, "SKILL.md"))) {
+                        if (targetList.includes(ns)) {
+                            anomalies.push({
+                                type: "missing-skill-md",
+                                severity: "warn",
+                                name: entry.name,
+                                ns,
+                                label: namespaceLabels[ns],
+                                path: skillPath,
+                                reason: "目录缺少必需的 SKILL.md 描述文件",
+                                suggestion: "补全 SKILL.md 或移出非技能目录",
+                                fixable: false,
+                            });
+                        }
+                        continue;
+                    }
                     count++;
                     if (targetList.includes(ns)) {
                         let rec = bySkill.get(entry.name);
@@ -307,6 +381,19 @@ function createSkillSync(dataDir, home = homedir()) {
                         const pkg = read(ns, entry.name);
                         if (pkg) {
                             if (pkg.mtimeMs > rec.mtimeMs) rec.mtimeMs = pkg.mtimeMs;
+                            if (!pkg.complete) {
+                                anomalies.push({
+                                    type: "incomplete-files",
+                                    severity: "warn",
+                                    name: entry.name,
+                                    ns,
+                                    label: namespaceLabels[ns],
+                                    path: skillPath,
+                                    reason: "包含非白名单后缀、敏感文件名或受限条目（已被安全跳过）",
+                                    suggestion: "点击「打开目录」检查非标准文件，或使用覆盖对齐",
+                                    fixable: false,
+                                });
+                            }
                             rec.variants.push({
                                 ns,
                                 label: namespaceLabels[ns],
@@ -317,6 +404,18 @@ function createSkillSync(dataDir, home = homedir()) {
                                 bytes: pkg.bytes,
                                 complete: pkg.complete,
                                 path: skillPath,
+                            });
+                        } else {
+                            anomalies.push({
+                                type: "oversized-or-unreadable",
+                                severity: "error",
+                                name: entry.name,
+                                ns,
+                                label: namespaceLabels[ns],
+                                path: skillPath,
+                                reason: "体积超过 512KB / 超过 128 文件上限，或无读取权限",
+                                suggestion: "精简技能包内大文件或二进制产物后重试",
+                                fixable: false,
                             });
                         }
                     }
@@ -342,12 +441,23 @@ function createSkillSync(dataDir, home = homedir()) {
                 const hasConflict = uniqueHashes.size > 1;
                 if (hasConflict) {
                     const recommended = chooseRecommendedVariant(item.variants);
+                    const sortedVars = item.variants
+                        .map(v => ({ ...v, recommended: v.ns === recommended?.ns }))
+                        .sort((a, b) => Number(b.recommended) - Number(a.recommended) || (b.mtimeMs - a.mtimeMs));
+                    const fileCounts = sortedVars.map(v => v.filesCount);
+                    const byteCounts = sortedVars.map(v => v.bytes);
+                    const minF = Math.min(...fileCounts), maxF = Math.max(...fileCounts);
+                    const diffBytes = Math.max(...byteCounts) - Math.min(...byteCounts);
+                    const diffHint = maxF !== minF
+                        ? `文件数差异 ${minF}↔${maxF} · 体积差 ${(diffBytes / 1024).toFixed(1)} KB`
+                        : diffBytes > 0
+                            ? `同为 ${maxF} 文件 · 内容体积差 ${(diffBytes / 1024).toFixed(1)} KB`
+                            : `同为 ${maxF} 文件 · 内容哈希不同`;
                     conflictDetails.push({
                         name: item.name,
-                        recommendedNs: recommended?.ns || item.variants[0]?.ns,
-                        variants: item.variants
-                            .map(v => ({ ...v, recommended: v.ns === recommended?.ns }))
-                            .sort((a, b) => Number(b.recommended) - Number(a.recommended) || (b.mtimeMs - a.mtimeMs)),
+                        recommendedNs: recommended?.ns || sortedVars[0]?.ns,
+                        diffHint,
+                        variants: sortedVars,
                     });
                 }
                 return {
@@ -361,6 +471,7 @@ function createSkillSync(dataDir, home = homedir()) {
             .sort((a, b) => Number(b.hasConflict) - Number(a.hasConflict) || b.missing.length - a.missing.length || a.name.localeCompare(b.name));
 
         conflictDetails.sort((a, b) => a.name.localeCompare(b.name));
+        anomalies.sort((a, b) => Number(b.fixable) - Number(a.fixable) || a.name.localeCompare(b.name));
 
         state = {
             ...state,
@@ -369,10 +480,36 @@ function createSkillSync(dataDir, home = homedir()) {
             missingLinks,
             conflicts: conflictDetails.length,
             conflictDetails,
+            anomalies: anomalies.slice(0, 40),
             phase: conflictDetails.length > 0 ? "conflict" : (state.phase === "conflict" ? "ready" : state.phase),
             skillsPreview: preview.slice(0, 60),
         };
         return state;
+    }
+
+    function repairAnomalies(enabledNamespaces = Object.keys(roots)) {
+        const selected = enabledNamespaces.filter(ns => Object.hasOwn(roots, ns));
+        const targets = selected.length ? selected : Object.keys(roots);
+        scanLocal(targets);
+        let cleaned = 0;
+        const errors = [];
+        for (const item of state.anomalies) {
+            if (!item.fixable) continue;
+            try {
+                if (item.type === "broken-symlink") {
+                    fs.unlinkSync(item.path);
+                    cleaned++;
+                } else if (item.type === "stale-temp") {
+                    fs.rmSync(item.path, { recursive: true, force: true });
+                    cleaned++;
+                }
+            } catch (err) {
+                errors.push(`${item.label}/${item.name}: ${err?.message || err}`);
+            }
+        }
+        scanLocal(targets);
+        state = { ...state, lastErrors: errors, localTime: Date.now() };
+        return { cleaned, errors, state: structuredClone(state) };
     }
 
     function syncLocal(enabledNamespaces = Object.keys(roots)) {
@@ -580,6 +717,7 @@ function createSkillSync(dataDir, home = homedir()) {
         syncLocal,
         resolveConflict,
         resolveAllConflicts,
+        repairAnomalies,
         refresh,
         snapshot: () => structuredClone(state),
     };

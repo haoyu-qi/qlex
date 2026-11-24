@@ -50,6 +50,9 @@
         claude: "#f4a073",
         hermes: "#b394f4",
         dsh: "#f1d973",
+        workbuddy: "#5eead4",
+        zcode: "#f9a8d4",
+        t3code: "#93c5fd",
     };
 
     function applyAppearance(appearance = {}, rootEl = document.documentElement, bodyEl = document.body) {

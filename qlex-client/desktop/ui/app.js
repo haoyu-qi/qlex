@@ -34,6 +34,9 @@ const SOURCE_NAMES = {
     claude: "Claude Code",
     hermes: "Hermes",
     dsh: "DSH",
+    workbuddy: "WorkBuddy",
+    zcode: "ZCode",
+    t3code: "T3 Code",
 };
 const ROLES = { local: "单机模式", center: "中心点", endpoint: "接入点" };
 const PERIODS = { 1: "今日", 7: "近 7 天", 30: "近 30 天" };
@@ -284,103 +287,245 @@ function buildQTrendSvg() {
     `;
 }
 
-/* ---- Q Stage: QLEX Core (Orbital Sync Hub) ---- */
+/* ---- Overview Stage: Constellation Orbital Hub + Right Live Telemetry Rail ---- */
+function buildRightBarChartSvg() {
+    const usageDaily = state.usage?.week?.daily || state.usage?.history?.[7]?.daily || [];
+    const usageMap = new Map(usageDaily.map(r => [r.date, Number(r.tokens || 0)]));
+    const memDaily = state.memoryArchive?.items?.daily || [];
+    const memMap = new Map(memDaily.map(item => [item.key, Number(item.rawBytes || item.compressedBytes || 0)]));
+    const todayTotal = Number(state.usage?.today?.total || 0);
+
+    const end = new Date();
+    const days = Array.from({ length: 7 }, (_, idx) => {
+        const d = new Date(end.getFullYear(), end.getMonth(), end.getDate() - (6 - idx));
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        const tok = usageMap.get(key) ?? (idx === 6 ? todayTotal : 0);
+        const mem = memMap.get(key) || 0;
+        return { key, short: key.slice(5), val: tok || mem, tok, mem };
+    });
+
+    const maxV = Math.max(1, ...days.map(d => d.val));
+    const W = 250, H = 64, top = 6, base = 58, plotH = base - top, step = W / 7, barW = 14;
+    const bars = days.map((d, i) => {
+        const cx = step * (i + 0.5);
+        const bh = d.val > 0 ? Math.max(5, Math.round((d.val / maxV) * plotH)) : 3;
+        return `<rect x="${(cx - barW / 2).toFixed(1)}" y="${(base - bh).toFixed(1)}" width="${barW}" height="${bh}" rx="3.5" fill="var(--accent)" fill-opacity="${d.val > 0 ? 0.85 : 0.16}"><title>${d.key} · 活动 ${fmtNum(d.tok)} tok / 记忆 ${fmtBytes(d.mem)}</title></rect>`;
+    }).join("");
+
+    return `
+      <svg class="q-trend-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <line x1="0" y1="${top + plotH * 0.5}" x2="${W}" y2="${top + plotH * 0.5}" stroke="rgba(232,238,244,0.07)" stroke-width="1"/>
+        <line x1="0" y1="${base}" x2="${W}" y2="${base}" stroke="rgba(232,238,244,0.12)" stroke-width="1"/>
+        ${bars}
+      </svg>
+      <div class="q-trend-axis">${days.map(d => `<span>${d.short}</span>`).join("")}</div>
+    `;
+}
+
 function renderQStage() {
     const net = state.pairing || { mode: "local", peers: [] };
     const ts = state.tailscale || {};
     const sk = state.skills || {};
     const mem = state.memoryArchive || {};
     const cog = mem.cognitive || { activeItems: 0, entities: 0, activeEdges: 0 };
-    const ms = state.memorySkill || { installedCount: 0, totalCount: 6 };
+    const counts = mem.counts || { daily: 0, weekly: 0, monthly: 0 };
+    const ms = state.memorySkill || { installedCount: 0, totalCount: 9 };
     const st = state.syncStatus || { phase: "idle", label: "立即同步", time: 0 };
     const health = computeHealth(state);
     const connectedPeers = (net.peers || []).filter(p => p.status === "connected").length;
     const onlinePeers = (net.peers || []).filter(p => p.online).length;
     const boundProjects = state.projects || [];
     const remoteProjects = state.remoteProjects || [];
-
-    const roleHeadline = net.mode === "center"
-        ? `中心点 · ${net.online ? "运行中" : "未启动"}`
-        : net.mode === "endpoint"
-            ? `接入点 · ${net.online ? `已连 ${cleanHost(net.endpoint?.name || "中心")}` : "离线缓存"}`
-            : `本机中枢 · ${health.label}`;
-
+    const anomalies = sk.anomalies || [];
+    const weekTotal = Number(state.usage?.week?.total || 0);
     const isSyncing = st.phase === "syncing";
     const orbTone = health.phase === "warn" || health.phase === "error" ? "warn" : "";
 
+    const activeNodeLabel = net.mode === "center"
+        ? `中心点：${cleanHost(state.deviceName)}`
+        : net.mode === "endpoint"
+            ? `接入点：${cleanHost(net.endpoint?.name || net.endpoint?.address || "中心节点")}`
+            : `单机中枢：${cleanHost(state.deviceName)}`;
+    const nodeOnlineBadge = net.mode === "local" ? "就绪" : net.online ? "在线" : "离线";
+
+    const memBars = (mem.items?.daily || []).slice(0, 7).reverse();
+    const memHeights = Array.from({ length: 7 }, (_, i) => {
+        const it = memBars[i];
+        return it ? Math.max(25, Math.min(100, Math.round((Number(it.rawBytes || 2000) / 28000) * 100))) : 16;
+    });
+    const skillHeights = Object.values(sk.namespaces || {}).slice(0, 7).map(n => Math.max(20, Math.min(100, Math.round(((n.count || 0) / Math.max(1, sk.uniqueSkills || 1)) * 100))));
+    while (skillHeights.length < 7) skillHeights.push(20);
+
+    const recentFeed = [];
+    if (boundProjects[0]) recentFeed.push({ icon: "✓", text: `同步项目：${boundProjects[0].name}`, time: fmtShortTime(boundProjects[0].updatedAt || net.syncMeta?.lastProjectsSync?.time) });
+    if (sk.localTime) recentFeed.push({ icon: sk.conflicts > 0 ? "!" : "✓", text: sk.conflicts > 0 ? `技能存在 ${sk.conflicts} 项冲突待对齐` : `技能一致化：${sk.uniqueSkills ?? 0} 项已对齐`, time: fmtShortTime(sk.localTime) });
+    if (mem.items?.daily?.[0]) recentFeed.push({ icon: "⟳", text: `记忆归档：${mem.items.daily[0].key}（${cog.activeItems || 0} 条）`, time: fmtShortTime(mem.lastRun) });
+    recentFeed.push({ icon: ts.online ? "✓" : "•", text: ts.online ? `穿透在线：${ts.self?.dnsName || ts.self?.ip}` : `本机节点：${cleanHost(state.deviceName)}`, time: fmtShortTime(st.time) });
+
+    const issueCount = (sk.conflicts || 0) + anomalies.length;
+
     patchHtml(overviewStage, `
-      <section class="q-hero">
-        <div class="q-orbit-stage ${isSyncing ? "syncing" : ""}">
-          <div class="q-orbit-ring outer">
-            <span class="q-satellite" title="${ts.online ? `Tailscale ${ts.self?.ip || ""}` : "内网发现"}"></span>
+      <div class="hub-left-main">
+        <div class="hub-title-row">
+          <h1>中枢总览</h1>
+          <p>项目同步 · 持久记忆 · 跨设备工作空间 · 多工具统一 Skills</p>
+        </div>
+
+        <section class="hub-constellation">
+          <svg class="hub-links-svg" viewBox="0 0 600 192" preserveAspectRatio="none" aria-hidden="true">
+            <line x1="185" y1="54" x2="245" y2="82" stroke="rgba(183,234,212,0.42)" stroke-width="1.3"/>
+            <line x1="185" y1="138" x2="245" y2="112" stroke="rgba(183,234,212,0.42)" stroke-width="1.3"/>
+            <line x1="415" y1="54" x2="355" y2="82" stroke="rgba(115,189,245,0.42)" stroke-width="1.3"/>
+            <line x1="415" y1="138" x2="355" y2="112" stroke="rgba(115,189,245,0.42)" stroke-width="1.3"/>
+            <circle cx="245" cy="82" r="2.6" fill="var(--accent)"/>
+            <circle cx="245" cy="112" r="2.6" fill="var(--accent)"/>
+            <circle cx="355" cy="82" r="2.6" fill="var(--blue)"/>
+            <circle cx="355" cy="112" r="2.6" fill="var(--blue)"/>
+          </svg>
+
+          <div class="hub-sat-col">
+            <button type="button" class="hub-sat-card" data-rail="link">
+              <span class="hub-sat-ico blue">⌘</span>
+              <div class="hub-sat-text">
+                <div class="hub-sat-title">设备互联</div>
+                <div class="hub-sat-sub"><span class="hub-sat-dot ${net.online || ts.online ? "" : "warn"}"></span>${net.mode === "center" ? `${onlinePeers}/${connectedPeers} 节点 · 在线` : ts.online ? `${(ts.discoveredCenters || []).length} 台中心 · 穿透` : "单机就绪"}</div>
+              </div>
+            </button>
+            <button type="button" class="hub-sat-card" data-rail="memory">
+              <span class="hub-sat-ico purple">✦</span>
+              <div class="hub-sat-text">
+                <div class="hub-sat-title">持久记忆</div>
+                <div class="hub-sat-sub"><span class="hub-sat-dot"></span>${fmtNum(cog.activeItems || 0)} 条活跃记忆</div>
+              </div>
+            </button>
           </div>
-          <div class="q-orbit-ring inner">
-            <span class="q-satellite accent" title="跨 Agent 技能 ${ms.installedCount}/${ms.totalCount}"></span>
+
+          <div class="hub-orb-wrap ${isSyncing ? "syncing" : ""}">
+            <div class="hub-orb-ring"></div>
+            <button type="button" class="q-core-orb ${orbTone}" data-action="sync-now" title="点击立即执行双向同步">
+              <svg class="orb-grid" viewBox="0 0 140 140" aria-hidden="true">
+                <circle cx="70" cy="70" r="68" fill="none" stroke="white" stroke-width="0.7"/>
+                <ellipse cx="70" cy="70" rx="34" ry="68" fill="none" stroke="white" stroke-width="0.7"/>
+                <ellipse cx="70" cy="70" rx="68" ry="26" fill="none" stroke="white" stroke-width="0.7"/>
+                <line x1="2" y1="70" x2="138" y2="70" stroke="white" stroke-width="0.6"/>
+              </svg>
+              <span class="q-core-score">${health.score}</span>
+              <span class="q-core-tag">${health.phase === "ok" ? "✓ " : "⚠ "}${esc(health.label)}</span>
+            </button>
           </div>
-          <button type="button" class="q-core-orb ${orbTone}" data-action="sync-now" title="点击立即执行双向同步">
-            <svg class="orb-grid" viewBox="0 0 140 140" aria-hidden="true">
-              <circle cx="70" cy="70" r="68" fill="none" stroke="white" stroke-width="0.7"/>
-              <ellipse cx="70" cy="70" rx="34" ry="68" fill="none" stroke="white" stroke-width="0.7"/>
-              <ellipse cx="70" cy="70" rx="68" ry="26" fill="none" stroke="white" stroke-width="0.7"/>
-              <line x1="2" y1="70" x2="138" y2="70" stroke="white" stroke-width="0.6"/>
+
+          <div class="hub-sat-col">
+            <button type="button" class="hub-sat-card" data-rail="workspace">
+              <span class="hub-sat-ico">❖</span>
+              <div class="hub-sat-text">
+                <div class="hub-sat-title">工程同步</div>
+                <div class="hub-sat-sub"><span class="hub-sat-dot ${issueCount > 0 ? "warn" : ""}"></span>${boundProjects.length} 项目 · ${sk.uniqueSkills ?? 0} Skills</div>
+              </div>
+            </button>
+            <button type="button" class="hub-sat-card" data-rail="status">
+              <span class="hub-sat-ico ${issueCount > 0 ? "warn" : "blue"}">◎</span>
+              <div class="hub-sat-text">
+                <div class="hub-sat-title">AI 工具</div>
+                <div class="hub-sat-sub"><span class="hub-sat-dot ${issueCount > 0 ? "warn" : ""}"></span>${ms.installedCount}/${ms.totalCount} 工具 · ${issueCount > 0 ? `${issueCount} 项待处理` : "已对齐"}</div>
+              </div>
+            </button>
+          </div>
+        </section>
+
+        <div class="hub-node-banner">
+          <div class="hub-node-line">
+            <span>${esc(activeNodeLabel)}</span>
+            <span class="tag ${net.online || net.mode === "local" ? "ok" : "warn"}">${nodeOnlineBadge}</span>
+          </div>
+          <div class="hub-node-sub">
+            <span>${fmtNum(cog.activeItems || 0)} 条记忆 · ${sk.uniqueSkills ?? 0} 项技能 · ${ts.online ? `Tailscale ${esc(ts.self?.ip || "")}` : "局域网"}</span>
+            <span>·</span>
+            ${issueCount > 0
+                ? `<button type="button" class="q-inline-link" style="color:var(--orange)" data-rail="workspace">处理 ${issueCount} 项冲突/异常 ›</button>`
+                : net.mode === "center" && net.online
+                    ? `<button type="button" class="q-inline-link" data-action="copy-invite">复制邀请码</button><span>·</span><button type="button" class="q-inline-link" data-action="invite">刷新链接</button>`
+                    : `<button type="button" class="q-inline-link" data-action="tailscale-scan">扫描内网节点 ›</button>`}
+          </div>
+        </div>
+
+        <section class="hub-mini-grid">
+          <div class="hub-mini-card" data-rail="link">
+            <div class="hub-mini-lbl">设备连接</div>
+            <div class="hub-mini-val">${net.mode === "center" ? `${onlinePeers}<small>台在线</small>` : `${(ts.discoveredCenters || []).length}<small>台中心</small>`}</div>
+            <svg class="hub-mini-spark" viewBox="0 0 100 22" preserveAspectRatio="none">
+              <path d="M0 18 L18 14 L34 16 L52 10 L70 13 L86 7 L100 9" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round"/>
             </svg>
-            <span class="q-core-score">${health.score}</span>
-            <span class="q-core-tag">${esc(health.label)}</span>
-          </button>
-        </div>
-
-        <div class="q-hero-title">${esc(roleHeadline)}</div>
-        <div class="q-hero-sub">
-          <span>${fmtNum(cog.activeItems || 0)} 条记忆 · ${sk.uniqueSkills ?? 0} 项技能 · ${ts.online ? `Tailscale ${esc(ts.self?.ip || "")}` : "局域网就绪"}</span>
-          <span>·</span>
-          ${sk.conflicts > 0
-              ? `<button type="button" class="q-inline-link" style="color:var(--orange)" data-rail="workspace">解决 ${sk.conflicts} 项技能冲突 ›</button>`
-              : net.mode === "center" && net.online
-                  ? `<button type="button" class="q-inline-link" data-action="copy-invite">复制一次性邀请码</button><span>·</span><button type="button" class="q-inline-link" data-action="invite">刷新链接</button>`
-                  : `<button type="button" class="q-inline-link" data-action="tailscale-scan">扫描内网节点</button>`}
-        </div>
-
-        <button type="button" class="q-primary-cta" data-action="sync-now" ${isSyncing ? "disabled" : ""}>
-          ${isSyncing ? "正在双向同步…" : "立即双向同步"}
-        </button>
-      </section>
-
-      <section class="q-bottom-grid">
-        <div class="q-tile" data-rail="link">
-          <div class="q-tile-head">
-            <span class="q-tile-kicker">互联穿透</span>
-            <span class="tag ${ts.online || net.online ? "ok" : "warn"}">${ts.online ? "TS 在线" : ROLES[net.mode]}</span>
           </div>
-          <div class="q-tile-val">${net.mode === "center" ? `${onlinePeers}<small>/${connectedPeers} 节点</small>` : ts.online ? `${(ts.discoveredCenters || []).length}<small> 台中心</small>` : "就绪"}</div>
-          <div class="q-tile-sub">${esc(ts.self?.dnsName || cleanHost(state.deviceName))}</div>
+          <div class="hub-mini-card" data-rail="memory">
+            <div class="hub-mini-lbl">活跃记忆</div>
+            <div class="hub-mini-val">${fmtNum(cog.activeItems || 0)}<small>条</small></div>
+            <div class="hub-mini-bars">${memHeights.map(h => `<span class="hub-mini-bar purple" style="height:${h}%"></span>`).join("")}</div>
+          </div>
+          <div class="hub-mini-card" data-rail="workspace">
+            <div class="hub-mini-lbl">项目与技能</div>
+            <div class="hub-mini-val">${boundProjects.length}<small>项 · ${sk.uniqueSkills ?? 0}技</small></div>
+            <div class="hub-mini-bars">${skillHeights.map(h => `<span class="hub-mini-bar blue" style="height:${h}%"></span>`).join("")}</div>
+          </div>
+          <div class="hub-mini-card" data-rail="status">
+            <div class="hub-mini-lbl">归档覆盖</div>
+            <div class="hub-mini-val">${counts.daily}<small>日 / ${mem.compressionRatio ?? 0}%</small></div>
+            <div class="hub-mini-bars">${[28, 42, 35, 62, 54, 78, 92].map(h => `<span class="hub-mini-bar" style="height:${h}%"></span>`).join("")}</div>
+          </div>
+        </section>
+      </div>
+
+      <aside class="hub-right-rail">
+        <div class="hub-right-card">
+          <div class="card-head">
+            <span class="card-title">系统状态</span>
+            <span class="tag ${health.phase === "ok" ? "ok" : "warn"}">${health.phase === "ok" ? "✓ 运行正常" : "待处理"}</span>
+          </div>
+          <div>
+            <div class="hub-check-row"><span class="hub-check-left"><span class="hub-sat-dot"></span>同步服务</span><span class="hub-check-val">${net.online || net.mode === "local" ? "正常" : "离线"}</span></div>
+            <div class="hub-check-row"><span class="hub-check-left"><span class="hub-sat-dot"></span>记忆引擎</span><span class="hub-check-val">压缩 ${mem.compressionRatio ?? 0}%</span></div>
+            <div class="hub-check-row"><span class="hub-check-left"><span class="hub-sat-dot ${ts.online ? "" : "warn"}"></span>跨设备穿透 (Tailscale)</span><span class="hub-check-val ${ts.online ? "" : "warn"}">${ts.online ? "在线" : "未连接"}</span></div>
+            <div class="hub-check-row"><span class="hub-check-left"><span class="hub-sat-dot ${issueCount > 0 ? "warn" : ""}"></span>AI 工具对齐</span><span class="hub-check-val ${issueCount > 0 ? "warn" : ""}">${issueCount > 0 ? `${issueCount} 项待处理` : "已就绪"}</span></div>
+          </div>
         </div>
 
-        <div class="q-tile" data-rail="memory">
-          <div class="q-tile-head">
-            <span class="q-tile-kicker">记忆图谱</span>
-            <span class="tag ${ms.installedCount === ms.totalCount ? "ok" : "warn"}">技能 ${ms.installedCount}/${ms.totalCount}</span>
+        <div class="hub-right-card" data-rail="insights" style="cursor:pointer">
+          <div class="card-head">
+            <span class="card-title">活动趋势 <small style="font-weight:500;color:var(--muted)">(辅助统计)</small></span>
+            <span class="tag">近 7 天</span>
           </div>
-          <div class="q-tile-val">${fmtNum(cog.activeItems || 0)}<small>条</small></div>
-          <div class="q-tile-sub">${cog.entities || 0} 实体 · ${cog.activeEdges || 0} 边 · 压缩 ${mem.compressionRatio ?? 0}%</div>
+          <div style="display:flex;align-items:baseline;justify-content:space-between">
+            <strong style="font-size:18px;color:var(--number);font-variant-numeric:tabular-nums">${fmtCompact(weekTotal)} <small style="font-size:11px;font-weight:500;color:var(--muted)">tokens</small></strong>
+            <span class="card-meta">${Object.values(state.usage?.diagnostics || {}).filter(d => d.status === "ok").length}/8 工具活跃</span>
+          </div>
+          ${buildRightBarChartSvg()}
         </div>
 
-        <div class="q-tile" data-rail="workspace">
-          <div class="q-tile-head">
-            <span class="q-tile-kicker">项目与技能</span>
-            <span class="tag ${sk.conflicts > 0 ? "warn" : "ok"}">${sk.conflicts > 0 ? `冲突 ${sk.conflicts}` : "已对齐"}</span>
+        <div class="hub-right-card">
+          <div class="card-head">
+            <span class="card-title">最近同步活动</span>
+            <button type="button" class="q-inline-link" data-rail="status">查看全部 ›</button>
           </div>
-          <div class="q-tile-val">${boundProjects.length}<small>项目 · ${sk.uniqueSkills ?? 0}技能</small></div>
-          <div class="q-tile-sub">${remoteProjects.length ? `${remoteProjects.length} 个远端共享项目待绑定` : "跨设备工作区与 6 工具技能"}</div>
+          <div>
+            ${recentFeed.slice(0, 4).map(f => `
+              <div class="hub-feed-row">
+                <span class="hub-feed-text">${esc(f.icon)} ${esc(f.text)}</span>
+                <span class="hub-feed-time">${esc(f.time)}</span>
+              </div>
+            `).join("")}
+          </div>
         </div>
+      </aside>
 
-        <div class="q-tile" data-rail="status">
-          <div class="q-tile-head">
-            <span class="q-tile-kicker">同步活动趋势</span>
-            <span class="card-meta">${fmtShortTime(st.time)}</span>
-          </div>
-          ${buildQTrendSvg()}
+      <footer class="hub-quick-dock">
+        <span class="hub-quick-label">⚡ 快速操作</span>
+        <div class="hub-quick-btns">
+          <button type="button" class="hub-quick-btn primary" data-action="sync-now" ${isSyncing ? "disabled" : ""}>${isSyncing ? "⟳ 同步中…" : "⟳ 立即同步"}</button>
+          <button type="button" class="hub-quick-btn" data-action="add-project">+ 添加项目</button>
+          <button type="button" class="hub-quick-btn" data-action="quick-write-memory">✎ 写入记忆</button>
+          <button type="button" class="hub-quick-btn" data-action="sync-local-skills">⇄ 对齐 Skills</button>
+          <button type="button" class="hub-quick-btn" data-rail="link">⊕ 连接新设备</button>
         </div>
-      </section>
+      </footer>
     `);
 }
 
@@ -739,6 +884,9 @@ function renderXStage() {
     const sk = state.skills || {};
     const namespaces = Object.values(sk.namespaces || {});
     const conflictDetails = sk.conflictDetails || [];
+    const anomalies = sk.anomalies || [];
+    const fixableAnomalies = anomalies.filter(a => a.fixable);
+    const lastErrors = sk.lastErrors || [];
 
     let projectsLeftHtml = "";
     if (projectDetail) {
@@ -842,10 +990,11 @@ function renderXStage() {
       <div class="stage-header">
         <div class="stage-title-group">
           <h2 class="stage-title">项目同步与技能</h2>
-          <span class="stage-subtitle">跨设备工作区对齐 · 6 大 AI 工具本地 Skills 一致化与冲突解决</span>
+          <span class="stage-subtitle">跨设备工作区对齐 · 9 大 AI 工具本地 Skills 一致化、冲突仲裁与异常修复</span>
         </div>
         <div class="stage-actions">
           <button type="button" class="glass-btn sm" data-action="open-skill-backup-dir">冲突备份 ↗</button>
+          ${fixableAnomalies.length ? `<button type="button" class="glass-btn sm danger" data-action="repair-skill-anomalies">修复异常 (${fixableAnomalies.length})</button>` : ""}
           <button type="button" class="glass-btn sm primary" data-action="sync-local-skills">⟳ 立即对齐 Skills</button>
         </div>
       </div>
@@ -856,21 +1005,21 @@ function renderXStage() {
         <div class="col-stack">
           <div class="card">
             <div class="card-head">
-              <span class="card-title">6 大 AI 工具 Skills 同步矩阵</span>
-              <span class="tag ${conflictDetails.length ? "warn" : "ok"}">${sk.uniqueSkills ?? 0} 项 · ${conflictDetails.length ? `冲突 ${conflictDetails.length}` : sk.missingLinks > 0 ? `待齐 ${sk.missingLinks}` : "已对齐"}</span>
+              <span class="card-title">9 大 AI 工具 Skills 同步矩阵</span>
+              <span class="tag ${conflictDetails.length || anomalies.length ? "warn" : "ok"}">${sk.uniqueSkills ?? 0} 项 · ${conflictDetails.length ? `冲突 ${conflictDetails.length}` : anomalies.length ? `异常 ${anomalies.length}` : sk.missingLinks > 0 ? `待齐 ${sk.missingLinks}` : "已对齐"}</span>
             </div>
-            <div class="skills-ns-grid">
+            <div class="skills-ns-grid grid-3">
               ${namespaces.map(ns => `
-                <div class="skill-ns-chip ${ns.enabled ? "enabled" : ""}" data-toggle-ns="${ns.id}" title="${esc(ns.path)}">
+                <div class="skill-ns-chip ${ns.enabled ? "enabled" : ""} ${ns.exists ? "" : "missing"}" data-toggle-ns="${ns.id}" title="${esc(ns.path)}${ns.exists ? "" : "（目录尚未创建，同步时自动初始化）"}">
                   <span>${ns.enabled ? "✓ " : ""}${esc(ns.label)}</span>
-                  <strong>${ns.count}</strong>
+                  <strong>${ns.exists ? ns.count : "—"}</strong>
                 </div>
               `).join("")}
             </div>
-            <div class="muted-note">${sk.localTime ? `最近对齐 ${fmtTime(sk.localTime)} · 新增/更新 ${sk.localSynced || 0} · 冲突 ${sk.conflicts || 0}` : "勾选需保持一致的工具目录，覆盖冲突前自动备份至 ~/.qlex-skill-backups"}</div>
+            <div class="muted-note">${sk.localTime ? `最近对齐 ${fmtTime(sk.localTime)} · 新增/更新 ${sk.localSynced || 0} · 冲突 ${sk.conflicts || 0} · 异常 ${anomalies.length}` : "勾选需同步的工具目录（含 WorkBuddy / ZCode / T3 Code），覆盖前自动备份旧版至 ~/.qlex-skill-backups"}</div>
             <div class="btn-row">
               <button type="button" class="glass-btn sm primary" data-action="sync-local-skills">⟳ 同步本机 Skills</button>
-              <button type="button" class="glass-btn sm" data-action="open-skill-dir" data-ns="agents">打开技能目录 ↗</button>
+              <button type="button" class="glass-btn sm" data-action="open-skill-dir" data-ns="agents">打开目录 ↗</button>
               <button type="button" class="glass-btn sm" data-action="install-memory-skill">部署 qlex-memory</button>
             </div>
           </div>
@@ -878,23 +1027,28 @@ function renderXStage() {
           ${conflictDetails.length ? `
             <div class="conflict-box">
               <div class="card-head">
-                <span class="card-title" style="color:var(--orange)">发现 ${conflictDetails.length} 项技能版本冲突</span>
-                <button type="button" class="glass-btn sm primary" data-action="resolve-all-conflicts">⚡ 全部按最新对齐</button>
+                <span class="card-title" style="color:var(--orange)">技能冲突仲裁 (${conflictDetails.length})</span>
+                <div class="btn-row" style="flex-wrap:nowrap">
+                  <button type="button" class="glass-btn sm" data-resolve-strategy="codex" title="所有冲突全部以 Codex 版本为准覆盖并备份旧版">Codex 基准</button>
+                  <button type="button" class="glass-btn sm primary" data-action="resolve-all-conflicts">⚡ 全部对齐</button>
+                </div>
               </div>
-              <div class="item-list" style="max-height:240px;overflow-y:auto">
+              <div class="muted-note">处理策略：选择基准目录覆盖其余目录，旧版本自动归档至 <code>~/.qlex-skill-backups</code>，随时可回滚。</div>
+              <div class="item-list" style="max-height:220px;overflow-y:auto">
                 ${conflictDetails.map(cf => `
                   <div class="conflict-item">
                     <div class="card-head">
                       <span class="item-title">${esc(cf.name)}</span>
-                      <span class="card-meta">${cf.variants.length} 个目录有差异</span>
+                      <span class="card-meta">${esc(cf.diffHint || `${cf.variants.length} 个目录有差异`)}</span>
                     </div>
                     <div class="conflict-variants">
                       ${cf.variants.map(v => `
-                        <button type="button" class="conflict-pick-btn ${v.recommended ? "recommended" : ""}" data-resolve-skill="${esc(cf.name)}:${esc(v.ns)}">
+                        <button type="button" class="conflict-pick-btn ${v.recommended ? "recommended" : ""}" data-resolve-skill="${esc(cf.name)}:${esc(v.ns)}" title="哈希 ${esc(v.shortHash)} · 体积 ${fmtBytes(v.bytes)}">
                           <span>以 ${esc(v.label)} 为准${v.recommended ? " · 推荐" : ""}</span>
-                          <small>${v.filesCount}文件 · ${fmtTime(v.mtimeMs)}</small>
+                          <small>${v.filesCount}文件 · ${fmtBytes(v.bytes)} · ${fmtTime(v.mtimeMs)}</small>
                         </button>
                       `).join("")}
+                      <button type="button" class="conflict-pick-btn" data-action="open-skill-dir" data-ns="${esc(cf.recommendedNs || "agents")}" title="在 Finder 中人工比对">人工查看 ↗</button>
                     </div>
                   </div>
                 `).join("")}
@@ -902,10 +1056,31 @@ function renderXStage() {
             </div>
           ` : `
             <div class="card">
-              <div class="card-head"><span class="card-title">技能冲突状态</span><span class="tag ok">0 冲突</span></div>
-              <div class="muted-note">所有已勾选的 AI 工具技能目录版本完全一致，无内容分歧。</div>
+              <div class="card-head"><span class="card-title">技能冲突状态</span><span class="tag ok">✓ 0 冲突</span></div>
+              <div class="muted-note">所有已勾选的工具技能目录内容哈希完全一致；若发生修改冲突，QLEX 会自动暂停覆盖并保留备份。</div>
             </div>
           `}
+
+          ${(anomalies.length || lastErrors.length) ? `
+            <div class="anomaly-box">
+              <div class="card-head">
+                <span class="card-title" style="color:var(--red)">技能异常处理（${anomalies.length + lastErrors.length} 项）</span>
+                ${fixableAnomalies.length ? `<button type="button" class="glass-btn sm primary" data-action="repair-skill-anomalies">⚡ 一键清理可修复项 (${fixableAnomalies.length})</button>` : ""}
+              </div>
+              <div class="item-list" style="max-height:180px;overflow-y:auto">
+                ${anomalies.map(a => `
+                  <div class="item-row" style="padding:7px 9px">
+                    <div class="item-text">
+                      <div class="item-title" style="font-size:12px">${esc(a.label)} / ${esc(a.name)} <span class="tag ${a.severity === "error" ? "err" : "warn"}" style="margin-left:4px">${esc(a.type === "broken-symlink" ? "损坏软链" : a.type === "stale-temp" ? "残留临时" : a.type === "missing-skill-md" ? "缺 SKILL.md" : a.type === "incomplete-files" ? "受限文件" : "超限/不可读")}</span></div>
+                      <div class="item-sub">${esc(a.reason)} · 建议：${esc(a.suggestion)}</div>
+                    </div>
+                    <button type="button" class="glass-btn sm" data-action="open-skill-dir" data-ns="${esc(a.ns)}">定位 ↗</button>
+                  </div>
+                `).join("")}
+                ${lastErrors.map(e => `<div class="muted-note" style="color:var(--red)">• ${esc(e)}</div>`).join("")}
+              </div>
+            </div>
+          ` : ""}
         </div>
       </div>
     `);
@@ -956,7 +1131,7 @@ function renderStatusStage() {
       <div class="stage-header">
         <div class="stage-title-group">
           <h2 class="stage-title">运行状态</h2>
-          <span class="stage-subtitle">综合健康评估 · 同步链路 · 5 大 Agent 采集器与 6 工具技能实时状态</span>
+          <span class="stage-subtitle">综合健康评估 · 同步链路 · 8 大 Agent 采集器与 9 工具技能实时状态</span>
         </div>
         <div class="stage-actions">
           <button type="button" class="glass-btn sm" data-action="refresh-usage">⟳ 刷新采集</button>
@@ -1011,7 +1186,7 @@ function renderStatusStage() {
         <div class="col-stack">
           <div class="card">
             <div class="card-head">
-              <span class="card-title">核心服务与 5 大 Agent 采集器</span>
+              <span class="card-title">核心服务与 8 大 Agent 采集器</span>
               <span class="tag ok">${esc(state.usage?.engine || "native")} 引擎</span>
             </div>
             <div class="item-list">
@@ -1057,14 +1232,14 @@ function renderStatusStage() {
         <div class="col-stack">
           <div class="card">
             <div class="card-head">
-              <span class="card-title">6 大工具 Skills 目录健康状态</span>
+              <span class="card-title">9 大工具 Skills 目录健康状态</span>
               <span class="tag ${sk.conflicts > 0 ? "warn" : "ok"}">${sk.conflicts > 0 ? `冲突 ${sk.conflicts}` : `${sk.uniqueSkills ?? 0} 项已对齐`}</span>
             </div>
-            <div class="skills-ns-grid">
+            <div class="skills-ns-grid grid-3">
               ${namespaces.map(ns => `
-                <div class="skill-ns-chip ${ns.enabled ? "enabled" : ""}" data-rail="workspace" title="${esc(ns.path)}">
+                <div class="skill-ns-chip ${ns.enabled ? "enabled" : ""} ${ns.exists ? "" : "missing"}" data-rail="workspace" title="${esc(ns.path)}">
                   <span>${ns.enabled ? "✓ " : ""}${esc(ns.label)}</span>
-                  <strong>${ns.count}</strong>
+                  <strong>${ns.exists ? ns.count : "—"}</strong>
                 </div>
               `).join("")}
             </div>
@@ -1368,7 +1543,7 @@ function renderSettingsStage() {
 
           <div class="card">
             <div class="card-head">
-              <span class="card-title">本地 5 大 Agent 日志采集诊断</span>
+              <span class="card-title">本地 8 大 Agent 日志采集诊断</span>
               <button type="button" class="glass-btn sm" data-action="refresh-usage">⟳ 重新采集</button>
             </div>
             <div class="item-list">
@@ -1486,6 +1661,17 @@ document.addEventListener("click", (event) => {
                 notify(`已解决 ${res.result?.resolvedCount || 0} 项冲突，旧版已备份`);
                 return res.state;
             });
+        } else if (act === "repair-skill-anomalies") {
+            void runAction(actionBtn, async () => {
+                const res = await window.qlex.repairSkillAnomalies();
+                notify(`已清理修复 ${res.result?.cleaned || 0} 项技能目录异常`);
+                return res.state;
+            });
+        } else if (act === "quick-write-memory") {
+            activeSection = "memory";
+            memoryRetainOpen = true;
+            render();
+            document.querySelector("#retainContentInput")?.focus();
         } else if (act === "open-skill-backup-dir") void window.qlex.openSkillBackupDir();
         else if (act === "open-skill-dir") void window.qlex.openSkillDir(actionBtn.dataset.ns || "agents");
         else if (act === "sync-memory-now") {
@@ -1558,6 +1744,17 @@ document.addEventListener("click", (event) => {
     const bindBtn = target.closest("[data-bind-remote-project]");
     if (bindBtn && state) {
         void runAction(bindBtn, () => window.qlex.bindRemoteProject(bindBtn.dataset.bindRemoteProject), { success: "已将跨端共享项目绑定到本机目录" });
+        return;
+    }
+
+    const strategyBtn = target.closest("[data-resolve-strategy]");
+    if (strategyBtn && state) {
+        const strat = strategyBtn.dataset.resolveStrategy;
+        void runAction(strategyBtn, async () => {
+            const res = await window.qlex.resolveAllSkillConflicts(strat);
+            notify(`已按 ${strat} 基准解决 ${res.result?.resolvedCount || 0} 项冲突（旧版已备份）`);
+            return res.state;
+        });
         return;
     }
 
