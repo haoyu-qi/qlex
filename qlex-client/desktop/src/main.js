@@ -40,7 +40,7 @@ const dockUrl = (0, node_url_1.pathToFileURL)(dockPath).href;
 const logo = (0, node_path_1.join)(electron_1.app.getAppPath(), "docs/assets/brand/logo.png");
 
 const DEFAULT_WINDOW = { width: 372, height: 676 };
-const MENUBAR_POPOVER = { width: 396, height: 688 };
+const MENUBAR_POPOVER = { width: 352, height: 746 };
 const WINDOW_LIMITS = { minWidth: 280, minHeight: 380, maxWidth: 1200, maxHeight: 1400 };
 const LIQUID_GLASS_SUPPORTED = process.platform === "darwin" && Number.parseInt(node_os_1.release(), 10) >= 25;
 
@@ -98,7 +98,7 @@ function applyAllNativeMaterials(appearance = store?.snapshot().appearance) {
         syncNativeMaterialVisibility(dashboardWindow, nativeMaterialOptions(appearance, true));
     }
     if (menubarWindow && !menubarWindow.isDestroyed()) {
-        syncNativeMaterialVisibility(menubarWindow, { ...nativeMaterialOptions(appearance, false), radius: 16 });
+        syncNativeMaterialVisibility(menubarWindow, nativeMaterialOptions(appearance, false));
     }
     edgeDock?.syncMaterial();
 }
@@ -422,7 +422,7 @@ function createMenubarPopover() {
     if (process.platform === "darwin") {
         created.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     }
-    const matOpts = () => ({ ...nativeMaterialOptions(store.snapshot().appearance, false), radius: 16 });
+    const matOpts = () => nativeMaterialOptions(store.snapshot().appearance, false);
     attachNativeMaterialVisibility(created, matOpts);
     syncNativeMaterialVisibility(created, matOpts());
     created.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -457,7 +457,7 @@ function toggleMenubarPopover(forceShow = false) {
     if (!target.webContents.isLoadingMainFrame()) {
         target.webContents.send("qlex:state-changed", desktopState());
     }
-    syncNativeMaterialVisibility(target, { ...nativeMaterialOptions(store.snapshot().appearance, false), radius: 16 });
+    syncNativeMaterialVisibility(target, nativeMaterialOptions(store.snapshot().appearance, false));
     target.show();
     target.focus();
 }
@@ -660,7 +660,7 @@ function registerHandlers() {
         },
         "qlex:resize-menubar-popover": (height) => {
             if (menubarWindow && !menubarWindow.isDestroyed()) {
-                const clamped = Math.max(460, Math.min(820, Math.ceil(Number(height) || MENUBAR_POPOVER.height)));
+                const clamped = Math.max(520, Math.min(860, Math.ceil(Number(height) || MENUBAR_POPOVER.height)));
                 if (Math.abs(clamped - lastMenubarHeight) >= 2) {
                     positionMenubarPopover(menubarWindow, clamped);
                 }

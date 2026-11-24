@@ -104,9 +104,9 @@ function render() {
     mbSyncTopBtn.textContent = syncSt.phase === "syncing" ? "⟳ 同步中" : "⟳ 同步";
 
     const pills = [
-        { text: ROLES[net.mode] || "单机模式", flex: false },
+        { text: ROLES[net.mode] || "单机", flex: false },
         { text: (state.deviceName || "macOS").replace(/\.local$/i, ""), flex: true },
-        { text: ts.online && ts.self?.ip ? `TS ${ts.self.ip}` : "局域网", flex: false },
+        { text: ts.online && ts.self?.ip ? ts.self.ip : "局域网", flex: false },
         { text: `v${state.version || "0.2.2"}`, flex: false },
     ];
     patchHtml(mbMetaPills, pills.map(p => `<span class="mb-meta-pill${p.flex ? " flex" : ""}" title="${esc(p.text)}">${esc(p.text)}</span>`).join(""));
@@ -151,7 +151,7 @@ function render() {
     patchHtml(mbBentoGrid, `
       <div class="mb-card" data-open-page="devices">
         <div class="mb-card-head">
-          <span class="mb-card-title"><i class="dot" style="background:var(--mb-green)"></i>节点状态</span>
+          <span class="mb-card-title"><i class="dot" style="background:var(--success)"></i>节点状态</span>
           <span class="mb-tag ${nodeTagClass}">${nodeTagText}</span>
         </div>
         <div class="mb-card-metric">${nodeMetric}</div>
@@ -161,19 +161,19 @@ function render() {
 
       <div class="mb-card" data-action="sync-now">
         <div class="mb-card-head">
-          <span class="mb-card-title"><i class="dot" style="background:var(--mb-amber)"></i>双向同步</span>
+          <span class="mb-card-title"><i class="dot" style="background:var(--orange)"></i>双向同步</span>
           <span class="mb-tag ${syncTagClass}">${esc(syncTimeText)}</span>
         </div>
         <div class="mb-card-metric">${esc(syncMetricText)}</div>
         <svg class="mb-spark-svg" viewBox="0 0 120 18" preserveAspectRatio="none">
-          <path d="M0 13 L20 13 L35 11 L52 12 L68 9 L86 11 L102 7 L120 8" fill="none" stroke="var(--mb-amber)" stroke-width="1.6" stroke-linecap="round"/>
+          <path d="M0 13 L20 13 L35 11 L52 12 L68 9 L86 11 L102 7 L120 8" fill="none" stroke="var(--orange)" stroke-width="1.6" stroke-linecap="round"/>
         </svg>
         <div class="mb-card-sub">点击立即同步记忆 · 项目 · 技能</div>
       </div>
 
       <div class="mb-card" data-open-page="memory">
         <div class="mb-card-head">
-          <span class="mb-card-title"><i class="dot" style="background:var(--mb-purple)"></i>记忆同步</span>
+          <span class="mb-card-title"><i class="dot" style="background:var(--purple)"></i>记忆同步</span>
           <span class="mb-tag">压缩 ${mem.compressionRatio ?? 0}%</span>
         </div>
         <div class="mb-card-metric">${fmtNum(cog.activeItems || 0)}<small>条</small></div>
@@ -183,7 +183,7 @@ function render() {
 
       <div class="mb-card" data-open-page="projects">
         <div class="mb-card-head">
-          <span class="mb-card-title"><i class="dot" style="background:var(--mb-blue)"></i>项目同步</span>
+          <span class="mb-card-title"><i class="dot" style="background:var(--blue)"></i>项目同步</span>
           <span class="mb-tag ${remoteProjects.length ? "warn" : "ok"}">${remoteProjects.length ? `${remoteProjects.length} 待绑定` : "已对齐"}</span>
         </div>
         <div class="mb-card-metric">${boundProjects.length}<small>/${totalProj} 项目</small></div>
@@ -193,26 +193,26 @@ function render() {
 
       <div class="mb-card" data-action="tailscale-scan">
         <div class="mb-card-head">
-          <span class="mb-card-title"><i class="dot" style="background:var(--mb-teal)"></i>内网穿透</span>
+          <span class="mb-card-title"><i class="dot" style="background:var(--accent)"></i>内网穿透</span>
           <span class="mb-tag ${tsTagClass}">${tsTagText}</span>
         </div>
         <div class="mb-card-metric">${tsMetric}</div>
         <svg class="mb-spark-svg" viewBox="0 0 120 18" preserveAspectRatio="none">
-          <path d="M0 14 Q 25 13, 45 11 T 78 6 T 120 12" fill="none" stroke="var(--mb-teal)" stroke-width="1.6"/>
-          <path d="M0 15 Q 30 14, 60 12 T 120 14" fill="none" stroke="var(--mb-blue)" stroke-width="1.2" opacity="0.7"/>
+          <path d="M0 14 Q 25 13, 45 11 T 78 6 T 120 12" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+          <path d="M0 15 Q 30 14, 60 12 T 120 14" fill="none" stroke="var(--blue)" stroke-width="1.2" opacity="0.7"/>
         </svg>
         <div class="mb-card-sub">${esc(tsSub)}</div>
       </div>
 
       <div class="mb-card" data-open-page="devices">
         <div class="mb-card-head">
-          <span class="mb-card-title"><i class="dot" style="background:var(--mb-green)"></i>Skills 同步</span>
+          <span class="mb-card-title"><i class="dot" style="background:var(--success)"></i>Skills 同步</span>
           <span class="mb-tag ${skTagClass}">${skTagText}</span>
         </div>
         <div class="mb-card-metric">${sk.uniqueSkills ?? 0}<small>项</small></div>
         <div class="mb-seg-actions">
           <button type="button" class="mb-seg-btn active" data-action="sync-skills">对齐</button>
-          <button type="button" class="mb-seg-btn ${sk.conflicts > 0 ? "warn" : ""}" data-action="resolve-conflicts">${sk.conflicts > 0 ? `冲突 ${sk.conflicts}` : "无冲突"}</button>
+          <button type="button" class="mb-seg-btn ${sk.conflicts > 0 ? "warn" : ""}" data-action="resolve-conflicts">${sk.conflicts > 0 ? `解冲突` : "无冲突"}</button>
           <button type="button" class="mb-seg-btn" data-action="install-mem-skill">部署</button>
         </div>
       </div>
@@ -224,12 +224,12 @@ function render() {
     const netPct = ts.online ? 100 : net.online ? 85 : 50;
     patchHtml(mbRingsCard, `
       <div class="mb-card-head">
-        <span class="mb-card-title"><i class="dot" style="background:var(--mb-green)"></i>跨 Agent 检索技能 · qlex-memory</span>
+        <span class="mb-card-title"><i class="dot" style="background:var(--success)"></i>跨 Agent 检索技能 · qlex-memory</span>
         <span class="mb-tag ${agentPct === 100 ? "ok" : "warn"}">部署 ${ms.installedCount || 0}/${ms.totalCount || 6}</span>
       </div>
       <div class="mb-rings-body">
         <div class="mb-rings-info">
-          <div class="mb-card-metric">${agentPct}%<small style="margin-left:5px">${ms.installedCount || 0} 个工具就绪</small></div>
+          <div class="mb-card-metric">${agentPct}%<small style="margin-left:5px">${ms.installedCount || 0} 工具就绪</small></div>
           <div class="mb-card-sub" title="Codex · Claude · Hermes · Antigravity · DSH · Agents">Codex · Claude · Hermes · Antigravity · DSH</div>
         </div>
         <div class="mb-rings-group">
@@ -316,7 +316,7 @@ function render() {
     requestAnimationFrame(() => {
         const shell = document.querySelector("#mbShell");
         if (!shell) return;
-        const needed = Math.ceil(shell.scrollHeight);
+        const needed = Math.ceil(shell.scrollHeight) + 2;
         if (needed > 300) {
             void window.qlex.resizeMenubarPopover?.(needed);
         }
