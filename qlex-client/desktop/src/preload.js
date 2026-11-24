@@ -95,7 +95,7 @@ electron_1.contextBridge.exposeInMainWorld("qlex", {
 
     // Projects & cross-device project sync
     chooseProject: () => electron_1.ipcRenderer.invoke("qlex:choose-project"),
-    bindRemoteProject: (syncId) => electron_1.ipcRenderer.invoke("qlex:bind-remote-project", syncId),
+    bindRemoteProject: (syncId, directory) => electron_1.ipcRenderer.invoke("qlex:bind-remote-project", directory ? { syncId, directory } : syncId),
     syncMemoryNow: () => electron_1.ipcRenderer.invoke("qlex:sync-memory-now"),
     syncProjectsNow: () => electron_1.ipcRenderer.invoke("qlex:sync-projects-now"),
     addDiscoveredProject: (directory) => electron_1.ipcRenderer.invoke("qlex:add-discovered-project", directory),

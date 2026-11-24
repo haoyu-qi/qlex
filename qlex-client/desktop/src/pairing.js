@@ -137,7 +137,11 @@ function callCenter(endpoint, route, id, payload) {
         ...(route === "join" ? { token: invite.token, name: deviceName() } : {}),
         ...(route === "skills" && payload ? { skill: payload } : {}),
         ...(route === "memory" && payload ? { bundle: payload } : {}),
-        ...(route === "projects" && payload ? { projects: payload } : {}),
+        ...(route === "projects" && payload
+            ? (Array.isArray(payload)
+                ? { projects: payload }
+                : { projects: payload.projects || [], deleted: payload.deleted || [] })
+            : {}),
     });
     return new Promise((resolve, reject) => {
         const req = (0, node_https_1.request)({
@@ -148,10 +152,17 @@ function callCenter(endpoint, route, id, payload) {
         }, (res) => {
             if (res.statusCode !== 200) {
                 res.resume();
-                if (res.statusCode === 403)
-                    resolve(undefined);
-                else
-                    reject(new Error("中心暂时无法处理同步请求，请检查中心设置。"));
+                if (res.statusCode === 403) {
+                    if (route === "join" || route === "status" || route === "leave") {
+                        resolve(undefined);
+                    } else {
+                        reject(new Error("中心端尚未批准此设备或同步凭证已失效，请在「互联」页检查连接状态。"));
+                    }
+                } else if (res.statusCode === 404) {
+                    reject(new Error("中心端 QLEX 版本较旧，暂不支持该同步接口，请将中心端升级到最新版本。"));
+                } else {
+                    reject(new Error(`中心暂时无法处理同步请求 (HTTP ${res.statusCode})，请检查中心设置。`));
+                }
                 return;
             }
             if (route === "skills") {
@@ -163,7 +174,7 @@ function callCenter(endpoint, route, id, payload) {
                 return;
             }
             if (route === "projects") {
-                void readBody(res, 512 * 1024).then(resolve, reject);
+                void readBody(res, 2 * 1024 * 1024).then(resolve, reject);
                 return;
             }
             void readBody(res).then((data) => {
@@ -173,8 +184,9 @@ function callCenter(endpoint, route, id, payload) {
                 resolve({ name: data.name, status: data.status });
             }).catch(() => reject(new Error("中心返回的配对状态无效。")));
         });
-        const timer = setTimeout(() => req.destroy(new Error("QLEX center timeout")), route === "memory" ? 12_000 : 4500);
-        req.once("error", () => reject(new Error("无法连接或验证中心。请检查网络、防火墙和配对邀请。")));
+        const timeoutMs = route === "memory" ? 12_000 : route === "projects" ? 10_000 : 4500;
+        const timer = setTimeout(() => req.destroy(new Error("QLEX center timeout")), timeoutMs);
+        req.once("error", () => reject(new Error("无法连接或验证中心。请检查中心是否在线、Tailscale 连接和防火墙设置。")));
         req.once("close", () => clearTimeout(timer));
         req.end(body);
     });
@@ -194,12 +206,13 @@ class DevicePairing {
     startError;
     lastMemorySync = null;
     lastProjectSync = null;
-    constructor(store, listenPort = port, skillSync, getExtraHosts = () => [], memoryArchive = null) {
+    constructor(store, listenPort = port, skillSync, getExtraHosts = () => [], memoryArchive = null, onChange = null) {
         this.store = store;
         this.listenPort = listenPort;
         this.skillSync = skillSync;
         this.getExtraHosts = getExtraHosts;
         this.memoryArchive = memoryArchive;
+        this.onChange = typeof onChange === "function" ? onChange : null;
     }
     get config() {
         return this.store.snapshot().pairing ?? { mode: "local" };
@@ -242,6 +255,7 @@ class DevicePairing {
             syncMeta: {
                 lastMemorySync: this.lastMemorySync,
                 lastProjectSync: this.lastProjectSync,
+                lastProjectsSync: this.lastProjectSync,
             },
         };
     }
@@ -404,20 +418,92 @@ class DevicePairing {
     async syncProjects() {
         const { mode, endpoint } = this.config;
         const local = this.store.snapshot();
-        if (mode !== "endpoint" || endpoint?.status !== "connected") return null;
-        const localProjects = this.store.exportSharedProjects(deviceName());
-        const response = await callCenter(endpoint, "projects", local.deviceId, localProjects);
-        if (!Array.isArray(response?.projects)) return null;
-        const merged = this.store.mergeSharedProjects(response.projects);
-        this.lastProjectSync = {
-            time: Date.now(),
-            peer: endpoint.name || endpoint.invite.host,
-            added: merged.added,
-            updated: merged.updated,
-            remotePending: merged.remotePending,
-            totalShared: merged.totalShared,
-        };
-        return this.lastProjectSync;
+        this.store.refreshLocalProjectsMetadata(deviceName());
+        if (mode === "center") {
+            const snap = this.store.snapshot();
+            const peers = this.view().peers || [];
+            const onlinePeers = peers.filter(p => p.online).length;
+            this.lastProjectSync = {
+                time: Date.now(),
+                role: "center",
+                peer: `${onlinePeers}/${peers.filter(p => p.status === "connected").length} 台接入点`,
+                added: 0,
+                updated: 0,
+                removed: 0,
+                contextApplied: 0,
+                remotePending: (snap.remoteProjects || []).length,
+                totalShared: (snap.projects || []).length + (snap.remoteProjects || []).length,
+                onlinePeers,
+                error: "",
+            };
+            this.onChange?.("projects");
+            return this.lastProjectSync;
+        }
+        if (mode !== "endpoint") {
+            const snap = this.store.snapshot();
+            this.lastProjectSync = {
+                time: Date.now(),
+                role: "local",
+                peer: "仅本机",
+                added: 0,
+                updated: 0,
+                removed: 0,
+                contextApplied: 0,
+                remotePending: (snap.remoteProjects || []).length,
+                totalShared: (snap.projects || []).length,
+                error: "",
+            };
+            return this.lastProjectSync;
+        }
+        if (endpoint?.status !== "connected") {
+            const err = new Error(endpoint?.status === "pending" ? "等待中心端批准配对后即可同步项目。" : "接入点尚未连接到中心。");
+            this.lastProjectSync = {
+                time: Date.now(),
+                role: "endpoint",
+                peer: endpoint?.name || endpoint?.invite?.host || "中心节点",
+                error: err.message,
+            };
+            this.onChange?.("projects");
+            throw err;
+        }
+        try {
+            const exported = this.store.exportSharedProjects(deviceName(), { includeContext: true });
+            const response = await callCenter(endpoint, "projects", local.deviceId, exported);
+            if (!Array.isArray(response?.projects)) {
+                throw new Error("中心端返回的项目同步数据格式无效。");
+            }
+            const merged = this.store.mergeSharedProjects(
+                { projects: response.projects, deleted: response.deleted || [] },
+                { peerName: endpoint.name || endpoint.invite.host, applyContext: true }
+            );
+            this.endpointOnline = true;
+            this.lastProjectSync = {
+                time: Date.now(),
+                role: "endpoint",
+                peer: endpoint.name || endpoint.invite.host,
+                added: merged.added,
+                updated: merged.updated,
+                removed: merged.removed,
+                contextApplied: merged.contextApplied,
+                pushedAdded: response.merged?.added || 0,
+                pushedUpdated: response.merged?.updated || 0,
+                pushedRemoved: response.merged?.removed || 0,
+                remotePending: merged.remotePending,
+                totalShared: merged.totalShared,
+                error: "",
+            };
+            this.onChange?.("projects");
+            return this.lastProjectSync;
+        } catch (err) {
+            this.lastProjectSync = {
+                time: Date.now(),
+                role: "endpoint",
+                peer: endpoint.name || endpoint.invite.host,
+                error: err?.message || "跨端项目同步失败",
+            };
+            this.onChange?.("projects");
+            throw err;
+        }
     }
     decide(id, approve) {
         const config = this.config;
@@ -461,8 +547,8 @@ class DevicePairing {
                 reply(res, 404, {});
                 return;
             }
-            const maxBody = memory ? 4 * 1024 * 1024 : projects ? 512 * 1024 : 4096;
-            const { id, credential, token, name, skill, bundle, projects: incomingProjects } = await readBody(req, maxBody);
+            const maxBody = memory ? 4 * 1024 * 1024 : projects ? 2 * 1024 * 1024 : 4096;
+            const { id, credential, token, name, skill, bundle, projects: incomingProjects, deleted: incomingDeleted } = await readBody(req, maxBody);
             if (typeof id !== "string" || !idPattern.test(id) || typeof credential !== "string" || !secretPattern.test(credential)) {
                 reply(res, 400, {});
                 return;
@@ -491,6 +577,7 @@ class DevicePairing {
                     pulledAdded: 0,
                     pulledUpdated: 0,
                 };
+                this.onChange?.("memory");
                 reply(res, 200, { ok: true, merged, bundle: centerBundle });
                 return;
             }
@@ -500,17 +587,25 @@ class DevicePairing {
                     return;
                 }
                 this.peerSeenAt.set(id, Date.now());
-                const merged = this.store.mergeSharedProjects(incomingProjects || []);
-                const sharedList = this.store.exportSharedProjects(deviceName());
+                const merged = this.store.mergeSharedProjects(
+                    { projects: incomingProjects || [], deleted: incomingDeleted || [] },
+                    { peerName: existing.name, applyContext: true }
+                );
+                const exported = this.store.exportSharedProjects(deviceName(), { includeContext: true });
                 this.lastProjectSync = {
                     time: Date.now(),
+                    role: "center",
                     peer: existing.name,
                     added: merged.added,
                     updated: merged.updated,
+                    removed: merged.removed,
+                    contextApplied: merged.contextApplied,
                     remotePending: merged.remotePending,
-                    totalShared: sharedList.length,
+                    totalShared: exported.projects.length,
+                    error: "",
                 };
-                reply(res, 200, { ok: true, merged, projects: sharedList });
+                this.onChange?.("projects");
+                reply(res, 200, { ok: true, merged, projects: exported.projects, deleted: exported.deleted });
                 return;
             }
             if (skills) {
@@ -551,6 +646,7 @@ class DevicePairing {
             this.store.setPairing({ ...config, center: { ...center, peers } });
             this.activeInvite = undefined;
             this.activeInviteCode = undefined;
+            this.onChange?.("peers");
             reply(res, 200, { name: deviceName(), status: peer.status });
         }
         catch {

@@ -8,6 +8,7 @@ const node_path_1 = require("node:path");
 const node_url_1 = require("node:url");
 const state_1 = require("./state");
 const pairing_1 = require("./pairing");
+const { findAutoMatchDirectory } = require("./project-sync");
 const { createUsageCollector } = require("./usage");
 const { createSkillSync } = require("./skill-sync");
 const { createMemoryArchiver } = require("./memory-archive");
@@ -40,9 +41,9 @@ const dockUrl = (0, node_url_1.pathToFileURL)(dockPath).href;
 const logo = (0, node_path_1.join)(electron_1.app.getAppPath(), "docs/assets/brand/logo.png");
 const trayLogo = (0, node_path_1.join)(electron_1.app.getAppPath(), "docs/assets/brand/tray-icon.png");
 
-const DEFAULT_WINDOW = { width: 1020, height: 640 };
+const DEFAULT_WINDOW = { width: 1080, height: 720 };
 const MENUBAR_POPOVER = { width: 352, height: 746 };
-const WINDOW_LIMITS = { minWidth: 840, minHeight: 540, maxWidth: 1600, maxHeight: 1100 };
+const WINDOW_LIMITS = { minWidth: 880, minHeight: 620, maxWidth: 1800, maxHeight: 1400 };
 const LIQUID_GLASS_SUPPORTED = process.platform === "darwin" && Number.parseInt(node_os_1.release(), 10) >= 25;
 
 let store;
@@ -166,10 +167,19 @@ function broadcastState(state, { force = false } = {}) {
 function desktopState(state = store.snapshot()) {
     const { pairing: _privatePairing, ...local } = state;
     updateTray();
+    const usageSnap = usage.snapshot();
+    const discovered = usageSnap?.week?.projects || [];
+    const boundDirSet = new Set((local.projects || []).map(p => p.directory));
+    const projectAutoMatches = {};
+    for (const rp of local.remoteProjects || []) {
+        const match = findAutoMatchDirectory(rp, discovered, boundDirSet);
+        if (match) projectAutoMatches[rp.syncId] = match;
+    }
     return {
         ...local,
         version: APP_VERSION,
-        usage: usage.snapshot(),
+        usage: usageSnap,
+        projectAutoMatches,
         skills: skills.snapshot(),
         memoryArchive: memoryArchive.snapshot(),
         memorySkill: getMemorySkillStatus({ namespaces: local.localSkillNamespaces }),
@@ -199,9 +209,11 @@ async function runUnifiedSync() {
             // 1. Core: Bidirectional Memory Sync & Project Sync (Endpoint <-> Center)
             if (pairing.view().mode === "endpoint" && pairing.view().endpoint?.status === "connected") {
                 await Promise.all([
-                    pairing.syncMemory().catch(() => {}),
-                    pairing.syncProjects().catch(() => {}),
+                    pairing.syncMemory().catch(err => console.warn("QLEX memory sync warning:", err?.message || err)),
+                    pairing.syncProjects().catch(err => console.warn("QLEX project sync warning:", err?.message || err)),
                 ]);
+            } else {
+                await pairing.syncProjects().catch(() => {});
             }
 
             // 2. Core: Local Cognitive Memory Compression + Universal Agent Skill
@@ -244,8 +256,10 @@ function persistBoundsSoon() {
 function restoredBounds() {
     const saved = store.snapshot().windowBounds;
     if (!saved || typeof saved.width !== "number" || saved.width < WINDOW_LIMITS.minWidth) return DEFAULT_WINDOW;
-    const width = Math.min(WINDOW_LIMITS.maxWidth, Math.max(WINDOW_LIMITS.minWidth, saved.width));
-    const height = Math.min(WINDOW_LIMITS.maxHeight, Math.max(WINDOW_LIMITS.minHeight, saved.height));
+    const upgradedWidth = saved.width < DEFAULT_WINDOW.width && saved.height < 680 ? DEFAULT_WINDOW.width : saved.width;
+    const upgradedHeight = saved.height < 680 ? DEFAULT_WINDOW.height : saved.height;
+    const width = Math.min(WINDOW_LIMITS.maxWidth, Math.max(WINDOW_LIMITS.minWidth, upgradedWidth));
+    const height = Math.min(WINDOW_LIMITS.maxHeight, Math.max(WINDOW_LIMITS.minHeight, upgradedHeight));
     if (typeof saved.x === "number" && typeof saved.y === "number") {
         const display = electron_1.screen.getDisplayMatching({ x: saved.x, y: saved.y, width, height });
         const area = display?.workArea;
@@ -857,24 +871,33 @@ function registerHandlers() {
         "qlex:add-discovered-project": async (directory) => {
             const resolved = await discoveredDirectory(directory);
             await requireDirectory(resolved);
-            return broadcastState(store.addProject(resolved));
+            store.addProject(resolved);
+            await pairing.syncProjects().catch(err => console.warn("QLEX project sync after discover add:", err?.message || err));
+            return broadcastState(undefined, { force: true });
         },
         "qlex:open-discovered-project": async (directory) => openDirectory(await discoveredDirectory(directory)),
         "qlex:open-project": (id) => openDirectory(store.projectById(id).directory),
-        "qlex:rename-project": (input) => broadcastState(store.renameProject(input?.id, input?.name)),
+        "qlex:rename-project": async (input) => {
+            store.renameProject(input?.id, input?.name);
+            await pairing.syncProjects().catch(err => console.warn("QLEX project sync after rename:", err?.message || err));
+            return broadcastState(undefined, { force: true });
+        },
         "qlex:remove-project": async (id) => {
             const { name } = store.projectById(id);
             const options = {
                 type: "question",
                 message: "将项目移出列表？",
-                detail: `可以随时重新添加「${name}」的目录。`,
+                detail: `可以随时重新添加「${name}」的目录；若已连接中心，移出操作将同步至对端。`,
                 buttons: ["取消", "移出列表"],
                 defaultId: 0,
                 cancelId: 0,
             };
             const { response } = await electron_1.dialog.showMessageBox(window, options);
-            if (response === 1)
-                return broadcastState(store.removeProject(id));
+            if (response === 1) {
+                store.removeProject(id);
+                await pairing.syncProjects().catch(err => console.warn("QLEX project sync after remove:", err?.message || err));
+                return broadcastState(undefined, { force: true });
+            }
             return desktopState();
         },
         "qlex:choose-project": async () => {
@@ -883,25 +906,35 @@ function registerHandlers() {
             const result = await electron_1.dialog.showOpenDialog(window, { properties: ["openDirectory"] });
             if (result.canceled || !result.filePaths[0])
                 return desktopState();
-            const next = store.addProject((0, node_fs_1.realpathSync)(result.filePaths[0]));
-            if (pairing.view().mode === "endpoint") void pairing.syncProjects().catch(() => {});
-            return broadcastState(next);
+            store.addProject((0, node_fs_1.realpathSync)(result.filePaths[0]));
+            await pairing.syncProjects().catch(err => console.warn("QLEX project sync after add:", err?.message || err));
+            return broadcastState(undefined, { force: true });
         },
-        "qlex:bind-remote-project": async (syncId) => {
+        "qlex:bind-remote-project": async (input) => {
             if (!store.snapshot().configured)
                 throw new Error("请先完成首次设置");
-            if (menubarWindow && !menubarWindow.isDestroyed() && menubarWindow.isVisible()) {
-                menubarWindow.hide();
+            const syncId = typeof input === "string" ? input : input?.syncId;
+            const directDir = typeof input === "object" && typeof input?.directory === "string" ? input.directory : "";
+            let chosenDir = "";
+            if (directDir) {
+                const resolved = (0, node_fs_1.realpathSync)(directDir);
+                await requireDirectory(resolved);
+                chosenDir = resolved;
+            } else {
+                if (menubarWindow && !menubarWindow.isDestroyed() && menubarWindow.isVisible()) {
+                    menubarWindow.hide();
+                }
+                const parent = window && !window.isDestroyed() && window.isVisible() ? window : undefined;
+                const result = parent
+                    ? await electron_1.dialog.showOpenDialog(parent, { properties: ["openDirectory"] })
+                    : await electron_1.dialog.showOpenDialog({ properties: ["openDirectory"] });
+                if (result.canceled || !result.filePaths[0])
+                    return desktopState();
+                chosenDir = (0, node_fs_1.realpathSync)(result.filePaths[0]);
             }
-            const parent = window && !window.isDestroyed() && window.isVisible() ? window : undefined;
-            const result = parent
-                ? await electron_1.dialog.showOpenDialog(parent, { properties: ["openDirectory"] })
-                : await electron_1.dialog.showOpenDialog({ properties: ["openDirectory"] });
-            if (result.canceled || !result.filePaths[0])
-                return desktopState();
-            const next = store.bindRemoteProject(syncId, (0, node_fs_1.realpathSync)(result.filePaths[0]));
-            if (pairing.view().mode === "endpoint") void pairing.syncProjects().catch(() => {});
-            return broadcastState(next);
+            store.bindRemoteProject(syncId, chosenDir);
+            await pairing.syncProjects().catch(err => console.warn("QLEX project sync after bind:", err?.message || err));
+            return broadcastState(undefined, { force: true });
         },
         "qlex:sync-memory-now": async () => {
             let remote = null;
@@ -909,14 +942,12 @@ function registerHandlers() {
                 remote = await pairing.syncMemory();
             }
             await memoryArchive.compressNow();
-            return { remote, state: broadcastState() };
+            return { remote, state: broadcastState(undefined, { force: true }) };
         },
         "qlex:sync-projects-now": async () => {
-            let remote = null;
-            if (pairing.view().mode === "endpoint") {
-                remote = await pairing.syncProjects();
-            }
-            return { remote, state: broadcastState() };
+            const remote = await pairing.syncProjects();
+            void usage.refresh().then(() => broadcastState()).catch(() => {});
+            return { remote, state: broadcastState(undefined, { force: true }) };
         },
     };
 
@@ -1112,7 +1143,11 @@ else {
         pairing = new pairing_1.DevicePairing(store, undefined, skills, () => {
             const ts = tailscale.snapshot();
             return [ts.self?.dnsName, ts.self?.ip].filter(Boolean);
-        }, memoryArchive);
+        }, memoryArchive, () => {
+            if ((window && !window.isDestroyed()) || (menubarWindow && !menubarWindow.isDestroyed() && menubarWindow.isVisible())) {
+                broadcastState(undefined, { force: true });
+            }
+        });
         edgeDock = createEdgeDock({
             BrowserWindow: electron_1.BrowserWindow,
             screen: electron_1.screen,
@@ -1177,14 +1212,29 @@ else {
                 void pairing.refresh().then(updateTray).catch(console.warn);
         };
         refresh();
-        if (!smoke && store.snapshot().skillSyncEnabled) {
-            try {
-                installMemorySkill({ namespaces: store.snapshot().localSkillNamespaces });
-                skills.scanLocal(store.snapshot().localSkillNamespaces);
-            } catch (err) {
-                console.warn("QLEX memory skill install warning:", err?.message || err);
+        if (!smoke) {
+            if (store.snapshot().skillSyncEnabled) {
+                try {
+                    installMemorySkill({ namespaces: store.snapshot().localSkillNamespaces });
+                    skills.scanLocal(store.snapshot().localSkillNamespaces);
+                } catch (err) {
+                    console.warn("QLEX memory skill install warning:", err?.message || err);
+                }
             }
-            void pairing.refresh().then(() => skills.refresh(pairing, store.snapshot().localSkillNamespaces)).catch(console.warn);
+            void pairing.refresh().then(async () => {
+                if (pairing.view().mode === "endpoint" && pairing.view().endpoint?.status === "connected") {
+                    await Promise.all([
+                        pairing.syncProjects().catch(err => console.warn("QLEX startup project sync:", err?.message || err)),
+                        pairing.syncMemory().catch(err => console.warn("QLEX startup memory sync:", err?.message || err)),
+                    ]);
+                } else {
+                    await pairing.syncProjects().catch(() => {});
+                }
+                if (store.snapshot().skillSyncEnabled) {
+                    await skills.refresh(pairing, store.snapshot().localSkillNamespaces).catch(console.warn);
+                }
+                broadcastState(undefined, { force: true });
+            }).catch(console.warn);
         }
         setInterval(refresh, 10_000).unref();
     }).catch((error) => {

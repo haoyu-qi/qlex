@@ -21,6 +21,7 @@ const { collectAllNative, extractRealUserText } = require(path.join(root, "deskt
 const { createTailscaleManager, isTailscaleIp, isMagicDnsHost, findEmbeddedTsnetBin } = require(path.join(root, "desktop/src/tailscale.js"));
 const { DevicePairing, isValidHost, isTailscaleIPv4, addresses } = require(path.join(root, "desktop/src/pairing.js"));
 const { LocalStore } = require(path.join(root, "desktop/src/state.js"));
+const { findAutoMatchDirectory } = require(path.join(root, "desktop/src/project-sync.js"));
 const { createCognitiveMemoryEngine } = require(path.join(root, "desktop/src/memory-core.js"));
 const { createUpdater, compareVersions, parseChecksumsText } = require(path.join(root, "desktop/src/updater.js"));
 
@@ -180,30 +181,97 @@ try {
     assert.ok(endpointMem.recall("Mac mini 中心点", { level: "L0" }).results.some(r => r.id === cAdd.item.id));
     assert.ok(centerMem.recall("Tailscale 直连", { level: "L0" }).results.some(r => r.id === eAdd.item.id));
 
-    // Simulate Cross-Device Project Sync + Bind Remote Project
+    // Simulate Cross-Device Project & Workspace Context Sync + Rename + Tombstone Removal + Auto-Match
     const centerStore = new LocalStore(path.join(tmpHome, "center-state.json"));
     const epStore = new LocalStore(path.join(tmpHome, "ep-state.json"));
     const fakeProjA = path.join(tmpHome, "proj-alpha");
     const fakeProjB = path.join(tmpHome, "ep-proj-alpha");
-    fs.mkdirSync(fakeProjA, { recursive: true });
-    fs.mkdirSync(fakeProjB, { recursive: true });
+    fs.mkdirSync(path.join(fakeProjA, ".git/refs/heads"), { recursive: true });
+    fs.writeFileSync(path.join(fakeProjA, ".git/HEAD"), "ref: refs/heads/main\n");
+    fs.writeFileSync(path.join(fakeProjA, ".git/refs/heads/main"), "ea536f71234567890abcdef1234567890abcdef1\n");
+    fs.writeFileSync(path.join(fakeProjA, ".git/config"), '[remote "origin"]\n\turl = https://github.com/haoyu-qi/qlex.git\n');
+    fs.writeFileSync(path.join(fakeProjA, "AGENTS.md"), "# QLEX Workspace Rules\nAlways sync cleanly.\n");
+    fs.mkdirSync(path.join(fakeProjB, ".git"), { recursive: true });
+    fs.writeFileSync(path.join(fakeProjB, ".git/config"), '[remote "origin"]\n\turl = git@github.com:haoyu-qi/qlex.git\n');
+
     centerStore.addProject(fakeProjA);
     const sharedFromCenter = centerStore.exportSharedProjects("MacMini");
-    const mergeProjRes = epStore.mergeSharedProjects(sharedFromCenter);
+    assert.equal(sharedFromCenter.projects.length, 1);
+    assert.equal(sharedFromCenter.projects[0].gitBranch, "main");
+    assert.equal(sharedFromCenter.projects[0].gitCommit, "ea536f7");
+    assert.equal(sharedFromCenter.projects[0].contextFiles.length, 1);
+
+    const mergeProjRes = epStore.mergeSharedProjects(sharedFromCenter, { peerName: "MacMini", backupRoot: path.join(tmpHome, "backups") });
     assert.equal(mergeProjRes.added, 1);
     assert.equal(epStore.snapshot().remoteProjects.length, 1);
-    const syncId = epStore.snapshot().remoteProjects[0].syncId;
-    epStore.bindRemoteProject(syncId, fakeProjB);
+    const remoteEntry = epStore.snapshot().remoteProjects[0];
+    const autoMatch = findAutoMatchDirectory(remoteEntry, [{ directory: fakeProjB, name: "ep-proj-alpha" }]);
+    assert.equal(autoMatch?.directory, fakeProjB, "Auto-match must recognize matching Git remote across SSH/HTTPS");
+
+    const syncId = remoteEntry.syncId;
+    epStore.bindRemoteProject(syncId, fakeProjB, { backupRoot: path.join(tmpHome, "backups") });
     assert.equal(epStore.snapshot().remoteProjects.length, 0);
     assert.equal(epStore.snapshot().projects[0].syncId, syncId, "Bound local directory must preserve cross-device syncId");
+    assert.equal(fs.readFileSync(path.join(fakeProjB, "AGENTS.md"), "utf8"), "# QLEX Workspace Rules\nAlways sync cleanly.\n", "Binding must sync workspace AGENTS.md");
 
-    console.log("ALL QLEX v0.2.1 CORE SYNC / COLLECTOR / TAILSCALE / UPDATER TESTS PASSED!", JSON.stringify({
+    // Rename propagation (must bump updatedAt so LWW propagates)
+    const centerProjId = centerStore.snapshot().projects[0].id;
+    await new Promise(r => setTimeout(r, 10));
+    centerStore.renameProject(centerProjId, "proj-alpha-renamed");
+    const renamePayload = centerStore.exportSharedProjects("MacMini");
+    epStore.mergeSharedProjects(renamePayload, { peerName: "MacMini", backupRoot: path.join(tmpHome, "backups") });
+    assert.equal(epStore.snapshot().projects[0].name, "proj-alpha-renamed", "Project rename must propagate across devices");
+
+    // Deletion tombstone propagation (must NOT resurrect deleted project)
+    await new Promise(r => setTimeout(r, 10));
+    epStore.removeProject(epStore.snapshot().projects[0].id);
+    const deletePayload = epStore.exportSharedProjects("MacBook");
+    assert.equal(deletePayload.deleted.length, 1);
+    const delMerge = centerStore.mergeSharedProjects(deletePayload, { peerName: "MacBook" });
+    assert.equal(delMerge.removed, 1, "Tombstone deletion must propagate to peer");
+    assert.equal(centerStore.snapshot().projects.length, 0, "Deleted project must not remain on peer");
+
+    // Live HTTPS Center <-> Endpoint project sync test when node-forge is available
+    let liveHttpsProjectSyncPassed = false;
+    if (hasForge) {
+        const liveCenterStore = new LocalStore(path.join(tmpHome, "live-center.json"));
+        const liveEpStore = new LocalStore(path.join(tmpHome, "live-ep.json"));
+        let centerEvents = [];
+        const liveCenter = new DevicePairing(liveCenterStore, 0, null, () => ["127.0.0.1"], null, (ev) => centerEvents.push(ev));
+        const liveEp = new DevicePairing(liveEpStore, 0, null, () => ["127.0.0.1"], null);
+        await liveCenter.start();
+        try {
+            const invite = liveCenter.createInvite("127.0.0.1");
+            await liveEp.join(invite);
+            const epId = liveEpStore.snapshot().deviceId;
+            liveCenter.decide(epId, true);
+            await liveEp.refresh();
+            assert.equal(liveEp.view().endpoint?.status, "connected");
+
+            // Endpoint adds a project -> syncProjects() pushes to Center & fires Center onChange
+            const liveProj = path.join(tmpHome, "live-sync-repo");
+            fs.mkdirSync(liveProj, { recursive: true });
+            liveEpStore.addProject(liveProj);
+            const syncRes = await liveEp.syncProjects();
+            assert.equal(syncRes.role, "endpoint");
+            assert.equal(syncRes.totalShared, 1);
+            assert.ok(liveEp.view().syncMeta.lastProjectsSync?.time > 0, "lastProjectsSync must be exposed");
+            assert.equal(liveCenterStore.snapshot().remoteProjects.length, 1, "Center must receive Endpoint's added project");
+            assert.ok(centerEvents.includes("projects"), "Center onChange must fire immediately on project sync");
+            liveHttpsProjectSyncPassed = true;
+        } finally {
+            liveCenter.stop();
+        }
+    }
+
+    console.log("ALL QLEX v0.3.0-beta.4 CORE SYNC / COLLECTOR / TAILSCALE / UPDATER TESTS PASSED!", JSON.stringify({
         nativeTokens: nativeRes.today.total,
         embeddedTsnetBuilt: Boolean(findEmbeddedTsnetBin()),
         betaDetected: betaCheck.latest.version,
         stablePhase: stableCheck.phase,
         syncedMemoryBidirectional: true,
         syncedProjectBoundSyncId: syncId,
+        liveHttpsProjectSyncPassed,
     }));
 } finally {
     fs.rmSync(tmpHome, { recursive: true, force: true });

@@ -5,6 +5,7 @@ const node_crypto_1 = require("node:crypto");
 const node_fs_1 = require("node:fs");
 const node_os_1 = require("node:os");
 const node_path_1 = require("node:path");
+const { inspectWorkspace, applyWorkspaceContext } = require("./project-sync");
 
 const DEFAULT_APPEARANCE = Object.freeze({
     themePreset: "default",
@@ -48,7 +49,7 @@ function normalizeBounds(raw) {
     const height = Number(raw.height);
     if (!Number.isFinite(width) || !Number.isFinite(height)) return undefined;
     const bounds = {
-        width: Math.max(280, Math.min(1200, Math.round(width))),
+        width: Math.max(280, Math.min(1800, Math.round(width))),
         height: Math.max(380, Math.min(1400, Math.round(height))),
     };
     if (Number.isFinite(Number(raw.x)) && Number.isFinite(Number(raw.y))) {
@@ -72,6 +73,26 @@ function projectSyncSlug(name) {
     return String(name || "project").trim().toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64) || "project";
 }
 
+function normalizeSyncedDevices(list) {
+    if (!Array.isArray(list)) return [];
+    const map = new Map();
+    for (const d of list) {
+        if (!d || typeof d.name !== "string" || !d.name.trim()) continue;
+        const key = d.name.trim().slice(0, 100);
+        const prev = map.get(key);
+        const ts = Number.isFinite(Number(d.updatedAt)) ? Number(d.updatedAt) : Date.now();
+        if (!prev || ts >= prev.updatedAt) {
+            map.set(key, {
+                name: key,
+                gitBranch: typeof d.gitBranch === "string" ? d.gitBranch.slice(0, 80) : "",
+                gitCommit: typeof d.gitCommit === "string" ? d.gitCommit.slice(0, 16) : "",
+                updatedAt: ts,
+            });
+        }
+    }
+    return [...map.values()].slice(0, 20);
+}
+
 function normalizeProjects(list) {
     if (!Array.isArray(list)) return [];
     return list.map(p => ({
@@ -79,6 +100,13 @@ function normalizeProjects(list) {
         syncId: typeof p.syncId === "string" && p.syncId.trim() ? p.syncId.trim() : `proj_${projectSyncSlug(p.name)}`,
         shared: typeof p.shared === "boolean" ? p.shared : true,
         updatedAt: Number.isFinite(Number(p.updatedAt)) ? Number(p.updatedAt) : Date.now(),
+        gitRemote: typeof p.gitRemote === "string" ? p.gitRemote.slice(0, 300) : "",
+        gitBranch: typeof p.gitBranch === "string" ? p.gitBranch.slice(0, 80) : "",
+        gitCommit: typeof p.gitCommit === "string" ? p.gitCommit.slice(0, 16) : "",
+        contextHash: typeof p.contextHash === "string" ? p.contextHash.slice(0, 32) : "",
+        contextFilesCount: Number.isFinite(Number(p.contextFilesCount)) ? Number(p.contextFilesCount) : 0,
+        syncedDevices: normalizeSyncedDevices(p.syncedDevices),
+        lastSyncedAt: Number.isFinite(Number(p.lastSyncedAt)) ? Number(p.lastSyncedAt) : 0,
     }));
 }
 
@@ -89,7 +117,32 @@ function normalizeRemoteProjects(list) {
         name: p.name.trim().slice(0, 120),
         originDevice: typeof p.originDevice === "string" ? p.originDevice.slice(0, 100) : "",
         updatedAt: Number.isFinite(Number(p.updatedAt)) ? Number(p.updatedAt) : Date.now(),
+        gitRemote: typeof p.gitRemote === "string" ? p.gitRemote.slice(0, 300) : "",
+        gitBranch: typeof p.gitBranch === "string" ? p.gitBranch.slice(0, 80) : "",
+        gitCommit: typeof p.gitCommit === "string" ? p.gitCommit.slice(0, 16) : "",
+        contextHash: typeof p.contextHash === "string" ? p.contextHash.slice(0, 32) : "",
+        contextFiles: Array.isArray(p.contextFiles) ? p.contextFiles : [],
+        syncedDevices: normalizeSyncedDevices(p.syncedDevices),
     }));
+}
+
+function normalizeDeletedProjects(list) {
+    if (!Array.isArray(list)) return [];
+    const map = new Map();
+    for (const d of list) {
+        if (!d || typeof d.syncId !== "string" || !d.syncId.trim()) continue;
+        const syncId = d.syncId.trim();
+        const deletedAt = Number.isFinite(Number(d.deletedAt)) ? Number(d.deletedAt) : Date.now();
+        const prev = map.get(syncId);
+        if (!prev || deletedAt > prev.deletedAt) {
+            map.set(syncId, {
+                syncId,
+                deletedAt,
+                originDevice: typeof d.originDevice === "string" ? d.originDevice.slice(0, 100) : "",
+            });
+        }
+    }
+    return [...map.values()].slice(-200);
 }
 
 const defaultState = () => ({
@@ -108,6 +161,7 @@ const defaultState = () => ({
     collectorPaths: {},
     projects: [],
     remoteProjects: [],
+    deletedProjects: [],
     appearance: { ...DEFAULT_APPEARANCE },
 });
 
@@ -138,6 +192,7 @@ class LocalStore {
                 collectorPaths: value.collectorPaths && typeof value.collectorPaths === "object" && !Array.isArray(value.collectorPaths) ? value.collectorPaths : {},
                 projects: normalizeProjects(value.projects),
                 remoteProjects: normalizeRemoteProjects(value.remoteProjects),
+                deletedProjects: normalizeDeletedProjects(value.deletedProjects),
                 appearance: normalizeAppearance(value.appearance),
                 ...(normalizeBounds(value.windowBounds) ? { windowBounds: normalizeBounds(value.windowBounds) } : {}),
             };
@@ -179,66 +234,236 @@ class LocalStore {
         }
         const name = (0, node_path_1.basename)(normalized);
         const resolvedSyncId = syncId || `proj_${projectSyncSlug(name)}`;
+        const meta = inspectWorkspace(normalized, { includeContent: false });
+        const selfName = (0, node_os_1.hostname)();
+        const now = Date.now();
         const project = {
             id: (0, node_crypto_1.randomUUID)(),
             syncId: resolvedSyncId,
             name,
             directory: normalized,
             shared: true,
-            updatedAt: Date.now(),
+            updatedAt: now,
+            gitRemote: meta.gitRemote,
+            gitBranch: meta.gitBranch,
+            gitCommit: meta.gitCommit,
+            contextHash: meta.contextHash,
+            contextFilesCount: meta.contextFiles.length,
+            syncedDevices: [{ name: selfName, gitBranch: meta.gitBranch, gitCommit: meta.gitCommit, updatedAt: now }],
+            lastSyncedAt: 0,
         };
         const remoteProjects = (this.state.remoteProjects || []).filter(r => r.syncId !== resolvedSyncId);
-        return this.update({ projects: [...this.state.projects, project], remoteProjects });
+        const deletedProjects = (this.state.deletedProjects || []).filter(d => d.syncId !== resolvedSyncId);
+        return this.update({ projects: [...this.state.projects, project], remoteProjects, deletedProjects });
     }
-    exportSharedProjects(originDevice = (0, node_os_1.hostname)()) {
+    refreshLocalProjectsMetadata(originDevice = (0, node_os_1.hostname)()) {
+        const projects = (this.state.projects || []).map(p => {
+            const meta = inspectWorkspace(p.directory, { includeContent: false });
+            if (!meta.exists) return p;
+            const devices = normalizeSyncedDevices([
+                ...(p.syncedDevices || []),
+                { name: originDevice, gitBranch: meta.gitBranch, gitCommit: meta.gitCommit, updatedAt: Date.now() },
+            ]);
+            return {
+                ...p,
+                gitRemote: meta.gitRemote || p.gitRemote || "",
+                gitBranch: meta.gitBranch || p.gitBranch || "",
+                gitCommit: meta.gitCommit || p.gitCommit || "",
+                contextHash: meta.contextHash || "",
+                contextFilesCount: meta.contextFiles.length,
+                syncedDevices: devices,
+            };
+        });
+        return this.update({ projects });
+    }
+    exportSharedProjects(originDevice = (0, node_os_1.hostname)(), { includeContext = true } = {}) {
         const map = new Map();
         for (const r of this.state.remoteProjects || []) {
-            map.set(r.syncId, { syncId: r.syncId, name: r.name, originDevice: r.originDevice || originDevice, updatedAt: r.updatedAt || Date.now() });
+            map.set(r.syncId, {
+                syncId: r.syncId,
+                name: r.name,
+                originDevice: r.originDevice || originDevice,
+                updatedAt: r.updatedAt || Date.now(),
+                gitRemote: r.gitRemote || "",
+                gitBranch: r.gitBranch || "",
+                gitCommit: r.gitCommit || "",
+                contextHash: r.contextHash || "",
+                contextFiles: includeContext ? (r.contextFiles || []) : [],
+                syncedDevices: normalizeSyncedDevices(r.syncedDevices),
+            });
         }
         for (const p of this.state.projects || []) {
             if (p.shared === false) continue;
-            map.set(p.syncId, { syncId: p.syncId, name: p.name, originDevice, updatedAt: p.updatedAt || Date.now() });
+            const meta = inspectWorkspace(p.directory, { includeContent: includeContext });
+            const syncedDevices = normalizeSyncedDevices([
+                ...(p.syncedDevices || []),
+                { name: originDevice, gitBranch: meta.gitBranch || p.gitBranch || "", gitCommit: meta.gitCommit || p.gitCommit || "", updatedAt: Date.now() },
+            ]);
+            map.set(p.syncId, {
+                syncId: p.syncId,
+                name: p.name,
+                originDevice,
+                updatedAt: p.updatedAt || Date.now(),
+                gitRemote: meta.gitRemote || p.gitRemote || "",
+                gitBranch: meta.gitBranch || p.gitBranch || "",
+                gitCommit: meta.gitCommit || p.gitCommit || "",
+                contextHash: meta.contextHash || p.contextHash || "",
+                contextFiles: includeContext ? meta.contextFiles : [],
+                syncedDevices,
+            });
         }
-        return [...map.values()];
+        return {
+            projects: [...map.values()],
+            deleted: normalizeDeletedProjects(this.state.deletedProjects),
+        };
     }
-    mergeSharedProjects(incomingList = []) {
-        const localBySync = new Map((this.state.projects || []).map(p => [p.syncId, p]));
-        const remoteBySync = new Map((this.state.remoteProjects || []).map(r => [r.syncId, r]));
+    mergeSharedProjects(incomingPayload = [], { peerName = "", applyContext = true, backupRoot } = {}) {
+        // Accept both new { projects, deleted } envelope and legacy [...] array
+        const incomingList = Array.isArray(incomingPayload)
+            ? incomingPayload
+            : (Array.isArray(incomingPayload?.projects) ? incomingPayload.projects : []);
+        const incomingDeleted = Array.isArray(incomingPayload?.deleted)
+            ? normalizeDeletedProjects(incomingPayload.deleted)
+            : [];
+
+        const localBySync = new Map((this.state.projects || []).map(p => [p.syncId, { ...p }]));
+        const remoteBySync = new Map((this.state.remoteProjects || []).map(r => [r.syncId, { ...r }]));
+        const deletedBySync = new Map(normalizeDeletedProjects(this.state.deletedProjects).map(d => [d.syncId, d]));
+
         let added = 0;
         let updated = 0;
+        let removed = 0;
+        let contextApplied = 0;
+        const now = Date.now();
+
+        // 1. Merge incoming deletion tombstones
+        for (const del of incomingDeleted) {
+            const prevDel = deletedBySync.get(del.syncId);
+            if (!prevDel || del.deletedAt > prevDel.deletedAt) {
+                deletedBySync.set(del.syncId, del);
+            }
+            const curRemote = remoteBySync.get(del.syncId);
+            if (curRemote && del.deletedAt >= (curRemote.updatedAt || 0)) {
+                remoteBySync.delete(del.syncId);
+                removed++;
+            }
+            const curLocal = localBySync.get(del.syncId);
+            if (curLocal && del.deletedAt > (curLocal.updatedAt || 0)) {
+                localBySync.delete(del.syncId);
+                removed++;
+            }
+        }
+
+        // 2. Merge incoming shared projects (respecting newer tombstones)
         for (const inc of normalizeRemoteProjects(incomingList)) {
+            const tomb = deletedBySync.get(inc.syncId);
+            if (tomb && tomb.deletedAt >= (inc.updatedAt || 0)) {
+                continue;
+            }
+            if (tomb && (inc.updatedAt || 0) > tomb.deletedAt) {
+                deletedBySync.delete(inc.syncId);
+            }
+
+            const peerDeviceEntries = normalizeSyncedDevices([
+                ...(inc.syncedDevices || []),
+                ...(inc.originDevice ? [{ name: inc.originDevice, gitBranch: inc.gitBranch, gitCommit: inc.gitCommit, updatedAt: inc.updatedAt }] : []),
+                ...(peerName ? [{ name: peerName, gitBranch: inc.gitBranch, gitCommit: inc.gitCommit, updatedAt: now }] : []),
+            ]);
+
             const local = localBySync.get(inc.syncId);
             if (local) {
+                let changed = false;
                 if (inc.updatedAt > (local.updatedAt || 0) && inc.name !== local.name) {
                     local.name = inc.name;
                     local.updatedAt = inc.updatedAt;
-                    updated++;
+                    changed = true;
                 }
+                if (inc.gitRemote && !local.gitRemote) {
+                    local.gitRemote = inc.gitRemote;
+                    changed = true;
+                }
+                const mergedDevices = normalizeSyncedDevices([...(local.syncedDevices || []), ...peerDeviceEntries]);
+                local.syncedDevices = mergedDevices;
+                local.lastSyncedAt = now;
+
+                // Apply newer workspace AI context files (AGENTS.md / CLAUDE.md / .cursorrules / .qlex-context.md) with automatic backup
+                if (applyContext && Array.isArray(inc.contextFiles) && inc.contextFiles.length) {
+                    const ctxRes = applyWorkspaceContext(local.directory, inc.contextFiles, local.syncId, backupRoot);
+                    if (ctxRes.applied > 0) {
+                        contextApplied += ctxRes.applied;
+                        const refreshed = inspectWorkspace(local.directory, { includeContent: false });
+                        local.contextHash = refreshed.contextHash;
+                        local.contextFilesCount = refreshed.contextFiles.length;
+                        changed = true;
+                    }
+                }
+                if (changed) updated++;
                 remoteBySync.delete(inc.syncId);
                 continue;
             }
+
             const cur = remoteBySync.get(inc.syncId);
+            const enrichedRemote = {
+                ...inc,
+                syncedDevices: normalizeSyncedDevices([...(cur?.syncedDevices || []), ...peerDeviceEntries]),
+            };
             if (!cur) {
-                remoteBySync.set(inc.syncId, inc);
+                remoteBySync.set(inc.syncId, enrichedRemote);
                 added++;
-            } else if (inc.updatedAt > (cur.updatedAt || 0)) {
-                remoteBySync.set(inc.syncId, inc);
+            } else if (inc.updatedAt > (cur.updatedAt || 0) || inc.contextHash !== cur.contextHash || inc.gitBranch !== cur.gitBranch || inc.gitRemote !== cur.gitRemote) {
+                remoteBySync.set(inc.syncId, enrichedRemote);
                 updated++;
+            } else {
+                remoteBySync.set(inc.syncId, enrichedRemote);
             }
         }
-        this.update({ projects: [...localBySync.values()], remoteProjects: [...remoteBySync.values()] });
-        return { added, updated, remotePending: remoteBySync.size, totalShared: localBySync.size + remoteBySync.size };
+
+        // Persist lightweight remoteProjects (retain contextFiles up to 64KB per file so binding immediately applies them)
+        this.update({
+            projects: [...localBySync.values()],
+            remoteProjects: [...remoteBySync.values()],
+            deletedProjects: [...deletedBySync.values()].slice(-200),
+        });
+        return {
+            added,
+            updated,
+            removed,
+            contextApplied,
+            remotePending: remoteBySync.size,
+            totalShared: localBySync.size + remoteBySync.size,
+        };
     }
-    bindRemoteProject(syncId, directory) {
+    bindRemoteProject(syncId, directory, { backupRoot } = {}) {
         const remote = (this.state.remoteProjects || []).find(r => r.syncId === syncId);
         if (!remote) throw new Error("该远端共享项目已不存在或已完成绑定。");
-        const next = this.addProject(directory, remote.syncId);
-        // Preserve canonical shared project name
-        const created = next.projects.find(p => p.syncId === remote.syncId);
-        if (created && created.name !== remote.name) {
-            return this.renameProject(created.id, remote.name);
+        let next = this.addProject(directory, remote.syncId);
+        // Apply any carried workspace AI context files from the remote project safely
+        if (Array.isArray(remote.contextFiles) && remote.contextFiles.length) {
+            applyWorkspaceContext((0, node_path_1.resolve)(directory), remote.contextFiles, remote.syncId, backupRoot);
         }
-        return next;
+        const refreshedMeta = inspectWorkspace((0, node_path_1.resolve)(directory), { includeContent: false });
+        const selfName = (0, node_os_1.hostname)();
+        const now = Date.now();
+        const projects = next.projects.map(p => {
+            if (p.syncId !== remote.syncId) return p;
+            return {
+                ...p,
+                name: remote.name || p.name,
+                gitRemote: refreshedMeta.gitRemote || remote.gitRemote || p.gitRemote || "",
+                gitBranch: refreshedMeta.gitBranch || p.gitBranch || "",
+                gitCommit: refreshedMeta.gitCommit || p.gitCommit || "",
+                contextHash: refreshedMeta.contextHash || "",
+                contextFilesCount: refreshedMeta.contextFiles.length,
+                syncedDevices: normalizeSyncedDevices([
+                    ...(remote.syncedDevices || []),
+                    ...(p.syncedDevices || []),
+                    { name: selfName, gitBranch: refreshedMeta.gitBranch, gitCommit: refreshedMeta.gitCommit, updatedAt: now },
+                ]),
+                lastSyncedAt: now,
+                updatedAt: Math.max(now, remote.updatedAt || 0),
+            };
+        });
+        return this.update({ projects });
     }
     setEdgeDock(side) {
         if (!["off", "left", "right"].includes(side))
@@ -295,13 +520,19 @@ class LocalStore {
             throw new Error("请输入 1 至 120 个字符的项目名称。");
         return this.update({
             projects: this.state.projects.map((entry) =>
-                entry.id === project.id ? { ...entry, name: normalized } : entry),
+                entry.id === project.id ? { ...entry, name: normalized, updatedAt: Date.now() } : entry),
         });
     }
     removeProject(id) {
         const project = this.projectById(id);
+        const deletedProjects = normalizeDeletedProjects([
+            ...(this.state.deletedProjects || []),
+            { syncId: project.syncId, deletedAt: Date.now(), originDevice: (0, node_os_1.hostname)() },
+        ]);
         return this.update({
             projects: this.state.projects.filter((entry) => entry.id !== project.id),
+            remoteProjects: (this.state.remoteProjects || []).filter((entry) => entry.syncId !== project.syncId),
+            deletedProjects,
         });
     }
     update(changes) {

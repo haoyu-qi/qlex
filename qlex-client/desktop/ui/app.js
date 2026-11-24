@@ -357,9 +357,12 @@ function renderQStage() {
     while (skillHeights.length < 7) skillHeights.push(20);
 
     const recentFeed = [];
-    if (boundProjects[0]) recentFeed.push({ icon: "✓", text: `同步项目：${boundProjects[0].name}`, time: fmtShortTime(boundProjects[0].updatedAt || net.syncMeta?.lastProjectsSync?.time) });
+    const projSync = net.syncMeta?.lastProjectsSync || net.syncMeta?.lastProjectSync;
+    if (projSync?.error) recentFeed.push({ icon: "!", text: `项目同步异常：${projSync.error}`, time: fmtShortTime(projSync.time) });
+    else if (boundProjects[0]) recentFeed.push({ icon: "✓", text: `同步项目：${boundProjects[0].name}${boundProjects[0].gitBranch ? ` (${boundProjects[0].gitBranch})` : ""}`, time: fmtShortTime(projSync?.time || boundProjects[0].lastSyncedAt || boundProjects[0].updatedAt) });
     if (sk.localTime) recentFeed.push({ icon: sk.conflicts > 0 ? "!" : "✓", text: sk.conflicts > 0 ? `技能存在 ${sk.conflicts} 项冲突待对齐` : `技能一致化：${sk.uniqueSkills ?? 0} 项已对齐`, time: fmtShortTime(sk.localTime) });
     if (mem.items?.daily?.[0]) recentFeed.push({ icon: "⟳", text: `记忆归档：${mem.items.daily[0].key}（${cog.activeItems || 0} 条）`, time: fmtShortTime(mem.lastRun) });
+    if (remoteProjects.length) recentFeed.push({ icon: "↓", text: `远端待绑定项目：${remoteProjects.length} 个`, time: fmtShortTime(projSync?.time) });
     recentFeed.push({ icon: ts.online ? "✓" : "•", text: ts.online ? `穿透在线：${ts.self?.dnsName || ts.self?.ip}` : `本机节点：${cleanHost(state.deviceName)}`, time: fmtShortTime(st.time) });
 
     const issueCount = (sk.conflicts || 0) + anomalies.length;
@@ -372,15 +375,15 @@ function renderQStage() {
         </div>
 
         <section class="hub-constellation">
-          <svg class="hub-links-svg" viewBox="0 0 600 192" preserveAspectRatio="none" aria-hidden="true">
-            <line x1="185" y1="54" x2="245" y2="82" stroke="rgba(183,234,212,0.42)" stroke-width="1.3"/>
-            <line x1="185" y1="138" x2="245" y2="112" stroke="rgba(183,234,212,0.42)" stroke-width="1.3"/>
-            <line x1="415" y1="54" x2="355" y2="82" stroke="rgba(115,189,245,0.42)" stroke-width="1.3"/>
-            <line x1="415" y1="138" x2="355" y2="112" stroke="rgba(115,189,245,0.42)" stroke-width="1.3"/>
-            <circle cx="245" cy="82" r="2.6" fill="var(--accent)"/>
-            <circle cx="245" cy="112" r="2.6" fill="var(--accent)"/>
-            <circle cx="355" cy="82" r="2.6" fill="var(--blue)"/>
-            <circle cx="355" cy="112" r="2.6" fill="var(--blue)"/>
+          <svg class="hub-links-svg" viewBox="0 0 600 266" preserveAspectRatio="none" aria-hidden="true">
+            <line x1="184" y1="96" x2="226" y2="112" stroke="rgba(183,234,212,0.38)" stroke-width="1.2" stroke-dasharray="3 3"/>
+            <line x1="184" y1="170" x2="226" y2="154" stroke="rgba(183,234,212,0.38)" stroke-width="1.2" stroke-dasharray="3 3"/>
+            <line x1="416" y1="96" x2="374" y2="112" stroke="rgba(115,189,245,0.38)" stroke-width="1.2" stroke-dasharray="3 3"/>
+            <line x1="416" y1="170" x2="374" y2="154" stroke="rgba(115,189,245,0.38)" stroke-width="1.2" stroke-dasharray="3 3"/>
+            <circle cx="226" cy="112" r="2.5" fill="var(--accent)"/>
+            <circle cx="226" cy="154" r="2.5" fill="var(--accent)"/>
+            <circle cx="374" cy="112" r="2.5" fill="var(--blue)"/>
+            <circle cx="374" cy="154" r="2.5" fill="var(--blue)"/>
           </svg>
 
           <div class="hub-sat-col">
@@ -400,13 +403,29 @@ function renderQStage() {
             </button>
           </div>
 
-          <div class="hub-orb-wrap ${isSyncing ? "syncing" : ""}">
-            <div class="hub-orb-ring"></div>
+          <div class="hub-orb-wrap ${isSyncing ? "syncing" : ""} ${orbTone ? "warn-tone" : ""}">
+            <span class="solar-star" style="width:2.5px;height:2.5px;top:14%;left:18%;animation-delay:0s"></span>
+            <span class="solar-star" style="width:2px;height:2px;top:20%;right:14%;animation-delay:1.4s"></span>
+            <span class="solar-star" style="width:2.5px;height:2.5px;bottom:16%;left:22%;animation-delay:2.6s"></span>
+            <span class="solar-star" style="width:2px;height:2px;bottom:12%;right:20%;animation-delay:0.8s"></span>
+
+            <div class="solar-orbit orbit-3" aria-hidden="true">
+              <span class="orbit-body planet-purple"></span>
+              <span class="orbit-body moon-amber"></span>
+            </div>
+            <div class="solar-orbit orbit-2" aria-hidden="true">
+              <span class="orbit-body planet-blue"></span>
+            </div>
+            <div class="solar-orbit orbit-1" aria-hidden="true">
+              <span class="orbit-body moon-mint"></span>
+            </div>
+            <div class="planet-halo-ring" aria-hidden="true"></div>
+
             <button type="button" class="q-core-orb ${orbTone}" data-action="sync-now" title="点击立即执行双向同步">
               <svg class="orb-grid" viewBox="0 0 140 140" aria-hidden="true">
                 <circle cx="70" cy="70" r="68" fill="none" stroke="white" stroke-width="0.7"/>
                 <ellipse cx="70" cy="70" rx="34" ry="68" fill="none" stroke="white" stroke-width="0.7"/>
-                <ellipse cx="70" cy="70" rx="68" ry="26" fill="none" stroke="white" stroke-width="0.7"/>
+                <ellipse cx="70" cy="70" rx="68" ry="24" fill="none" stroke="white" stroke-width="0.7"/>
                 <line x1="2" y1="70" x2="138" y2="70" stroke="white" stroke-width="0.6"/>
               </svg>
               <span class="q-core-score">${health.score}</span>
@@ -500,13 +519,13 @@ function renderQStage() {
           ${buildRightBarChartSvg()}
         </div>
 
-        <div class="hub-right-card">
+        <div class="hub-right-card grow">
           <div class="card-head">
             <span class="card-title">最近同步活动</span>
             <button type="button" class="q-inline-link" data-rail="status">查看全部 ›</button>
           </div>
           <div>
-            ${recentFeed.slice(0, 4).map(f => `
+            ${recentFeed.slice(0, 5).map(f => `
               <div class="hub-feed-row">
                 <span class="hub-feed-text">${esc(f.icon)} ${esc(f.text)}</span>
                 <span class="hub-feed-time">${esc(f.time)}</span>
@@ -738,7 +757,7 @@ function renderEStage() {
     let rightPanelHtml = "";
     if (memoryPreview) {
         rightPanelHtml = `
-          <div class="card">
+          <div class="card card-fill">
             <div class="card-head">
               <span class="card-title">${esc(memoryPreview.key)}</span>
               <div class="btn-row">
@@ -769,7 +788,7 @@ function renderEStage() {
               </div>
             `;
         } else {
-            tabBody = list.length ? `<div class="item-list" style="max-height:360px;overflow-y:auto">${list.slice(0, 30).map(item => `
+            tabBody = list.length ? `<div class="item-list scroll-fill">${list.slice(0, 60).map(item => `
               <div class="item-row clickable" data-read-memory="${memoryCategory}:${esc(item.key)}">
                 <div class="item-main">
                   <span class="item-dot" style="background:${memoryCategory === "daily" ? "var(--accent)" : memoryCategory === "weekly" ? "var(--blue)" : "var(--purple)"}"></span>
@@ -784,7 +803,7 @@ function renderEStage() {
         }
 
         rightPanelHtml = `
-          <div class="card">
+          <div class="card card-fill">
             <div class="card-head">
               <span class="card-title">分层归档 · 图谱 · 反思浏览器</span>
               <span class="tag ok">压缩率 ${mem.compressionRatio ?? 0}%</span>
@@ -827,7 +846,7 @@ function renderEStage() {
               <div class="kpi-chip"><span>日/周/月</span><strong>${c.daily}/${c.weekly}/${c.monthly}</strong></div>
             </div>
             <div class="btn-row">
-              <button type="button" class="glass-btn sm primary" data-action="install-memory-skill">✦ 部署 6 工具 Agent 技能</button>
+              <button type="button" class="glass-btn sm primary" data-action="install-memory-skill">✦ 部署 ${ms.totalCount || 9} 工具 Agent 技能</button>
               <button type="button" class="glass-btn sm" data-action="reflect-memory">执行反思</button>
               <button type="button" class="glass-btn sm" data-action="choose-memory-dir">更改目录</button>
             </div>
@@ -836,7 +855,7 @@ function renderEStage() {
 
           ${retainForm}
 
-          <div class="card">
+          <div class="card card-fill">
             <div class="card-head">
               <span class="card-title">OpenViking 分层检索</span>
               <div class="seg-bar">
@@ -849,8 +868,8 @@ function renderEStage() {
             </form>
             ${memoryRecallResult ? `
               <div class="muted-note">命中 ${memoryRecallResult.results.length}/${memoryRecallResult.totalMatched} 条（${memoryRecallResult.level}）</div>
-              <div class="item-list" style="max-height:200px;overflow-y:auto">
-                ${memoryRecallResult.results.length ? memoryRecallResult.results.slice(0, 8).map(r => `
+              <div class="item-list scroll-fill">
+                ${memoryRecallResult.results.length ? memoryRecallResult.results.slice(0, 12).map(r => `
                   <div class="item-row clickable" data-browse-uri="${esc(r.uri)}">
                     <div class="item-text">
                       <div class="item-title">${esc(r.title)}</div>
@@ -888,17 +907,39 @@ function renderXStage() {
     const fixableAnomalies = anomalies.filter(a => a.fixable);
     const lastErrors = sk.lastErrors || [];
 
+    const net = state.pairing || { mode: "local", peers: [] };
+    const projSync = net.syncMeta?.lastProjectsSync || net.syncMeta?.lastProjectSync || null;
+    const autoMatches = state.projectAutoMatches || {};
+    const onlinePeersCount = (net.peers || []).filter(p => p.online).length;
+    const syncStripTone = projSync?.error ? "err"
+        : net.mode === "endpoint" && !net.online ? "warn"
+        : projSync?.time ? "ok" : "";
+    const syncStripText = projSync?.error
+        ? `⚠ 同步异常：${projSync.error}`
+        : net.mode === "endpoint"
+            ? (net.online
+                ? `⇄ 已连中心 ${cleanHost(net.endpoint?.name || net.endpoint?.address || "中心")} · ${projSync?.time ? `已同步 ${fmtShortTime(projSync.time)}（共 ${projSync.totalShared ?? (state.projects?.length || 0)} 项${projSync.contextApplied ? ` · ${projSync.contextApplied} 份上下文` : ""}）` : "点击「⟳ 同步」立即对齐"}`
+                : `⚠ 中心离线（${cleanHost(net.endpoint?.name || "")}），恢复连接后自动同步`)
+            : net.mode === "center"
+                ? `◉ 本机为中心点 · 托管 ${(state.projects || []).length + (state.remoteProjects || []).length} 个共享项目 · ${onlinePeersCount} 台接入点在线${projSync?.time ? ` · 最近同步 ${fmtShortTime(projSync.time)}` : ""}`
+                : `本机单机模式 · 前往「互联」连接中心点即可跨设备同步项目与工作区`;
+
     let projectsLeftHtml = "";
     if (projectDetail) {
         const proj = (selectedReport()?.projects || []).find(p => p.directory === projectDetail);
         const m = (state.projects || []).find(p => p.directory === projectDetail);
         projectsLeftHtml = `
-          <div class="card">
+          <div class="card card-fill">
             <div class="card-head">
               <span class="card-title">${esc(projectName(projectDetail))}</span>
               <button type="button" class="glass-btn sm" data-action="close-project-detail">返回项目列表</button>
             </div>
             <div class="mono-line">${esc(projectDetail)}</div>
+            ${m && (m.gitBranch || m.gitRemote) ? `<div class="proj-meta-badges">
+              ${m.gitBranch ? `<span class="mini-pill">分支 ${esc(m.gitBranch)}${m.gitCommit ? ` @ ${esc(m.gitCommit)}` : ""}</span>` : ""}
+              ${m.contextFilesCount ? `<span class="mini-pill">AI 上下文 ${m.contextFilesCount} 份</span>` : ""}
+              ${(m.syncedDevices || []).length ? `<span class="mini-pill">跨端设备 ${m.syncedDevices.map(d => cleanHost(d.name)).join(" ↔ ")}</span>` : ""}
+            </div>` : ""}
             <div class="kpi-strip-3">
               <div class="kpi-chip"><span>${PERIODS[period]} Token</span><strong>${fmtCompact(proj?.tokens || 0)}</strong></div>
               <div class="kpi-chip"><span>会话数</span><strong>${fmtNum(proj?.sessions || 0)}</strong></div>
@@ -907,13 +948,13 @@ function renderXStage() {
             <div class="btn-row">
               ${m ? `<button type="button" class="glass-btn sm" data-action="open-project" data-id="${esc(m.id)}">打开目录 ↗</button>`
                   : `<button type="button" class="glass-btn sm" data-action="open-discovered-project" data-directory="${esc(projectDetail)}">打开目录 ↗</button>
-                     <button type="button" class="glass-btn sm primary" data-action="add-discovered-project" data-directory="${esc(projectDetail)}">+ 登记项目</button>`}
+                     <button type="button" class="glass-btn sm primary" data-action="add-discovered-project" data-directory="${esc(projectDetail)}">+ 登记并同步</button>`}
             </div>
           </div>
         `;
     } else {
         projectsLeftHtml = `
-          <div class="card">
+          <div class="card card-fill">
             <div class="card-head">
               <span class="card-title">跨端同步项目与工作区</span>
               <div class="btn-row">
@@ -921,67 +962,88 @@ function renderXStage() {
                 <button type="button" class="glass-btn sm primary" data-action="add-project">+ 添加项目</button>
               </div>
             </div>
+            <div class="sync-status-strip ${syncStripTone}">
+              <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(syncStripText)}">${esc(syncStripText)}</span>
+            </div>
             <input id="projectSearchInput" class="glass-input" type="search" value="${esc(projectQuery)}" placeholder="筛选项目名称或目录路径…" />
 
-            ${remoteProjects.length ? `
-              <div class="conflict-box" style="border-color:rgba(var(--accent-rgb),0.36);background:rgba(var(--accent-rgb),0.06)">
-                <div class="card-head"><span class="card-title" style="font-size:12px;color:var(--accent)">远端共享项目（待绑定 ${remoteProjects.length}）</span></div>
-                ${remoteProjects.map(rp => `
-                  <div class="item-row">
-                    <div class="item-text">
-                      <div class="item-title">${esc(rp.name)}</div>
-                      <div class="item-sub">来自 ${esc(rp.originDevice || "中心节点")}</div>
-                    </div>
-                    <button type="button" class="glass-btn sm primary" data-bind-remote-project="${esc(rp.syncId)}">绑定目录</button>
-                  </div>
-                `).join("")}
-              </div>
-            ` : ""}
-
-            <div class="item-list">
-              ${managed.length ? managed.map(p => editingProject === p.id ? `
-                <div class="item-row">
-                  <form class="project-rename" data-id="${esc(p.id)}" style="display:flex;gap:6px;width:100%">
-                    <input id="projectRenameInput" class="glass-input" value="${esc(p.name)}" maxlength="120" required />
-                    <button type="submit" class="glass-btn sm primary">保存</button>
-                    <button type="button" class="glass-btn sm" data-action="cancel-rename">取消</button>
-                  </form>
-                </div>
-              ` : `
-                <div class="item-row">
-                  <div class="item-main clickable" data-project-detail="${esc(p.directory)}">
-                    <span class="item-dot" style="background:var(--accent)"></span>
-                    <div class="item-text">
-                      <div class="item-title">${esc(p.name)}</div>
-                      <div class="item-sub">${esc(p.directory)}</div>
-                    </div>
-                  </div>
-                  <div class="btn-row">
-                    <button type="button" class="glass-btn sm" data-action="open-project" data-id="${esc(p.id)}">打开</button>
-                    <button type="button" class="glass-btn sm" data-action="rename-project" data-id="${esc(p.id)}">改名</button>
-                    <button type="button" class="glass-btn sm danger" data-action="remove-project" data-id="${esc(p.id)}">移出</button>
-                  </div>
-                </div>
-              `).join("") : `<div class="muted-note">尚未登记本机项目。点击右上角「+ 添加项目」或从下方自动发现工作区一键登记。</div>`}
-            </div>
-
-            ${discovered.length ? `
-              <div class="card-head" style="margin-top:4px"><span class="card-meta">近 7 天自动发现工作区 (${discovered.length})</span></div>
-              <div class="item-list" style="max-height:190px;overflow-y:auto">
-                ${discovered.slice(0, 30).map(p => `
-                  <div class="item-row">
-                    <div class="item-main clickable" data-project-detail="${esc(p.directory)}">
-                      <span class="item-dot" style="background:${sourceColor(p.sources?.[0])}"></span>
+            <div class="scroll-fill" style="display:flex;flex-direction:column;gap:10px">
+              ${remoteProjects.length ? `
+                <div class="conflict-box" style="border-color:rgba(var(--accent-rgb),0.36);background:rgba(var(--accent-rgb),0.06)">
+                  <div class="card-head"><span class="card-title" style="font-size:12px;color:var(--accent)">远端共享项目（待绑定 ${remoteProjects.length}）</span></div>
+                  ${remoteProjects.map(rp => {
+                      const match = autoMatches[rp.syncId];
+                      return `
+                    <div class="item-row">
                       <div class="item-text">
-                        <div class="item-title">${esc(p.name)}</div>
-                        <div class="item-sub">${(p.sources || []).map(s => SOURCE_NAMES[s] || s).join(" · ")} · ${fmtCompact(p.tokens)} tok</div>
+                        <div class="item-title">${esc(rp.name)}</div>
+                        <div class="item-sub">来自 ${esc(cleanHost(rp.originDevice || "中心节点"))}${rp.gitBranch ? ` · ${esc(rp.gitBranch)}` : ""}${rp.contextFiles?.length ? ` · ${rp.contextFiles.length} 份上下文` : ""}</div>
+                        ${match ? `<div class="item-sub" style="color:var(--accent)">⚡ 检测到本机同名目录（${esc(match.reason)}）：${esc(match.directory)}</div>` : ""}
+                      </div>
+                      <div class="btn-row" style="flex-wrap:nowrap">
+                        ${match ? `<button type="button" class="glass-btn sm primary" data-auto-bind-sync="${esc(rp.syncId)}" data-auto-bind-dir="${esc(match.directory)}">⚡ 自动绑定</button>` : ""}
+                        <button type="button" class="glass-btn sm ${match ? "" : "primary"}" data-bind-remote-project="${esc(rp.syncId)}">选择目录</button>
                       </div>
                     </div>
-                    <button type="button" class="glass-btn sm btn-register" data-action="add-discovered-project" data-directory="${esc(p.directory)}">+ 登记</button>
+                  `;
+                  }).join("")}
+                </div>
+              ` : ""}
+
+              <div class="item-list">
+                ${managed.length ? managed.map(p => editingProject === p.id ? `
+                  <div class="item-row">
+                    <form class="project-rename" data-id="${esc(p.id)}" style="display:flex;gap:6px;width:100%">
+                      <input id="projectRenameInput" class="glass-input" value="${esc(p.name)}" maxlength="120" required />
+                      <button type="submit" class="glass-btn sm primary">保存</button>
+                      <button type="button" class="glass-btn sm" data-action="cancel-rename">取消</button>
+                    </form>
                   </div>
-                `).join("")}
+                ` : `
+                  <div class="item-row">
+                    <div class="item-main clickable" data-project-detail="${esc(p.directory)}">
+                      <span class="item-dot" style="background:var(--accent)"></span>
+                      <div class="item-text">
+                        <div class="item-title">${esc(p.name)}</div>
+                        <div class="item-sub">${esc(p.directory)}</div>
+                        <div class="proj-meta-badges">
+                          ${p.gitBranch ? `<span class="mini-pill">${esc(p.gitBranch)}${p.gitCommit ? ` @ ${esc(p.gitCommit)}` : ""}</span>` : ""}
+                          ${(p.syncedDevices || []).length > 1
+                              ? `<span class="mini-pill" style="color:var(--success);border-color:rgba(var(--success-rgb),0.3)">⇄ 已同步 ${p.syncedDevices.length} 设备</span>`
+                              : p.lastSyncedAt
+                                  ? `<span class="mini-pill" style="color:var(--accent)">✓ 已推送中心</span>`
+                                  : ""}
+                          ${p.contextFilesCount ? `<span class="mini-pill">${p.contextFilesCount} 份 AI 上下文</span>` : ""}
+                        </div>
+                      </div>
+                    </div>
+                    <div class="btn-row" style="flex-wrap:nowrap">
+                      <button type="button" class="glass-btn sm" data-action="open-project" data-id="${esc(p.id)}">打开</button>
+                      <button type="button" class="glass-btn sm" data-action="rename-project" data-id="${esc(p.id)}">改名</button>
+                      <button type="button" class="glass-btn sm danger" data-action="remove-project" data-id="${esc(p.id)}">移出</button>
+                    </div>
+                  </div>
+                `).join("") : `<div class="muted-note">尚未登记本机项目。点击右上角「+ 添加项目」或从下方自动发现工作区一键登记。</div>`}
               </div>
-            ` : ""}
+
+              ${discovered.length ? `
+                <div class="card-head" style="margin-top:2px"><span class="card-meta">近 7 天自动发现工作区 (${discovered.length})</span></div>
+                <div class="item-list">
+                  ${discovered.slice(0, 40).map(p => `
+                    <div class="item-row">
+                      <div class="item-main clickable" data-project-detail="${esc(p.directory)}">
+                        <span class="item-dot" style="background:${sourceColor(p.sources?.[0])}"></span>
+                        <div class="item-text">
+                          <div class="item-title">${esc(p.name)}</div>
+                          <div class="item-sub">${(p.sources || []).map(s => SOURCE_NAMES[s] || s).join(" · ")} · ${fmtCompact(p.tokens)} tok</div>
+                        </div>
+                      </div>
+                      <button type="button" class="glass-btn sm btn-register" data-action="add-discovered-project" data-directory="${esc(p.directory)}">+ 登记</button>
+                    </div>
+                  `).join("")}
+                </div>
+              ` : ""}
+            </div>
           </div>
         `;
     }
@@ -1034,7 +1096,7 @@ function renderXStage() {
                 </div>
               </div>
               <div class="muted-note">处理策略：选择基准目录覆盖其余目录，旧版本自动归档至 <code>~/.qlex-skill-backups</code>，随时可回滚。</div>
-              <div class="item-list" style="max-height:220px;overflow-y:auto">
+              <div class="item-list" style="max-height:280px;overflow-y:auto">
                 ${conflictDetails.map(cf => `
                   <div class="conflict-item">
                     <div class="card-head">
@@ -1683,7 +1745,19 @@ document.addEventListener("click", (event) => {
         } else if (act === "sync-projects-now") {
             void runAction(actionBtn, async () => {
                 const res = await window.qlex.syncProjectsNow();
-                notify(res.remote ? `跨端项目已同步（共 ${res.remote.totalShared || 0} 个共享项目）` : "已刷新本机项目列表");
+                const r = res.remote;
+                if (r?.role === "endpoint") {
+                    const parts = [`共 ${r.totalShared || 0} 个共享项目`];
+                    if (r.added) parts.push(`新增 ${r.added}`);
+                    if (r.updated) parts.push(`更新 ${r.updated}`);
+                    if (r.removed) parts.push(`移出 ${r.removed}`);
+                    if (r.contextApplied) parts.push(`同步 ${r.contextApplied} 份上下文`);
+                    notify(`跨端项目同步完成：${parts.join(" · ")}`);
+                } else if (r?.role === "center") {
+                    notify(`中心已刷新并托管 ${r.totalShared || 0} 个共享项目（${r.onlinePeers || 0} 台接入点在线）`);
+                } else {
+                    notify(`已刷新本机 ${r?.totalShared || 0} 个工作区元数据（连接中心后即可跨端同步）`);
+                }
                 return res.state;
             });
         } else if (act === "reflect-memory") {
@@ -1718,8 +1792,8 @@ document.addEventListener("click", (event) => {
         else if (act === "update-install") void runAction(actionBtn, () => window.qlex.updateInstall());
         else if (act === "update-open-release") void window.qlex.updateOpenRelease();
         else if (act === "open-dashboard-trends") void window.qlex.openDashboard("trends");
-        else if (act === "add-project") void runAction(actionBtn, () => window.qlex.chooseProject());
-        else if (act === "add-discovered-project") void runAction(actionBtn, () => window.qlex.addDiscoveredProject(actionBtn.dataset.directory), { success: "已登记到本机项目" });
+        else if (act === "add-project") void runAction(actionBtn, () => window.qlex.chooseProject(), { success: "项目已登记并同步至对端" });
+        else if (act === "add-discovered-project") void runAction(actionBtn, () => window.qlex.addDiscoveredProject(actionBtn.dataset.directory), { success: "已登记项目并触发跨端同步" });
         else if (act === "open-discovered-project") void runAction(actionBtn, () => window.qlex.openDiscoveredProject(actionBtn.dataset.directory));
         else if (act === "open-project") void runAction(actionBtn, () => window.qlex.openProject(actionBtn.dataset.id));
         else if (act === "rename-project") { editingProject = actionBtn.dataset.id; renderXStage(); document.querySelector("#projectRenameInput")?.focus(); }
@@ -1738,6 +1812,12 @@ document.addEventListener("click", (event) => {
         } else if (act === "approve") void runAction(actionBtn, () => window.qlex.approveDevice(actionBtn.dataset.id));
         else if (act === "remove") void runAction(actionBtn, () => window.qlex.removeDevice(actionBtn.dataset.id));
         else if (act === "refresh-pairing") void runAction(actionBtn, () => window.qlex.refreshPairing());
+        return;
+    }
+
+    const autoBindBtn = target.closest("[data-auto-bind-sync]");
+    if (autoBindBtn && state) {
+        void runAction(autoBindBtn, () => window.qlex.bindRemoteProject(autoBindBtn.dataset.autoBindSync, autoBindBtn.dataset.autoBindDir), { success: "已自动绑定匹配目录并完成跨端同步" });
         return;
     }
 
