@@ -460,19 +460,20 @@ function renderSyncHubHeader() {
     const connectedPeers = (net.peers || []).filter(p => p.status === "connected").length;
     const onlinePeers = (net.peers || []).filter(p => p.online).length;
 
+    const cleanPeerName = (net.endpoint?.name || "中心").replace(/\.local$/i, "");
     const headline = net.mode === "center"
         ? (net.online ? "中心点 · 运行中" : "中心点 · 未启动")
         : net.mode === "endpoint"
-            ? (net.endpoint?.status === "pending" ? "接入点 · 等待确认" : net.online ? `接入点 · 已连 ${net.endpoint?.name || "中心"}` : "接入点 · 离线缓存")
+            ? (net.endpoint?.status === "pending" ? "接入点 · 等待确认" : net.online ? `接入点 · ${cleanPeerName}` : "接入点 · 离线缓存")
             : "单机模式 · 可设为中心或接入";
 
     const subAddr = ts.online && ts.self?.ip
         ? `Tailscale ${ts.self.ip}${ts.self.dnsName ? ` · ${ts.self.dnsName}` : ""}`
-        : net.mode === "center" ? `监听端口 ${net.port} · 等待接入设备` : `设备：${state.deviceName}`;
+        : net.mode === "center" ? `监听端口 ${net.port} · 等待接入设备` : `设备：${(state.deviceName || "").replace(/\.local$/i, "")}`;
 
     patchHtml(hubPanel, `
       <div class="hub-head-row">
-        <div class="hub-role-headline">${escapeHtml(headline)}</div>
+        <div class="hub-role-headline" title="${escapeHtml(headline)}">${escapeHtml(headline)}</div>
         ${view === "devices"
             ? `<button type="button" class="glass-btn sm" data-jump-view="home">返回总览</button>`
             : `<button type="button" class="glass-btn sm" data-jump-view="devices">${net.mode === "local" ? "设为中心 / 加入" : "节点管理 ›"}</button>`}
@@ -496,6 +497,95 @@ function renderSyncHubHeader() {
         </button>
       </div>
     `);
+}
+
+function buildHomeSyncTrendHtml() {
+    const memDaily = state.memoryArchive?.items?.daily || [];
+    const memMap = new Map(memDaily.map(item => [item.key, Number(item.rawBytes || item.compressedBytes || 0)]));
+    const usageDaily = state.usage?.week?.daily || state.usage?.history?.[7]?.daily || [];
+    const usageMap = new Map(usageDaily.map(r => [r.date, Number(r.tokens || 0)]));
+    const todayTotal = Number(state.usage?.today?.total || 0);
+
+    const end = new Date();
+    const days = Array.from({ length: 7 }, (_, idx) => {
+        const d = new Date(end.getFullYear(), end.getMonth(), end.getDate() - (6 - idx));
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        const memVal = memMap.get(key) || 0;
+        const tokVal = usageMap.get(key) ?? (idx === 6 ? todayTotal : 0);
+        return { key, short: key.slice(5), memVal, tokVal };
+    });
+
+    const maxMem = Math.max(1, ...days.map(d => d.memVal));
+    const maxTok = Math.max(1, ...days.map(d => d.tokVal));
+    const activeMemDays = days.filter(d => d.memVal > 0).length;
+    const activeWorkDays = days.filter(d => d.tokVal > 0).length;
+
+    const W = 280;
+    const H = 74;
+    const padTop = 8;
+    const baseY = 66;
+    const plotH = baseY - padTop;
+    const step = W / 7;
+    const barW = 14;
+
+    const barsSvg = days.map((d, i) => {
+        const cx = step * (i + 0.5);
+        const bh = d.memVal > 0 ? Math.max(5, Math.round((d.memVal / maxMem) * (plotH * 0.85))) : 2;
+        const y = baseY - bh;
+        const op = d.memVal > 0 ? 0.72 : 0.16;
+        return `<rect x="${(cx - barW / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${barW}" height="${bh.toFixed(1)}" rx="3" fill="var(--accent)" fill-opacity="${op}"><title>${d.key} · 记忆归档 ${fmtBytes(d.memVal)}</title></rect>`;
+    }).join("");
+
+    const pts = days.map((d, i) => {
+        const x = step * (i + 0.5);
+        const ratio = d.tokVal > 0 ? Math.max(0.08, d.tokVal / maxTok) : 0;
+        const y = baseY - ratio * (plotH * 0.92);
+        return { x, y, d };
+    });
+    const linePath = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+    const areaPath = `${linePath} L${pts[pts.length - 1].x.toFixed(1)} ${baseY} L${pts[0].x.toFixed(1)} ${baseY} Z`;
+    const dotsSvg = pts.map(p =>
+        `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${p.d.tokVal > 0 ? 2.7 : 1.7}" fill="var(--blue)" stroke="rgba(var(--glass-rgb),0.9)" stroke-width="1"><title>${p.d.key} · 活动量 ${fmtNum(p.d.tokVal)}</title></circle>`
+    ).join("");
+
+    const lastSyncTs = Math.max(state.syncStatus?.time || 0, state.pairing?.syncMeta?.lastMemorySync?.time || 0, state.memoryArchive?.lastRun || 0);
+    const lastSyncLabel = lastSyncTs ? `最近 ${new Date(lastSyncTs).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : "近 7 天";
+
+    return `
+      <div class="home-module">
+        <div class="home-module-head" data-jump-view="trends">
+          <span class="home-module-label">同步活动趋势</span>
+          <span class="home-module-meta">近 7 天 · 记忆 ${activeMemDays}日 / 活跃 ${activeWorkDays}日 ›</span>
+        </div>
+        <div class="home-trend-card">
+          <svg class="home-trend-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="近 7 天同步活动趋势图">
+            <defs>
+              <linearGradient id="qlexTrendArea" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="var(--blue)" stop-opacity="0.28"/>
+                <stop offset="100%" stop-color="var(--blue)" stop-opacity="0.01"/>
+              </linearGradient>
+            </defs>
+            <line x1="0" y1="${padTop}" x2="${W}" y2="${padTop}" stroke="rgba(232,238,244,0.08)" stroke-width="1"/>
+            <line x1="0" y1="${(padTop + baseY) / 2}" x2="${W}" y2="${(padTop + baseY) / 2}" stroke="rgba(232,238,244,0.08)" stroke-width="1"/>
+            <line x1="0" y1="${baseY}" x2="${W}" y2="${baseY}" stroke="rgba(232,238,244,0.14)" stroke-width="1"/>
+            ${barsSvg}
+            <path d="${areaPath}" fill="url(#qlexTrendArea)"/>
+            <path d="${linePath}" fill="none" stroke="var(--blue)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            ${dotsSvg}
+          </svg>
+          <div class="home-trend-axis">
+            ${days.map(d => `<span>${d.short}</span>`).join("")}
+          </div>
+          <div class="home-trend-legend">
+            <div class="home-trend-legend-items">
+              <span class="home-trend-legend-item"><i class="home-trend-swatch" style="background:var(--accent)"></i>记忆归档</span>
+              <span class="home-trend-legend-item"><i class="home-trend-swatch line" style="background:var(--blue)"></i>工作活跃度</span>
+            </div>
+            <span>${escapeHtml(lastSyncLabel)}</span>
+          </div>
+        </div>
+      </div>
+    `;
 }
 
 function renderHome() {
@@ -530,9 +620,9 @@ function renderHome() {
     ` : "";
 
     const roleDesc = net.mode === "center"
-        ? `中心点 · 端口 ${net.port} · ${(net.peers || []).filter(p => p.status === "connected").length} 台已接入`
+        ? `中心 :${net.port} · ${(net.peers || []).filter(p => p.status === "connected").length} 台已连`
         : net.mode === "endpoint"
-            ? `接入点 · ${net.endpoint?.name || net.endpoint?.address || "中心"} (${net.online ? "在线" : "离线"})`
+            ? `接入点 · ${(net.endpoint?.name || net.endpoint?.address || "中心").replace(/\.local$/i, "")} (${net.online ? "在线" : "离线"})`
             : "单机模式 · 点击设为中心点或作为接入点加入";
 
     const projectRows = [
@@ -558,6 +648,13 @@ function renderHome() {
         `),
     ].join("") || `<div class="home-list-sub" style="padding:2px 6px">暂未绑定同步项目，点击右侧「+ 添加」登记工作区并跨设备共享。</div>`;
 
+    const centerQuickBtns = net.mode === "center" && net.online
+        ? `<div class="home-inline-actions">
+             <button type="button" class="glass-btn sm primary" data-action="copy-invite" title="复制当前一次性邀请码">复制邀请</button>
+             <button type="button" class="glass-btn sm" data-action="invite" title="重新生成并复制新邀请码">刷新</button>
+           </div>`
+        : `<button type="button" class="glass-btn sm" data-action="tailscale-scan">扫描</button>`;
+
     patchHtml(homePanel, updateBannerHtml + `
       <div class="home-module">
         <div class="home-module-head" data-jump-view="devices">
@@ -568,9 +665,9 @@ function renderHome() {
           <span class="home-dot" style="background:${net.online || ts.online ? "var(--success)" : "var(--orange)"}"></span>
           <div class="home-list-main">
             <span class="home-list-name">${escapeHtml(roleDesc)}</span>
-            <span class="home-list-sub">${ts.online ? `Tailscale ${escapeHtml(ts.self?.ip || "")} · 发现 ${(ts.discoveredCenters || []).length} 台中心` : "支持 Tailscale 内网穿透自动发现与加密配对"}</span>
+            <span class="home-list-sub">${net.mode === "center" && net.activeInvite ? `邀请 #${escapeHtml(net.activeInvite.shortToken)} · ${escapeHtml(net.activeInvite.host)}:${net.activeInvite.port}` : ts.online ? `Tailscale ${escapeHtml(ts.self?.ip || "")} · 发现 ${(ts.discoveredCenters || []).length} 台中心` : "支持 Tailscale 内网穿透自动发现与加密配对"}</span>
           </div>
-          <button type="button" class="glass-btn sm" data-action="tailscale-scan">扫描</button>
+          ${centerQuickBtns}
         </div>
       </div>
 
@@ -611,6 +708,8 @@ function renderHome() {
           <button type="button" class="glass-btn sm" data-action="sync-local-skills">对齐</button>
         </div>
       </div>
+
+      ${buildHomeSyncTrendHtml()}
 
       <div class="home-module">
         <div class="quick-actions-row">
@@ -973,7 +1072,7 @@ function renderProjects() {
                 <div class="row-subtitle">${p.sources.map(s => SOURCE_NAMES[s] || s).join(" · ")} · ${fmtNum(p.tokens)} tok</div>
               </div>
             </div>
-            <button type="button" class="glass-btn sm" data-action="add-discovered-project" data-directory="${escapeHtml(p.directory)}">+ 登记</button>
+            <button type="button" class="glass-btn sm btn-register" data-action="add-discovered-project" data-directory="${escapeHtml(p.directory)}">+ 登记</button>
           </div>
         </div>
       `).join("")}` : "";
@@ -1133,11 +1232,13 @@ function renderDevices() {
             </div>
             <div class="invite-code-addr" title="${escapeHtml(inv.host)}:${inv.port}">接入地址：${escapeHtml(inv.host)}:${inv.port}</div>
             <div class="invite-code-value" title="完整邀请码已可一键复制">${escapeHtml(compactCode)}</div>
-            <div class="row-actions-inline" style="margin:0">
+            <div class="invite-code-actions">
               <button type="button" class="glass-btn sm primary" data-action="copy-invite">复制邀请码</button>
-              <button type="button" class="glass-btn sm" data-action="invite">⟳ 刷新邀请码</button>
-              <button type="button" class="glass-btn sm danger" data-action="use-local">停止中心</button>
+              <button type="button" class="glass-btn sm" data-action="invite">⟳ 刷新链接</button>
             </div>
+          </div>
+          <div class="row-actions-inline" style="margin:0;justify-content:flex-end">
+            <button type="button" class="glass-btn sm danger" data-action="use-local">停止中心</button>
           </div>
         ` : `
           <div class="row-actions-inline" style="margin:0">
@@ -1475,9 +1576,19 @@ function toggleViewMenu(force) {
     viewSwitcher.classList.toggle("is-open", wantOpen);
 }
 
+viewSwitcherCurrent.title = "点击切换到下一个功能页（右侧箭头展开全部视图）";
 viewSwitcherCurrent.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleViewMenu();
+    toggleViewMenu(false);
+    settingsOpen = false;
+    projectDetail = "";
+    memoryPreview = null;
+    sessionSource = "";
+    sessionProject = "";
+    const idx = VIEWS.findIndex(v => v.id === view);
+    const nextView = VIEWS[(idx + 1) % VIEWS.length];
+    view = nextView ? nextView.id : "home";
+    render();
 });
 viewSwitcherDisclosure.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -1760,7 +1871,7 @@ document.addEventListener("click", (event) => {
         } else if (action === "use-local") {
             void runAction(btn, () => window.qlex.useLocal());
         } else if (action === "invite") {
-            invitationAddress = document.querySelector("#centerAddress")?.value || invitationAddress;
+            invitationAddress = document.querySelector("#centerAddress")?.value || invitationAddress || state?.pairing?.activeInvite?.host || state?.pairing?.addresses?.[0] || "";
             void runAction(btn, () => window.qlex.createInvite(invitationAddress), { success: "已刷新配对邀请并复制到剪贴板" });
         } else if (action === "copy-invite") {
             void runAction(btn, () => window.qlex.copyInvite(), { success: "邀请码已复制到剪贴板" });
