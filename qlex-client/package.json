@@ -8,10 +8,62 @@
   "scripts": {
     "start": "electron .",
     "smoke": "electron . --qlex-smoke",
-    "build:mac": "bash scripts/build-macos-app.sh"
+    "build:mac": "bash scripts/build-macos-app.sh",
+    "build:win": "electron-builder --win nsis zip --x64 --publish never"
   },
   "dependencies": {
-    "koffi": "^3.3.5",
     "node-forge": "1.4.3"
+  },
+  "optionalDependencies": {
+    "koffi": "^3.3.5"
+  },
+  "build": {
+    "appId": "com.qlex.desktop",
+    "productName": "QLEX",
+    "asar": true,
+    "asarUnpack": [
+      "desktop/bin/**"
+    ],
+    "files": [
+      "package.json",
+      "desktop/**/*",
+      "docs/assets/brand/**/*",
+      "!desktop/bin/qlex-tsnet-darwin-*",
+      "!dist/**"
+    ],
+    "directories": {
+      "output": "../installers/win-build"
+    },
+    "win": {
+      "icon": "docs/assets/brand/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "QLEX",
+      "installerIcon": "docs/assets/brand/icon.ico",
+      "uninstallerIcon": "docs/assets/brand/icon.ico",
+      "artifactName": "QLEX-${version}-Windows-${arch}-Setup.${ext}"
+    },
+    "zip": {
+      "artifactName": "QLEX-${version}-Windows-${arch}-Portable.${ext}"
+    }
   }
 }

@@ -1,0 +1,86 @@
+name: build-windows-installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Optional GitHub Release tag to attach Windows installers to (e.g. v0.7.0-beta.6)'
+        required: false
+        default: ''
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-win-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build embedded Tailscale tsnet sidecar (Windows x64)
+        working-directory: qlex-client/tsnet-sidecar
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path ..\desktop\bin | Out-Null
+          $env:CGO_ENABLED = "0"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          go build -trimpath -ldflags="-s -w" -o ..\desktop\bin\qlex-tsnet-win32-x64.exe .
+          Get-Item ..\desktop\bin\qlex-tsnet-win32-x64.exe
+
+      - name: Install QLEX runtime & electron-builder dependencies
+        working-directory: qlex-client
+        shell: pwsh
+        run: |
+          npm install --no-audit --no-fund --omit=optional
+          npm install --no-save --no-audit --no-fund electron@40.10.2 electron-builder@26.0.12
+
+      - name: Run QLEX unit tests on Windows
+        shell: pwsh
+        run: |
+          node qlex-client/scripts/test-memory-framework.mjs
+
+      - name: Package Windows x64 NSIS Setup.exe & Portable.zip
+        working-directory: qlex-client
+        shell: pwsh
+        run: |
+          npx electron-builder --win nsis zip --x64 --publish never
+          $ver = (Get-Content package.json | ConvertFrom-Json).version
+          New-Item -ItemType Directory -Force -Path ..\installers | Out-Null
+          Copy-Item "..\installers\win-build\QLEX-$ver-Windows-x64-Setup.exe" "..\installers\" -Force
+          Copy-Item "..\installers\win-build\QLEX-$ver-Windows-x64-Portable.zip" "..\installers\" -Force
+          Get-ChildItem ..\installers\QLEX-$ver-Windows-*
+
+      - name: Upload Windows installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: qlex-windows-x64
+          path: |
+            installers/QLEX-*-Windows-x64-Setup.exe
+            installers/QLEX-*-Windows-x64-Portable.zip
+
+      - name: Attach Windows installers to GitHub Release
+        if: ${{ inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.release_tag }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            $tag = "${{ github.ref_name }}"
+          }
+          $ver = (Get-Content qlex-client/package.json | ConvertFrom-Json).version
+          $exe = "installers/QLEX-$ver-Windows-x64-Setup.exe"
+          $zip = "installers/QLEX-$ver-Windows-x64-Portable.zip"
+          gh release upload $tag $exe $zip --clobber

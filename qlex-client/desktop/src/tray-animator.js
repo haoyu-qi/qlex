@@ -29,17 +29,19 @@ function createTrayAnimator({ tray, nativeImage, framesDir, fallbackImage }) {
     const syncFrames = [];
     const warnFrames = [];
 
-    for (let i = 0; i < 6; i++) {
-        const img = loadTemplateFrame(nativeImage, path.join(framesDir, `tray-idle-${i}.png`));
-        if (img) idleFrames.push(img);
-    }
-    for (let i = 0; i < 8; i++) {
-        const img = loadTemplateFrame(nativeImage, path.join(framesDir, `tray-sync-${i}.png`));
-        if (img) syncFrames.push(img);
-    }
-    for (let i = 0; i < 2; i++) {
-        const img = loadTemplateFrame(nativeImage, path.join(framesDir, `tray-warn-${i}.png`));
-        if (img) warnFrames.push(img);
+    if (framesDir) {
+        for (let i = 0; i < 6; i++) {
+            const img = loadTemplateFrame(nativeImage, path.join(framesDir, `tray-idle-${i}.png`));
+            if (img) idleFrames.push(img);
+        }
+        for (let i = 0; i < 8; i++) {
+            const img = loadTemplateFrame(nativeImage, path.join(framesDir, `tray-sync-${i}.png`));
+            if (img) syncFrames.push(img);
+        }
+        for (let i = 0; i < 2; i++) {
+            const img = loadTemplateFrame(nativeImage, path.join(framesDir, `tray-warn-${i}.png`));
+            if (img) warnFrames.push(img);
+        }
     }
 
     let mode = "";

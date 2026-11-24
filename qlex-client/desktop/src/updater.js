@@ -141,14 +141,16 @@ function parseChecksumsText(text) {
 function extractAppVersionFromRelease(release) {
     const assets = Array.isArray(release.assets) ? release.assets : [];
     for (const a of assets) {
-        const m = String(a.name || "").match(/^QLEX-([0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?)-macOS/i);
+        const m = String(a.name || "").match(/^QLEX-([0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?)-(?:macOS|Windows)/i);
         if (m) return m[1];
     }
     return String(release.tag_name || "").replace(/^v/i, "");
 }
 
 function createUpdater({ currentVersion, repo = DEFAULT_REPO, cacheDir, getChannel = () => "beta", onChange, onUpdateFound } = {}) {
-    const downloadDir = cacheDir || path.join(os.homedir(), "Library", "Caches", "QLEX", "updates");
+    const downloadDir = cacheDir || (process.platform === "darwin"
+        ? path.join(os.homedir(), "Library", "Caches", "QLEX", "updates")
+        : path.join(os.tmpdir(), "QLEX", "updates"));
     let etag = "";
     let checking = null;
     let downloading = null;
@@ -173,7 +175,12 @@ function createUpdater({ currentVersion, repo = DEFAULT_REPO, cacheDir, getChann
     }
 
     async function resolveReleaseCandidate(releases, channel) {
-        const archTag = process.platform === "darwin" ? `macOS-${process.arch}` : `${process.platform}-${process.arch}`;
+        const archTag = process.platform === "darwin"
+            ? `macOS-${process.arch}`
+            : process.platform === "win32"
+                ? `Windows-${process.arch}`
+                : `${process.platform}-${process.arch}`;
+        const preferredExt = process.platform === "win32" ? ".exe" : ".pkg";
         const eligible = releases.filter(r => {
             if (!r || r.draft) return false;
             if (channel === "stable" && r.prerelease) return false;
@@ -194,13 +201,13 @@ function createUpdater({ currentVersion, repo = DEFAULT_REPO, cacheDir, getChann
                     const manifest = JSON.parse(res.body.toString("utf8"));
                     const platKey = `${process.platform}-${process.arch}`;
                     const plat = manifest.assets?.[platKey];
-                    if (plat && (plat.pkgUrl || plat.zipUrl)) {
-                        const rawUrl = plat.pkgUrl || plat.zipUrl;
+                    if (plat && (plat.exeUrl || plat.pkgUrl || plat.zipUrl)) {
+                        const rawUrl = plat.exeUrl || plat.pkgUrl || plat.zipUrl;
                         const fileName = path.basename(rawUrl);
                         // Always prefer the real GitHub Release asset browser_download_url matching this filename
                         // so a mismatched manifest tag can never cause HTTP 404.
                         const matchedAsset = assets.find(a => a.name === fileName)
-                            || assets.find(a => a.name.includes(archTag) && a.name.endsWith(".pkg"))
+                            || assets.find(a => a.name.includes(archTag) && a.name.endsWith(preferredExt))
                             || assets.find(a => a.name.includes(archTag) && a.name.endsWith(".zip"));
                         const url = matchedAsset?.browser_download_url || rawUrl;
                         const isZip = url.endsWith(".zip");
@@ -222,8 +229,8 @@ function createUpdater({ currentVersion, repo = DEFAULT_REPO, cacheDir, getChann
             } catch { /* fallback to release assets */ }
         }
 
-        // Fallback: pick .pkg then .zip + SHA256SUMS.txt directly from GitHub Release
-        const pkgAsset = assets.find(a => a.name.includes(archTag) && a.name.endsWith(".pkg"))
+        // Fallback: pick .pkg/.exe then .zip + SHA256SUMS.txt directly from GitHub Release
+        const pkgAsset = assets.find(a => a.name.includes(archTag) && a.name.endsWith(preferredExt))
             || assets.find(a => a.name.includes(archTag) && a.name.endsWith(".zip"));
         if (!pkgAsset) return null;
 

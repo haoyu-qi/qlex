@@ -505,17 +505,18 @@ function applyEdgeDockMode(mode) {
 }
 
 function createTray() {
-    const templatePath = (0, node_fs_1.existsSync)(trayLogo) ? trayLogo : logo;
+    const isMac = process.platform === "darwin";
+    const templatePath = (isMac && (0, node_fs_1.existsSync)(trayLogo)) ? trayLogo : logo;
     const original = electron_1.nativeImage.createFromPath(templatePath);
     if (original.isEmpty())
         return;
-    const mark = original.resize({ width: 19, height: 19 });
-    mark.setTemplateImage(process.platform === "darwin");
+    const mark = original.resize(isMac ? { width: 19, height: 19 } : { width: 24, height: 24 });
+    mark.setTemplateImage(isMac);
     tray = new electron_1.Tray(mark);
     trayAnimator = createTrayAnimator({
         tray,
         nativeImage: electron_1.nativeImage,
-        framesDir: trayFramesDir,
+        framesDir: isMac ? trayFramesDir : "",
         fallbackImage: mark,
     });
     tray.on("click", () => {
