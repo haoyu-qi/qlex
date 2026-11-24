@@ -59,6 +59,8 @@ let refreshing = false;
 let joining = false;
 let invitationAddress = "";
 let projectQuery = "";
+let skillFilterTab = "all"; // "all" | "user" | "bundled" | "webui" | "excluded"
+let skillFilterQuery = "";
 let editingProject = "";
 let projectDetail = "";
 let sessionSource = "";
@@ -906,6 +908,19 @@ function renderXStage() {
     const anomalies = sk.anomalies || [];
     const fixableAnomalies = anomalies.filter(a => a.fixable);
     const lastErrors = sk.lastErrors || [];
+    const policy = state.skillSyncPolicy || sk.policy || { excludeHermesBundled: true, excludeHermesWebui: true, excludedSkills: [] };
+    const oc = sk.originCounts || { total: sk.uniqueSkills || 0, syncable: sk.uniqueSkills || 0, user: 0, hermesBundled: 0, hermesWebui: 0, hermesHub: 0, excluded: 0, manualExcluded: 0, autoExcluded: 0, bundledManifestCount: 0, webuiManifestCount: 0 };
+    const nsLabelMap = Object.fromEntries(namespaces.map(n => [n.id, n.label]));
+    const sq = skillFilterQuery.trim().toLowerCase();
+    const filteredCatalog = (sk.skillsCatalog || []).filter(item => {
+        if (sq && !item.name.toLowerCase().includes(sq)) return false;
+        if (skillFilterTab === "user") return item.origin === "user" || item.origin === "hermes-hub";
+        if (skillFilterTab === "bundled") return item.origin === "hermes-bundled";
+        if (skillFilterTab === "webui") return item.origin === "hermes-webui";
+        if (skillFilterTab === "excluded") return item.excluded;
+        return true;
+    });
+    const originBadgeClass = (o) => o === "hermes-bundled" ? "bundled" : o === "hermes-webui" ? "webui" : o === "hermes-hub" ? "hub" : "user";
 
     const net = state.pairing || { mode: "local", peers: [] };
     const projSync = net.syncMeta?.lastProjectsSync || net.syncMeta?.lastProjectSync || null;
@@ -1078,11 +1093,56 @@ function renderXStage() {
                 </div>
               `).join("")}
             </div>
-            <div class="muted-note">${sk.localTime ? `最近对齐 ${fmtTime(sk.localTime)} · 新增/更新 ${sk.localSynced || 0} · 冲突 ${sk.conflicts || 0} · 异常 ${anomalies.length}` : "勾选需同步的工具目录（含 WorkBuddy / ZCode / T3 Code），覆盖前自动备份旧版至 ~/.qlex-skill-backups"}</div>
+            <div class="skill-policy-bar">
+              <button type="button" class="skill-policy-chip ${policy.excludeHermesBundled ? "active" : ""}" data-policy-toggle="excludeHermesBundled" title="基于 ~/.hermes/skills/.bundled_manifest 与官方分类目录自动识别并跳过 Hermes 自带技能">
+                <span>${policy.excludeHermesBundled ? "✓" : "○"} 跳过 Hermes 内置 (${oc.bundledManifestCount || oc.hermesBundled || 0})</span>
+              </button>
+              <button type="button" class="skill-policy-chip ${policy.excludeHermesWebui ? "active" : ""}" data-policy-toggle="excludeHermesWebui" title="基于 .webui-managed-skills.json 跳过强依赖 Hermes WebUI / Studio 的专属技能">
+                <span>${policy.excludeHermesWebui ? "✓" : "○"} 跳过 WebUI 托管 (${oc.webuiManifestCount || oc.hermesWebui || 0})</span>
+              </button>
+            </div>
+            <div class="muted-note">参与同步 <strong>${oc.syncable ?? sk.uniqueSkills ?? 0}</strong> 项 · 已过滤 <strong>${oc.excluded || 0}</strong> 项${oc.manualExcluded ? `（含手动排除 ${oc.manualExcluded}）` : ""}${sk.localTime ? ` · 最近对齐 ${fmtShortTime(sk.localTime)}` : ""}</div>
             <div class="btn-row">
               <button type="button" class="glass-btn sm primary" data-action="sync-local-skills">⟳ 同步本机 Skills</button>
               <button type="button" class="glass-btn sm" data-action="open-skill-dir" data-ns="agents">打开目录 ↗</button>
               <button type="button" class="glass-btn sm" data-action="install-memory-skill">部署 qlex-memory</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">技能来源分类与按需过滤</span>
+              <span class="tag ok">同步 ${oc.syncable ?? 0} / 共 ${oc.total ?? 0}</span>
+            </div>
+            <div class="seg-bar" style="flex-wrap:wrap">
+              <button type="button" class="seg-btn ${skillFilterTab === "all" ? "active" : ""}" data-skill-tab="all">全部(${oc.total || 0})</button>
+              <button type="button" class="seg-btn ${skillFilterTab === "user" ? "active" : ""}" data-skill-tab="user">用户(${(oc.user || 0) + (oc.hermesHub || 0)})</button>
+              <button type="button" class="seg-btn ${skillFilterTab === "bundled" ? "active" : ""}" data-skill-tab="bundled">内置(${oc.hermesBundled || 0})</button>
+              <button type="button" class="seg-btn ${skillFilterTab === "webui" ? "active" : ""}" data-skill-tab="webui">WebUI(${oc.hermesWebui || 0})</button>
+              <button type="button" class="seg-btn ${skillFilterTab === "excluded" ? "active" : ""}" data-skill-tab="excluded">已排除(${oc.excluded || 0})</button>
+            </div>
+            <input id="skillFilterInput" class="glass-input" type="search" value="${esc(skillFilterQuery)}" placeholder="搜索技能名称，按需设置单技能排除同步…" />
+            <div class="item-list" style="max-height:240px;overflow-y:auto">
+              ${filteredCatalog.length ? filteredCatalog.slice(0, 120).map(item => `
+                <div class="item-row skill-catalog-row ${item.excluded ? "is-excluded" : ""}" style="padding:7px 10px">
+                  <div class="item-main">
+                    <span class="item-dot" style="background:${item.hasConflict ? "var(--orange)" : item.excluded ? "var(--muted)" : "var(--success)"}"></span>
+                    <div class="item-text">
+                      <div class="item-title" style="font-size:12px">
+                        ${esc(item.name)}
+                        <span class="origin-badge ${originBadgeClass(item.origin)}">${esc(item.originLabel || "用户安装")}</span>
+                        ${item.manualExcluded ? `<span class="origin-badge excluded">已排除</span>` : ""}
+                      </div>
+                      <div class="item-sub">${item.excluded ? esc(item.excludeReason) : `${(item.namespaces || []).map(ns => nsLabelMap[ns] || ns).join(" · ")}${item.missing?.length ? ` · 待补 ${item.missing.length} 目录` : " · 已对齐"}`}</div>
+                    </div>
+                  </div>
+                  ${item.autoExcluded && !item.manualExcluded
+                      ? `<span class="tag" title="由上方全局规则自动跳过">规则跳过</span>`
+                      : item.manualExcluded
+                          ? `<button type="button" class="glass-btn sm primary" data-toggle-exclude-skill="${esc(item.name)}:0">恢复同步</button>`
+                          : `<button type="button" class="glass-btn sm" data-toggle-exclude-skill="${esc(item.name)}:1" title="将此技能加入排除名单，仅保留在当前工具目录中">排除同步</button>`}
+                </div>
+              `).join("") : `<div class="muted-note" style="padding:10px 4px">当前筛选条件下暂无技能。</div>`}
             </div>
           </div>
 
@@ -1095,12 +1155,12 @@ function renderXStage() {
                   <button type="button" class="glass-btn sm primary" data-action="resolve-all-conflicts">⚡ 全部对齐</button>
                 </div>
               </div>
-              <div class="muted-note">处理策略：选择基准目录覆盖其余目录，旧版本自动归档至 <code>~/.qlex-skill-backups</code>，随时可回滚。</div>
+              <div class="muted-note">处理策略：选择基准目录覆盖其余目录，旧版本自动归档至 <code>~/.qlex-skill-backups</code>；若某技能不适合跨工具同步，可直接点右侧「排除同步」。</div>
               <div class="item-list" style="max-height:280px;overflow-y:auto">
                 ${conflictDetails.map(cf => `
                   <div class="conflict-item">
                     <div class="card-head">
-                      <span class="item-title">${esc(cf.name)}</span>
+                      <span class="item-title">${esc(cf.name)}<span class="origin-badge ${originBadgeClass(cf.origin)}">${esc(cf.originLabel || "用户安装")}</span></span>
                       <span class="card-meta">${esc(cf.diffHint || `${cf.variants.length} 个目录有差异`)}</span>
                     </div>
                     <div class="conflict-variants">
@@ -1110,6 +1170,7 @@ function renderXStage() {
                           <small>${v.filesCount}文件 · ${fmtBytes(v.bytes)} · ${fmtTime(v.mtimeMs)}</small>
                         </button>
                       `).join("")}
+                      <button type="button" class="conflict-pick-btn" data-toggle-exclude-skill="${esc(cf.name)}:1" title="将该技能排除在全量同步之外">排除同步</button>
                       <button type="button" class="conflict-pick-btn" data-action="open-skill-dir" data-ns="${esc(cf.recommendedNs || "agents")}" title="在 Finder 中人工比对">人工查看 ↗</button>
                     </div>
                   </div>
@@ -1119,7 +1180,7 @@ function renderXStage() {
           ` : `
             <div class="card">
               <div class="card-head"><span class="card-title">技能冲突状态</span><span class="tag ok">✓ 0 冲突</span></div>
-              <div class="muted-note">所有已勾选的工具技能目录内容哈希完全一致；若发生修改冲突，QLEX 会自动暂停覆盖并保留备份。</div>
+              <div class="muted-note">所有参与同步的通用技能内容哈希完全一致；已过滤的内置 / 专属技能不触发冲突。</div>
             </div>
           `}
 
@@ -1859,6 +1920,34 @@ document.addEventListener("click", (event) => {
         return;
     }
 
+    const policyBtn = target.closest("[data-policy-toggle]");
+    if (policyBtn && state) {
+        const key = policyBtn.dataset.policyToggle;
+        const cur = state.skillSyncPolicy || state.skills?.policy || { excludeHermesBundled: true, excludeHermesWebui: true };
+        const nextVal = !cur[key];
+        void runAction(policyBtn, () => window.qlex.setSkillSyncPolicy({ [key]: nextVal }), {
+            success: nextVal ? "已开启自动跳过过滤" : "已关闭跳过过滤，纳入全量同步",
+        });
+        return;
+    }
+
+    const skillTabBtn = target.closest("[data-skill-tab]");
+    if (skillTabBtn) {
+        skillFilterTab = skillTabBtn.dataset.skillTab;
+        renderXStage();
+        return;
+    }
+
+    const excludeBtn = target.closest("[data-toggle-exclude-skill]");
+    if (excludeBtn && state) {
+        const [name, flag] = excludeBtn.dataset.toggleExcludeSkill.split(":");
+        const excluded = flag === "1";
+        void runAction(excludeBtn, () => window.qlex.toggleSkillExcluded(name, excluded), {
+            success: excluded ? `已将「${name}」移出同步范围` : `已恢复「${name}」参与同步`,
+        });
+        return;
+    }
+
     const memCatBtn = target.closest("[data-mem-cat]");
     if (memCatBtn) { memoryCategory = memCatBtn.dataset.memCat; memoryPreview = null; renderEStage(); return; }
 
@@ -1943,6 +2032,7 @@ document.addEventListener("change", (event) => {
 document.addEventListener("input", (event) => {
     const t = event.target;
     if (t.id === "projectSearchInput") { projectQuery = t.value; renderXStage(); return; }
+    if (t.id === "skillFilterInput") { skillFilterQuery = t.value; renderXStage(); return; }
     if (t.id === "glassOpacityRange") {
         const lbl = document.querySelector("#opacityValueLabel");
         if (lbl) lbl.textContent = `${t.value}%`;

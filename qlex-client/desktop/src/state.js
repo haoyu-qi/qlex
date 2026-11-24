@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.LocalStore = exports.DEFAULT_APPEARANCE = exports.DEFAULT_SKILL_NAMESPACES = void 0;
+exports.LocalStore = exports.DEFAULT_APPEARANCE = exports.DEFAULT_SKILL_NAMESPACES = exports.DEFAULT_SKILL_SYNC_POLICY = void 0;
 const node_crypto_1 = require("node:crypto");
 const node_fs_1 = require("node:fs");
 const node_os_1 = require("node:os");
@@ -19,6 +19,12 @@ const DEFAULT_APPEARANCE = Object.freeze({
 });
 
 const DEFAULT_SKILL_NAMESPACES = Object.freeze(["agents", "codex", "claude", "hermes", "antigravity", "dsh", "workbuddy", "zcode", "t3code"]);
+const DEFAULT_SKILL_SYNC_POLICY = Object.freeze({
+    excludeHermesBundled: true,
+    excludeHermesWebui: true,
+    excludedSkills: [],
+});
+const SKILL_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,100}$/;
 const VALID_THEMES = new Set(["default", "obsidian", "porcelain"]);
 const VALID_BACKDROPS = new Set(["vibrancy", "liquid-glass", "liquid-glass-clear"]);
 const VALID_DOCK_MODES = new Set(["autoHide", "always"]);
@@ -63,6 +69,18 @@ function normalizeSkillNamespaces(raw) {
     if (!Array.isArray(raw)) return [...DEFAULT_SKILL_NAMESPACES];
     const valid = raw.filter(ns => DEFAULT_SKILL_NAMESPACES.includes(ns));
     return valid.length ? [...new Set(valid)] : [...DEFAULT_SKILL_NAMESPACES];
+}
+
+function normalizeSkillSyncPolicy(raw) {
+    const input = raw && typeof raw === "object" ? raw : {};
+    const excluded = Array.isArray(input.excludedSkills)
+        ? [...new Set(input.excludedSkills.filter(n => typeof n === "string" && SKILL_NAME_PATTERN.test(n.trim())).map(n => n.trim()))].sort().slice(0, 500)
+        : [];
+    return {
+        excludeHermesBundled: typeof input.excludeHermesBundled === "boolean" ? input.excludeHermesBundled : DEFAULT_SKILL_SYNC_POLICY.excludeHermesBundled,
+        excludeHermesWebui: typeof input.excludeHermesWebui === "boolean" ? input.excludeHermesWebui : DEFAULT_SKILL_SYNC_POLICY.excludeHermesWebui,
+        excludedSkills: excluded,
+    };
 }
 
 function defaultMemoryDir() {
@@ -154,6 +172,7 @@ const defaultState = () => ({
     edgeDockMode: "autoHide",
     skillSyncEnabled: true,
     localSkillNamespaces: [...DEFAULT_SKILL_NAMESPACES],
+    skillSyncPolicy: { ...DEFAULT_SKILL_SYNC_POLICY, excludedSkills: [] },
     memoryArchiveDir: defaultMemoryDir(),
     memoryAutoCompress: true,
     updateChannel: "beta",
@@ -183,6 +202,7 @@ class LocalStore {
                 edgeDock: ["off", "left", "right"].includes(value.edgeDock) ? value.edgeDock : "off",
                 edgeDockMode: VALID_DOCK_MODES.has(value.edgeDockMode) ? value.edgeDockMode : "autoHide",
                 localSkillNamespaces: normalizeSkillNamespaces(value.localSkillNamespaces),
+                skillSyncPolicy: normalizeSkillSyncPolicy(value.skillSyncPolicy),
                 memoryArchiveDir: typeof value.memoryArchiveDir === "string" && value.memoryArchiveDir.trim()
                     ? value.memoryArchiveDir.trim()
                     : defaultMemoryDir(),
@@ -482,6 +502,21 @@ class LocalStore {
     setLocalSkillNamespaces(namespaces) {
         return this.update({ localSkillNamespaces: normalizeSkillNamespaces(namespaces) });
     }
+    setSkillSyncPolicy(patch) {
+        const current = normalizeSkillSyncPolicy(this.state.skillSyncPolicy);
+        const next = normalizeSkillSyncPolicy({ ...current, ...(patch && typeof patch === "object" ? patch : {}) });
+        return this.update({ skillSyncPolicy: next });
+    }
+    toggleExcludedSkill(name, excluded) {
+        const trimmed = typeof name === "string" ? name.trim() : "";
+        if (!SKILL_NAME_PATTERN.test(trimmed)) throw new Error("无效的技能名称。");
+        const current = normalizeSkillSyncPolicy(this.state.skillSyncPolicy);
+        const set = new Set(current.excludedSkills);
+        const shouldExclude = typeof excluded === "boolean" ? excluded : !set.has(trimmed);
+        if (shouldExclude) set.add(trimmed);
+        else set.delete(trimmed);
+        return this.update({ skillSyncPolicy: { ...current, excludedSkills: [...set].sort() } });
+    }
     setMemoryArchiveDir(dir) {
         if (typeof dir !== "string" || !dir.trim()) throw new Error("无效的记忆归档目录。");
         const normalized = (0, node_path_1.resolve)(dir.trim());
@@ -560,3 +595,4 @@ class LocalStore {
 exports.LocalStore = LocalStore;
 exports.DEFAULT_APPEARANCE = DEFAULT_APPEARANCE;
 exports.DEFAULT_SKILL_NAMESPACES = DEFAULT_SKILL_NAMESPACES;
+exports.DEFAULT_SKILL_SYNC_POLICY = DEFAULT_SKILL_SYNC_POLICY;

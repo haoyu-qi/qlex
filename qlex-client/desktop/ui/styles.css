@@ -880,6 +880,49 @@ body.light-theme .hub-quick-btn.primary { background: var(--pill-solid); color: 
 .skills-ns-grid.grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .skill-ns-chip.missing { opacity: 0.58; border-style: dashed; }
 
+.skill-policy-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.skill-policy-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(var(--line-rgb), 0.16);
+  background: rgba(var(--sunken-rgb), 0.34);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 140ms ease;
+}
+.skill-policy-chip:hover { border-color: var(--line-strong); color: var(--text); }
+.skill-policy-chip.active {
+  border-color: rgba(var(--accent-rgb), 0.45);
+  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--accent);
+}
+.origin-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 600;
+  margin-left: 5px;
+  vertical-align: middle;
+}
+.origin-badge.user { background: rgba(var(--success-rgb), 0.14); color: var(--success); }
+.origin-badge.bundled { background: rgba(var(--blue-rgb), 0.16); color: var(--blue); }
+.origin-badge.webui { background: rgba(179, 148, 244, 0.18); color: var(--purple); }
+.origin-badge.hub { background: rgba(var(--overlay-rgb), 0.1); color: var(--readable-muted); }
+.origin-badge.excluded { background: rgba(244, 160, 115, 0.18); color: var(--orange); }
+.skill-catalog-row.is-excluded { opacity: 0.68; }
+
 /* ---- Split 2-Column Stages (L / E / X / Settings / Insights) ---- */
 .split-stage {
   display: flex;

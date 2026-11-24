@@ -155,7 +155,128 @@ function chooseRecommendedVariant(variants) {
     })[0];
 }
 
-function createSkillSync(dataDir, home = homedir()) {
+function isHermesCategoryDir(folder) {
+    try {
+        if (fs.existsSync(path.join(folder, "SKILL.md"))) return false;
+        if (fs.existsSync(path.join(folder, "DESCRIPTION.md"))) return true;
+        for (const child of subdirectories(folder)) {
+            if (child.isDirectory() && fs.existsSync(path.join(folder, child.name, "SKILL.md"))) {
+                return true;
+            }
+        }
+    } catch { /* ignore */ }
+    return false;
+}
+
+function readHermesOriginMarkers(home) {
+    const bundledNames = new Set();
+    const bundledCategorySkills = new Set();
+    const webuiManagedNames = new Set();
+    const hubInstalledNames = new Set();
+    const categoryDirs = new Set();
+
+    const hermesRoot = rootAt(home, "hermes");
+    if (!hermesRoot) {
+        return { bundledNames, bundledCategorySkills, bundledNestedList: [], webuiManagedNames, hubInstalledNames, categoryDirs };
+    }
+
+    // 1. Official Hermes bundled skills manifest (.bundled_manifest: "<name>:<md5>")
+    try {
+        const raw = fs.readFileSync(path.join(hermesRoot, ".bundled_manifest"), "utf8");
+        for (const line of raw.split(/\r?\n/)) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith("#")) continue;
+            const name = trimmed.split(":")[0].trim();
+            if (idPattern.test(name)) bundledNames.add(name);
+        }
+    } catch { /* No bundled manifest */ }
+
+    // 2. Hermes Web UI / Studio managed skills (.webui-managed-skills.json)
+    try {
+        const parsed = JSON.parse(fs.readFileSync(path.join(hermesRoot, ".webui-managed-skills.json"), "utf8"));
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            for (const [name, meta] of Object.entries(parsed)) {
+                if (idPattern.test(name) && meta && typeof meta === "object") {
+                    webuiManagedNames.add(name);
+                }
+            }
+        }
+    } catch { /* No webui manifest */ }
+
+    // 3. Hermes Hub installed skills (.hub/lock.json)
+    try {
+        const lock = JSON.parse(fs.readFileSync(path.join(hermesRoot, ".hub", "lock.json"), "utf8"));
+        const entries = Array.isArray(lock?.skills) ? lock.skills
+            : Array.isArray(lock) ? lock
+            : lock?.skills && typeof lock.skills === "object" ? Object.keys(lock.skills)
+            : lock && typeof lock === "object" ? Object.keys(lock) : [];
+        for (const item of entries) {
+            const name = typeof item === "string" ? item : (item?.name || item?.slug || item?.id || "");
+            if (idPattern.test(name)) hubInstalledNames.add(name);
+        }
+    } catch { /* No hub lock */ }
+
+    // 4. Hermes official category container directories (e.g. creative/, apple/, devops/, github/)
+    const bundledNestedList = [];
+    for (const entry of subdirectories(hermesRoot)) {
+        if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+        const full = path.join(hermesRoot, entry.name);
+        if (isHermesCategoryDir(full)) {
+            categoryDirs.add(entry.name);
+            for (const child of subdirectories(full)) {
+                if (child.isDirectory() && idPattern.test(child.name) && fs.existsSync(path.join(full, child.name, "SKILL.md"))) {
+                    bundledCategorySkills.add(child.name);
+                    bundledNestedList.push({ name: child.name, category: entry.name });
+                }
+            }
+        }
+    }
+
+    return { bundledNames, bundledCategorySkills, bundledNestedList, webuiManagedNames, hubInstalledNames, categoryDirs };
+}
+
+function normalizePolicy(raw) {
+    const input = raw && typeof raw === "object" ? raw : {};
+    const excludedSkills = Array.isArray(input.excludedSkills)
+        ? [...new Set(input.excludedSkills.filter(n => typeof n === "string" && idPattern.test(n.trim())).map(n => n.trim()))]
+        : [];
+    return {
+        excludeHermesBundled: typeof input.excludeHermesBundled === "boolean" ? input.excludeHermesBundled : true,
+        excludeHermesWebui: typeof input.excludeHermesWebui === "boolean" ? input.excludeHermesWebui : true,
+        excludedSkills,
+    };
+}
+
+function classifySkill(name, markers, policy) {
+    let origin = "user";
+    let originLabel = "用户安装";
+    if (markers.webuiManagedNames.has(name)) {
+        origin = "hermes-webui";
+        originLabel = "WebUI 托管";
+    } else if (markers.bundledNames.has(name) || markers.bundledCategorySkills.has(name)) {
+        origin = "hermes-bundled";
+        originLabel = "Hermes 内置";
+    } else if (markers.hubInstalledNames.has(name)) {
+        origin = "hermes-hub";
+        originLabel = "Hub 安装";
+    }
+    const manualExcluded = policy.excludedSkills.includes(name);
+    const autoExcluded = (origin === "hermes-bundled" && policy.excludeHermesBundled)
+        || (origin === "hermes-webui" && policy.excludeHermesWebui);
+    const excluded = manualExcluded || autoExcluded;
+    const excludeReason = manualExcluded
+        ? "已手动排除同步"
+        : origin === "hermes-bundled" && policy.excludeHermesBundled
+            ? "Hermes 自带内置技能（规则跳过）"
+            : origin === "hermes-webui" && policy.excludeHermesWebui
+                ? "Hermes WebUI 托管技能（规则跳过）"
+                : "";
+    return { origin, originLabel, manualExcluded, autoExcluded, excluded, excludeReason };
+}
+
+function createSkillSync(dataDir, home = homedir(), options = {}) {
+    const getPolicy = typeof options?.getPolicy === "function" ? options.getPolicy : () => null;
+    const resolvePolicy = (override) => normalizePolicy(override ?? getPolicy());
     const recordPath = path.join(dataDir, "skill-sync.json");
     const backupRoot = path.join(home, ".qlex-skill-backups");
     const records = new Map();
@@ -181,6 +302,22 @@ function createSkillSync(dataDir, home = homedir()) {
         uniqueSkills: 0,
         missingLinks: 0,
         skillsPreview: [],
+        skillsCatalog: [],
+        originCounts: {
+            total: 0,
+            syncable: 0,
+            user: 0,
+            hermesBundled: 0,
+            hermesWebui: 0,
+            hermesHub: 0,
+            excluded: 0,
+            manualExcluded: 0,
+            autoExcluded: 0,
+            bundledManifestCount: 0,
+            webuiManifestCount: 0,
+            hermesCategoryCount: 0,
+        },
+        policy: normalizePolicy(),
     };
     let running;
 
@@ -195,7 +332,9 @@ function createSkillSync(dataDir, home = homedir()) {
         }
     }
 
-    function catalog() {
+    function catalog(policyOverride) {
+        const policy = resolvePolicy(policyOverride);
+        const markers = readHermesOriginMarkers(home);
         const items = [];
         for (const namespace of Object.keys(roots)) {
             const root = rootAt(home, namespace);
@@ -204,6 +343,8 @@ function createSkillSync(dataDir, home = homedir()) {
             for (const entry of entries) {
                 if (items.length >= itemLimit) return items;
                 if (!entry.isDirectory()) continue;
+                if (namespace === "hermes" && markers.categoryDirs.has(entry.name)) continue;
+                if (classifySkill(entry.name, markers, policy).excluded) continue;
                 const skill = read(namespace, entry.name);
                 if (skill) items.push({ namespace, name: entry.name, hash: skill.hash });
             }
@@ -289,7 +430,9 @@ function createSkillSync(dataDir, home = homedir()) {
         }
     }
 
-    function scanLocal(enabledNamespaces = Object.keys(roots)) {
+    function scanLocal(enabledNamespaces = Object.keys(roots), policyOverride) {
+        const policy = resolvePolicy(policyOverride);
+        const markers = readHermesOriginMarkers(home);
         const selected = enabledNamespaces.filter(ns => Object.hasOwn(roots, ns));
         const targetList = selected.length ? selected : Object.keys(roots);
         const namespaces = {};
@@ -338,6 +481,10 @@ function createSkillSync(dataDir, home = homedir()) {
                         continue;
                     }
                     if (!entry.isDirectory()) continue;
+                    // Skip official Hermes category containers (apple/, creative/, devops/, etc.) — never false-positive as anomalies
+                    if (ns === "hermes" && markers.categoryDirs.has(entry.name)) {
+                        continue;
+                    }
                     if (!idPattern.test(entry.name)) {
                         if (!entry.name.startsWith(".") && targetList.includes(ns)) {
                             anomalies.push({
@@ -370,18 +517,19 @@ function createSkillSync(dataDir, home = homedir()) {
                         }
                         continue;
                     }
+                    const cls = classifySkill(entry.name, markers, policy);
                     count++;
                     if (targetList.includes(ns)) {
                         let rec = bySkill.get(entry.name);
                         if (!rec) {
-                            rec = { name: entry.name, namespaces: [], variants: [], mtimeMs: 0 };
+                            rec = { name: entry.name, namespaces: [], variants: [], mtimeMs: 0, ...cls };
                             bySkill.set(entry.name, rec);
                         }
                         rec.namespaces.push(ns);
                         const pkg = read(ns, entry.name);
                         if (pkg) {
                             if (pkg.mtimeMs > rec.mtimeMs) rec.mtimeMs = pkg.mtimeMs;
-                            if (!pkg.complete) {
+                            if (!pkg.complete && !cls.excluded) {
                                 anomalies.push({
                                     type: "incomplete-files",
                                     severity: "warn",
@@ -405,7 +553,7 @@ function createSkillSync(dataDir, home = homedir()) {
                                 complete: pkg.complete,
                                 path: skillPath,
                             });
-                        } else {
+                        } else if (!cls.excluded) {
                             anomalies.push({
                                 type: "oversized-or-unreadable",
                                 severity: "error",
@@ -431,10 +579,72 @@ function createSkillSync(dataDir, home = homedir()) {
             };
         }
 
+        // Include Hermes official category-nested bundled skills in read-only catalog visibility
+        // so users can clearly inspect Hermes built-in skills vs user-installed skills.
+        if (targetList.includes("hermes") && Array.isArray(markers.bundledNestedList)) {
+            for (const nested of markers.bundledNestedList) {
+                if (bySkill.has(nested.name)) continue;
+                const cls = classifySkill(nested.name, markers, policy);
+                bySkill.set(nested.name, {
+                    name: nested.name,
+                    namespaces: ["hermes"],
+                    variants: [],
+                    mtimeMs: 0,
+                    nestedCategory: nested.category,
+                    ...cls,
+                    // Category-nested Hermes built-ins are always Hermes-only (never flat-synced to other tools)
+                    autoExcluded: true,
+                    excluded: true,
+                    excludeReason: `Hermes 自带内置技能（分类：${nested.category}/）`,
+                });
+            }
+        }
+
         let missingLinks = 0;
         const conflictDetails = [];
-        const preview = [...bySkill.values()]
+        const originCounts = {
+            total: bySkill.size,
+            syncable: 0,
+            user: 0,
+            hermesBundled: 0,
+            hermesWebui: 0,
+            hermesHub: 0,
+            excluded: 0,
+            manualExcluded: 0,
+            autoExcluded: 0,
+            bundledManifestCount: Math.max(markers.bundledNames.size, markers.bundledCategorySkills.size),
+            webuiManifestCount: markers.webuiManagedNames.size,
+            hermesCategoryCount: markers.categoryDirs.size,
+        };
+
+        const catalogList = [...bySkill.values()]
             .map(item => {
+                if (item.origin === "hermes-bundled") originCounts.hermesBundled++;
+                else if (item.origin === "hermes-webui") originCounts.hermesWebui++;
+                else if (item.origin === "hermes-hub") originCounts.hermesHub++;
+                else originCounts.user++;
+
+                if (item.excluded) {
+                    originCounts.excluded++;
+                    if (item.manualExcluded) originCounts.manualExcluded++;
+                    else originCounts.autoExcluded++;
+                    return {
+                        name: item.name,
+                        namespaces: item.namespaces,
+                        missing: [],
+                        mtimeMs: item.mtimeMs,
+                        hasConflict: false,
+                        origin: item.origin,
+                        originLabel: item.originLabel,
+                        nestedCategory: item.nestedCategory || "",
+                        excluded: true,
+                        manualExcluded: item.manualExcluded,
+                        autoExcluded: item.autoExcluded,
+                        excludeReason: item.excludeReason,
+                    };
+                }
+
+                originCounts.syncable++;
                 const missing = targetList.filter(ns => !item.namespaces.includes(ns));
                 missingLinks += missing.length;
                 const uniqueHashes = new Set(item.variants.map(v => v.hash));
@@ -455,6 +665,8 @@ function createSkillSync(dataDir, home = homedir()) {
                             : `同为 ${maxF} 文件 · 内容哈希不同`;
                     conflictDetails.push({
                         name: item.name,
+                        origin: item.origin,
+                        originLabel: item.originLabel,
                         recommendedNs: recommended?.ns || sortedVars[0]?.ns,
                         diffHint,
                         variants: sortedVars,
@@ -466,9 +678,20 @@ function createSkillSync(dataDir, home = homedir()) {
                     missing,
                     mtimeMs: item.mtimeMs,
                     hasConflict,
+                    origin: item.origin,
+                    originLabel: item.originLabel,
+                    excluded: false,
+                    manualExcluded: false,
+                    autoExcluded: false,
+                    excludeReason: "",
                 };
             })
-            .sort((a, b) => Number(b.hasConflict) - Number(a.hasConflict) || b.missing.length - a.missing.length || a.name.localeCompare(b.name));
+            .sort((a, b) =>
+                Number(b.hasConflict) - Number(a.hasConflict) ||
+                Number(a.excluded) - Number(b.excluded) ||
+                b.missing.length - a.missing.length ||
+                a.name.localeCompare(b.name)
+            );
 
         conflictDetails.sort((a, b) => a.name.localeCompare(b.name));
         anomalies.sort((a, b) => Number(b.fixable) - Number(a.fixable) || a.name.localeCompare(b.name));
@@ -476,13 +699,17 @@ function createSkillSync(dataDir, home = homedir()) {
         state = {
             ...state,
             namespaces,
-            uniqueSkills: bySkill.size,
+            uniqueSkills: originCounts.syncable,
+            totalDiscoveredSkills: bySkill.size,
             missingLinks,
             conflicts: conflictDetails.length,
             conflictDetails,
             anomalies: anomalies.slice(0, 40),
             phase: conflictDetails.length > 0 ? "conflict" : (state.phase === "conflict" ? "ready" : state.phase),
-            skillsPreview: preview.slice(0, 60),
+            skillsPreview: catalogList.filter(s => !s.excluded).slice(0, 60),
+            skillsCatalog: catalogList.slice(0, 300),
+            originCounts,
+            policy,
         };
         return state;
     }
@@ -512,10 +739,12 @@ function createSkillSync(dataDir, home = homedir()) {
         return { cleaned, errors, state: structuredClone(state) };
     }
 
-    function syncLocal(enabledNamespaces = Object.keys(roots)) {
+    function syncLocal(enabledNamespaces = Object.keys(roots), policyOverride) {
+        const policy = resolvePolicy(policyOverride);
+        const markers = readHermesOriginMarkers(home);
         const selected = enabledNamespaces.filter(ns => Object.hasOwn(roots, ns));
         if (selected.length < 2) {
-            scanLocal(selected);
+            scanLocal(selected, policy);
             state = { ...state, phase: "ready", localSynced: 0, localTime: Date.now() };
             return state;
         }
@@ -527,6 +756,8 @@ function createSkillSync(dataDir, home = homedir()) {
             if (!root) continue;
             for (const entry of subdirectories(root)) {
                 if (!entry.isDirectory() || !idPattern.test(entry.name)) continue;
+                if (ns === "hermes" && markers.categoryDirs.has(entry.name)) continue;
+                if (classifySkill(entry.name, markers, policy).excluded) continue;
                 const pkg = read(ns, entry.name);
                 if (!pkg) continue;
                 const prev = master.get(entry.name);
@@ -665,10 +896,12 @@ function createSkillSync(dataDir, home = homedir()) {
         };
     }
 
-    function refresh(pairing, enabledNamespaces) {
+    function refresh(pairing, enabledNamespaces, policyOverride) {
         if (running) return running;
         running = (async () => {
-            scanLocal(enabledNamespaces);
+            const policy = resolvePolicy(policyOverride);
+            const markers = readHermesOriginMarkers(home);
+            scanLocal(enabledNamespaces, policy);
             const { mode, endpoint, online } = pairing.view();
             if (mode !== "endpoint" || endpoint?.status !== "connected" || !online) return state;
             state = { ...state, phase: "syncing" };
@@ -683,6 +916,7 @@ function createSkillSync(dataDir, home = homedir()) {
                 if (!pairing.store.snapshot().skillSyncEnabled || pairing.view().endpoint?.address !== endpoint.address) break;
                 if (!item || !Object.hasOwn(roots, item.namespace) || typeof item.name !== "string" ||
                     !idPattern.test(item.name) || !hashPattern.test(item.hash)) continue;
+                if (classifySkill(item.name, markers, policy).excluded) continue;
                 if (read(item.namespace, item.name)?.hash === item.hash) continue;
                 const result = await pairing.requestSkills({ namespace: item.namespace, name: item.name });
                 if (!pairing.store.snapshot().skillSyncEnabled || pairing.view().endpoint?.address !== endpoint.address) break;
@@ -725,3 +959,5 @@ function createSkillSync(dataDir, home = homedir()) {
 
 exports.createSkillSync = createSkillSync;
 exports.SKILL_ROOTS = roots;
+exports.readHermesOriginMarkers = readHermesOriginMarkers;
+exports.classifySkill = classifySkill;

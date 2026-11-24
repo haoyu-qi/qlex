@@ -22,6 +22,7 @@ const { createTailscaleManager, isTailscaleIp, isMagicDnsHost, findEmbeddedTsnet
 const { DevicePairing, isValidHost, isTailscaleIPv4, addresses } = require(path.join(root, "desktop/src/pairing.js"));
 const { LocalStore } = require(path.join(root, "desktop/src/state.js"));
 const { findAutoMatchDirectory } = require(path.join(root, "desktop/src/project-sync.js"));
+const { createSkillSync } = require(path.join(root, "desktop/src/skill-sync.js"));
 const { createCognitiveMemoryEngine } = require(path.join(root, "desktop/src/memory-core.js"));
 const { createUpdater, compareVersions, parseChecksumsText } = require(path.join(root, "desktop/src/updater.js"));
 
@@ -264,7 +265,57 @@ try {
         }
     }
 
-    console.log("ALL QLEX v0.3.0-beta.4 CORE SYNC / COLLECTOR / TAILSCALE / UPDATER TESTS PASSED!", JSON.stringify({
+    // ---- 5. Hermes Bundled / WebUI / Manual Skill Exclusion & Origin Classification Tests ----
+    const skHome = path.join(tmpHome, "skill-policy-home");
+    const hermesSkills = path.join(skHome, ".hermes/skills");
+    const codexSkills = path.join(skHome, ".codex/skills");
+    fs.mkdirSync(path.join(hermesSkills, "creative/humanizer"), { recursive: true });
+    fs.writeFileSync(path.join(hermesSkills, "creative/DESCRIPTION.md"), "Creative skills category\n");
+    fs.writeFileSync(path.join(hermesSkills, "creative/humanizer/SKILL.md"), "# humanizer\n");
+    fs.mkdirSync(path.join(hermesSkills, "apple-notes"), { recursive: true });
+    fs.writeFileSync(path.join(hermesSkills, "apple-notes/SKILL.md"), "# apple-notes\n");
+    fs.mkdirSync(path.join(hermesSkills, "grok-image-to-video"), { recursive: true });
+    fs.writeFileSync(path.join(hermesSkills, "grok-image-to-video/SKILL.md"), "# grok\n");
+    fs.mkdirSync(path.join(hermesSkills, "qhy-custom"), { recursive: true });
+    fs.writeFileSync(path.join(hermesSkills, "qhy-custom/SKILL.md"), "# qhy-custom\n");
+    fs.mkdirSync(path.join(hermesSkills, "private-only"), { recursive: true });
+    fs.writeFileSync(path.join(hermesSkills, "private-only/SKILL.md"), "# private-only\n");
+    fs.writeFileSync(path.join(hermesSkills, ".bundled_manifest"), "apple-notes:abc123\nhumanizer:def456\n");
+    fs.writeFileSync(path.join(hermesSkills, ".webui-managed-skills.json"), JSON.stringify({
+        "grok-image-to-video": { owner: "hermes-web-ui", source_hash: "111", installed_hash: "111" },
+    }));
+    fs.mkdirSync(codexSkills, { recursive: true });
+
+    const skStore = new LocalStore(path.join(tmpHome, "sk-state.json"));
+    skStore.toggleExcludedSkill("private-only", true);
+    const skEngine = createSkillSync(path.join(tmpHome, "sk-data"), skHome, {
+        getPolicy: () => skStore.snapshot().skillSyncPolicy,
+    });
+    const scanBefore = skEngine.scanLocal(["hermes", "codex"]);
+    assert.equal(scanBefore.anomalies.filter(a => a.name === "creative").length, 0, "Hermes category dir must NOT be flagged as missing-skill-md anomaly");
+    assert.equal(scanBefore.originCounts.hermesBundled, 2, "Both top-level apple-notes and category-nested creative/humanizer must be classified as hermes-bundled");
+    assert.equal(scanBefore.originCounts.hermesWebui, 1, "grok-image-to-video must be classified as hermes-webui");
+    assert.equal(scanBefore.originCounts.manualExcluded, 1, "private-only must be manually excluded");
+    assert.equal(scanBefore.originCounts.syncable, 1, "Only qhy-custom should be syncable");
+
+    skEngine.syncLocal(["hermes", "codex"]);
+    assert.equal(fs.existsSync(path.join(codexSkills, "qhy-custom/SKILL.md")), true, "User skill must sync to Codex");
+    assert.equal(fs.existsSync(path.join(codexSkills, "apple-notes/SKILL.md")), false, "Hermes bundled skill must NOT sync to Codex");
+    assert.equal(fs.existsSync(path.join(codexSkills, "grok-image-to-video/SKILL.md")), false, "Hermes WebUI skill must NOT sync to Codex");
+    assert.equal(fs.existsSync(path.join(codexSkills, "private-only/SKILL.md")), false, "Manually excluded skill must NOT sync to Codex");
+
+    const catNames = skEngine.catalog().map(c => c.name);
+    assert.equal(catNames.includes("qhy-custom"), true);
+    assert.equal(catNames.includes("apple-notes"), false, "Center catalog must exclude Hermes bundled skill");
+    assert.equal(catNames.includes("grok-image-to-video"), false, "Center catalog must exclude Hermes WebUI skill");
+    assert.equal(catNames.includes("private-only"), false, "Center catalog must exclude manually excluded skill");
+
+    // Un-excluding restores sync immediately
+    skStore.toggleExcludedSkill("private-only", false);
+    skEngine.syncLocal(["hermes", "codex"]);
+    assert.equal(fs.existsSync(path.join(codexSkills, "private-only/SKILL.md")), true, "Un-excluded skill must sync cleanly");
+
+    console.log("ALL QLEX v0.3.0-beta.5 CORE SYNC / SKILL POLICY / COLLECTOR / TAILSCALE / UPDATER TESTS PASSED!", JSON.stringify({
         nativeTokens: nativeRes.today.total,
         embeddedTsnetBuilt: Boolean(findEmbeddedTsnetBin()),
         betaDetected: betaCheck.latest.version,
@@ -272,6 +323,7 @@ try {
         syncedMemoryBidirectional: true,
         syncedProjectBoundSyncId: syncId,
         liveHttpsProjectSyncPassed,
+        skillPolicyVerified: true,
     }));
 } finally {
     fs.rmSync(tmpHome, { recursive: true, force: true });

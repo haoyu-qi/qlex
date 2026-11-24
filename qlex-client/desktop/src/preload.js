@@ -59,6 +59,8 @@ electron_1.contextBridge.exposeInMainWorld("qlex", {
     // Skills sync (local multi-tool + center/endpoint + conflict resolution)
     setSkillSync: (enabled) => electron_1.ipcRenderer.invoke("qlex:set-skill-sync", enabled),
     setSkillNamespaces: (namespaces) => electron_1.ipcRenderer.invoke("qlex:set-skill-namespaces", namespaces),
+    setSkillSyncPolicy: (patch) => electron_1.ipcRenderer.invoke("qlex:set-skill-sync-policy", patch),
+    toggleSkillExcluded: (name, excluded) => electron_1.ipcRenderer.invoke("qlex:toggle-skill-excluded", { name, excluded }),
     syncLocalSkills: () => electron_1.ipcRenderer.invoke("qlex:sync-local-skills"),
     resolveSkillConflict: (name, sourceNs) => electron_1.ipcRenderer.invoke("qlex:resolve-skill-conflict", { name, sourceNs }),
     resolveAllSkillConflicts: (strategy) => electron_1.ipcRenderer.invoke("qlex:resolve-all-skill-conflicts", strategy),

@@ -707,7 +707,17 @@ function registerHandlers() {
         "qlex:set-skill-namespaces": (namespaces) => {
             const next = store.setLocalSkillNamespaces(namespaces);
             skills.scanLocal(next.localSkillNamespaces);
-            return broadcastState(next);
+            return broadcastState(next, { force: true });
+        },
+        "qlex:set-skill-sync-policy": (patch) => {
+            const next = store.setSkillSyncPolicy(patch);
+            skills.scanLocal(next.localSkillNamespaces);
+            return broadcastState(next, { force: true });
+        },
+        "qlex:toggle-skill-excluded": (input) => {
+            const next = store.toggleExcludedSkill(input?.name, input?.excluded);
+            skills.scanLocal(next.localSkillNamespaces);
+            return broadcastState(next, { force: true });
         },
         "qlex:sync-local-skills": async () => {
             const snap = store.snapshot();
@@ -1099,7 +1109,9 @@ else {
             cachePath: (0, node_path_1.join)(userDataDir, "collector-cache.json"),
             getCustomPaths: () => store.snapshot().collectorPaths,
         });
-        skills = createSkillSync(userDataDir);
+        skills = createSkillSync(userDataDir, undefined, {
+            getPolicy: () => store.snapshot().skillSyncPolicy,
+        });
         skills.scanLocal(store.snapshot().localSkillNamespaces);
         memoryArchive = createMemoryArchiver({
             getArchiveDir: () => store.snapshot().memoryArchiveDir,
