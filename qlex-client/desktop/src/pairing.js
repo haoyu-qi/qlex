@@ -198,7 +198,7 @@ function callCenter(endpoint, route, id, payload) {
                 resolve({ name: data.name, status: data.status });
             }).catch(() => reject(new Error("中心返回的配对状态无效。")));
         });
-        const timeoutMs = route === "project-files" ? 25_000 : route === "memory" ? 12_000 : route === "projects" ? 12_000 : 4500;
+        const timeoutMs = route === "project-files" ? 60_000 : route === "memory" ? 12_000 : route === "projects" ? 15_000 : 4500;
         const timer = setTimeout(() => req.destroy(new Error("QLEX center timeout")), timeoutMs);
         req.once("error", () => reject(new Error("无法连接或验证中心。请检查中心是否在线、Tailscale 连接和防火墙设置。")));
         req.once("close", () => clearTimeout(timer));
@@ -487,9 +487,11 @@ class DevicePairing {
             if (!Array.isArray(response?.projects)) {
                 throw new Error("中心端返回的项目同步数据格式无效。");
             }
+            const snapBefore = this.store.snapshot();
+            const autoBindDir = snapBefore.autoSaveSyncedProjects !== false ? snapBefore.projectSyncDir : "";
             const merged = this.store.mergeSharedProjects(
                 { projects: response.projects, deleted: response.deleted || [] },
-                { peerName: endpoint.name || endpoint.invite.host, applyContext: true }
+                { peerName: endpoint.name || endpoint.invite.host, applyContext: true, autoBindDir, dataDir }
             );
 
             // Real Bidirectional Workspace File Sync (delta push/pull for every bound project!)
@@ -523,8 +525,8 @@ class DevicePairing {
                     }
                 }
 
-                // Pull remote missing or newer files in safe batches
-                for (let idx = 0; idx < toPull.length; idx += 80) {
+                // Pull remote missing or newer files in safe batches (advance by actual returned count!)
+                for (let idx = 0; idx < toPull.length; ) {
                     const slice = toPull.slice(idx, idx + 80);
                     try {
                         const pullRes = await callCenter(endpoint, "project-files", local.deviceId, {
@@ -537,6 +539,8 @@ class DevicePairing {
                             const applied = applyProjectFiles(lp.directory, unpacked, lp.syncId);
                             filesPulled += applied.written;
                         }
+                        const advanced = Number(pullRes?.count || unpacked.length || 0);
+                        idx += advanced > 0 ? advanced : slice.length;
                     } catch {
                         break;
                     }
@@ -621,7 +625,7 @@ class DevicePairing {
                 reply(res, 404, {});
                 return;
             }
-            const maxBody = projectFiles ? 14 * 1024 * 1024 : memory ? 4 * 1024 * 1024 : projects ? 4 * 1024 * 1024 : 4096;
+            const maxBody = projectFiles ? 48 * 1024 * 1024 : memory ? 4 * 1024 * 1024 : projects ? 6 * 1024 * 1024 : 4096;
             const { id, credential, token, name, skill, bundle, projects: incomingProjects, deleted: incomingDeleted, fileTransfer } = await readBody(req, maxBody);
             if (typeof id !== "string" || !idPattern.test(id) || typeof credential !== "string" || !secretPattern.test(credential)) {
                 reply(res, 400, {});
@@ -662,9 +666,11 @@ class DevicePairing {
                 }
                 this.peerSeenAt.set(id, Date.now());
                 const dataDir = (0, node_path_1.dirname)(this.store.file);
+                const centerSnap = this.store.snapshot();
+                const autoBindDir = centerSnap.autoSaveSyncedProjects !== false ? centerSnap.projectSyncDir : "";
                 const merged = this.store.mergeSharedProjects(
                     { projects: incomingProjects || [], deleted: incomingDeleted || [] },
-                    { peerName: existing.name, applyContext: true }
+                    { peerName: existing.name, applyContext: true, autoBindDir, dataDir }
                 );
                 const exported = this.store.exportSharedProjects(deviceName(), { includeContext: true, includeManifest: true, dataDir });
                 this.lastProjectSync = {

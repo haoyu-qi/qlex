@@ -18,12 +18,12 @@ const { homedir } = require("node:os");
 const CONTEXT_FILENAMES = ["AGENTS.md", "CLAUDE.md", ".cursorrules", ".qlex-context.md", "TODO.md", "TASKS.md", "PLAN.md"];
 const MAX_CONTEXT_FILE_BYTES = 64 * 1024;
 
-// Workspace full-file sync guardrails
-const MAX_PROJECT_FILES = 400;
-const MAX_SINGLE_FILE_BYTES = 512 * 1024;
-const MAX_PROJECT_TOTAL_BYTES = 16 * 1024 * 1024;
-const MAX_SCAN_DEPTH = 6;
-const MAX_TRANSFER_BATCH_BYTES = 6 * 1024 * 1024;
+// Workspace full-file sync guardrails (supports code, docs, Office, PDF, images, diagrams & deliverable zips)
+const MAX_PROJECT_FILES = 600;
+const MAX_SINGLE_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_PROJECT_TOTAL_BYTES = 250 * 1024 * 1024;
+const MAX_SCAN_DEPTH = 8;
+const MAX_TRANSFER_BATCH_BYTES = 8 * 1024 * 1024;
 
 const IGNORED_DIRS = new Set([
     ".git", ".hg", ".svn", "node_modules", "dist", "build", "out", "output",
@@ -31,11 +31,31 @@ const IGNORED_DIRS = new Set([
     "target", ".cache", ".idea", ".vscode", "coverage", ".turbo", "vendor",
     "Pods", "DerivedData", ".parcel-cache", ".svelte-kit", "tmp", ".tmp",
 ]);
+// Meaningful project dot-directories to keep; other hidden dot-dirs (e.g. .pptx-build, .chart-data-*) are auto-skipped
+const ALLOWED_DOT_DIRS = new Set([".github", ".qlex", ".claude", ".codex", ".cursor"]);
 
-const IGNORED_FILES = /^(?:\.DS_Store|Thumbs\.db|Desktop\.ini|\._.*|.*\.pyc|.*\.pyo|.*\.log|.*\.sqlite.*|.*\.db|.*\.db-wal|.*\.db-shm|.*\.dmg|.*\.pkg|.*\.zip|.*\.tar(?:\.gz|\.xz|\.bz2)?|.*\.mp4|.*\.mov|.*\.mkv|.*\.avi|.*\.exe|.*\.dll|.*\.dylib|.*\.so|.*\.o|.*\.a|.*\.class|.*\.wasm)$/i;
+const IGNORED_FILES = /^(?:\.DS_Store|Thumbs\.db|Desktop\.ini|\._.*|~\$.*|.*\.pyc|.*\.pyo|.*\.log|.*\.sqlite.*|.*\.db|.*\.db-wal|.*\.db-shm|.*\.dmg|.*\.pkg|.*\.tar(?:\.gz|\.xz|\.bz2)?|.*\.mp4|.*\.mov|.*\.mkv|.*\.avi|.*\.exe|.*\.msi|.*\.dll|.*\.dylib|.*\.so|.*\.o|.*\.a|.*\.class|.*\.wasm|.*\.otf|.*\.ttf|.*\.woff2?)$/i;
 const SENSITIVE_FILES = /^(?:\.env(?:\..+)?|.*[._-](?:credential|credentials|secret|secrets|private-key|auth-token)|id_rsa(?:\.pub)?|id_ed25519(?:\.pub)?|.*\.pem|.*\.key|.*\.p12|.*\.pfx|.*\.keystore)$/i;
-const ALLOWED_EXT = /\.(?:md|mdx|txt|json|jsonc|yaml|yml|toml|ini|conf|cfg|properties|js|mjs|cjs|ts|tsx|jsx|py|go|rs|java|kt|swift|rb|php|c|h|cc|cpp|hpp|cs|sh|bash|zsh|ps1|bat|css|scss|sass|less|html|htm|vue|svelte|astro|svg|sql|xml|csv|tsv|graphql|gql|proto|rst|org|tex|patch|diff|tf|hcl|dockerfile|makefile|gradle|plist|strings)$/i;
-const ALLOWED_BASENAMES = /^(?:README|LICENSE|CHANGELOG|NOTICE|AUTHORS|COPYING|TODO|TASKS|PLAN|PROGRESS|NOTES|Makefile|Dockerfile|Procfile|Gemfile|Rakefile|Justfile|Taskfile|\.gitignore|\.gitattributes|\.editorconfig|\.cursorrules|\.prettierrc(?:\.json)?|\.eslintrc(?:\.json)?|\.npmrc)$/i;
+const ALLOWED_EXT = /\.(?:md|mdx|txt|json|jsonc|yaml|yml|toml|ini|conf|cfg|properties|js|mjs|cjs|ts|tsx|jsx|py|go|rs|java|kt|swift|rb|php|c|h|cc|cpp|hpp|cs|sh|bash|zsh|ps1|bat|css|scss|sass|less|html|htm|vue|svelte|astro|svg|sql|xml|csv|tsv|graphql|gql|proto|rst|org|tex|patch|diff|tf|hcl|dockerfile|makefile|gradle|plist|strings|pptx|ppt|docx|doc|xlsx|xls|pdf|rtf|key|pages|numbers|png|jpg|jpeg|webp|gif|bmp|ico|icns|tif|tiff|psd|ai|sketch|fig|drawio|excalidraw|xmind|mm|opml|zip)$/i;
+const ALLOWED_BASENAMES = /^(?:README|LICENSE|CHANGELOG|NOTICE|AUTHORS|COPYING|TODO|TASKS|PLAN|PROGRESS|NOTES|Makefile|Dockerfile|Procfile|Gemfile|Rakefile|Justfile|Taskfile|\.gitignore|\.gitattributes|\.editorconfig|\.cursorrules|\.prettierrc(?:\.json)?|\.eslintrc(?:\.json)?|\.npmrc|\.qlex-context\.md)$/i;
+
+function isIgnoredDirectoryName(name) {
+    if (!name || IGNORED_DIRS.has(name) || name.startsWith(".qlex-tmp")) return true;
+    if (name.startsWith(".") && !ALLOWED_DOT_DIRS.has(name)) return true;
+    return false;
+}
+
+function safeProjectFolderName(name, syncId = "project") {
+    const cleaned = String(name || "")
+        .trim()
+        .replace(/[<>:"/\\|?*\x00-\x1f]+/g, "-")
+        .replace(/^\.+/, "")
+        .replace(/\.+$/, "")
+        .trim()
+        .slice(0, 80);
+    if (cleaned && cleaned !== "." && cleaned !== "..") return cleaned;
+    return String(syncId || "project").replace(/[^a-zA-Z0-9\u4e00-\u9fff._-]+/g, "_").slice(0, 64) || "project";
+}
 
 function normalizeGitRemote(url) {
     if (typeof url !== "string") return "";
@@ -56,9 +76,11 @@ function isSafeRelativePath(rel) {
     if (rel.startsWith("/") || rel.startsWith("\\") || rel.includes("\0")) return false;
     const parts = rel.split("/");
     if (parts.length > MAX_SCAN_DEPTH + 2) return false;
-    for (const p of parts) {
+    for (let i = 0; i < parts.length; i++) {
+        const p = parts[i];
         if (!p || p === "." || p === ".." || p.includes("\\")) return false;
-        if (IGNORED_DIRS.has(p) || p.startsWith(".qlex-tmp")) return false;
+        if (i < parts.length - 1 && isIgnoredDirectoryName(p)) return false;
+        if (i === parts.length - 1 && (IGNORED_DIRS.has(p) || p.startsWith(".qlex-tmp"))) return false;
     }
     const leaf = parts[parts.length - 1];
     if (IGNORED_FILES.test(leaf) || SENSITIVE_FILES.test(leaf)) return false;
@@ -191,7 +213,7 @@ function scanProjectFiles(directory, { maxFiles = MAX_PROJECT_FILES, maxFileByte
             if (entry.isSymbolicLink()) continue;
             const name = entry.name;
             if (entry.isDirectory()) {
-                if (IGNORED_DIRS.has(name) || name.startsWith(".qlex-tmp")) continue;
+                if (isIgnoredDirectoryName(name)) continue;
                 walk(path.join(dir, name), prefix ? `${prefix}/${name}` : name, depth + 1);
                 continue;
             }
@@ -266,7 +288,7 @@ function packProjectFiles(directory, relPaths = [], { maxBatchBytes = MAX_TRANSF
         try {
             const st = fs.lstatSync(full);
             if (!st.isFile() || st.size > MAX_SINGLE_FILE_BYTES) continue;
-            if (totalBytes + st.size > maxBatchBytes) break;
+            if (items.length > 0 && totalBytes + st.size > maxBatchBytes) break;
             const buf = fs.readFileSync(full);
             const hash = createHash("sha256").update(buf).digest("hex");
             totalBytes += buf.length;
@@ -290,7 +312,7 @@ function unpackProjectFiles(gzipBase64) {
     if (typeof gzipBase64 !== "string" || !gzipBase64) return [];
     try {
         const raw = zlib.gunzipSync(Buffer.from(gzipBase64, "base64"));
-        if (raw.length > 24 * 1024 * 1024) return [];
+        if (raw.length > 48 * 1024 * 1024) return [];
         const parsed = JSON.parse(raw.toString("utf8"));
         return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -547,6 +569,8 @@ module.exports = {
     MAX_PROJECT_FILES,
     MAX_SINGLE_FILE_BYTES,
     MAX_PROJECT_TOTAL_BYTES,
+    isIgnoredDirectoryName,
+    safeProjectFolderName,
     normalizeGitRemote,
     isSafeRelativePath,
     inspectWorkspace,

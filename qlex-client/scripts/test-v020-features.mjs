@@ -246,6 +246,10 @@ try {
     if (hasForge) {
         const liveCenterStore = new LocalStore(path.join(tmpHome, "live-center.json"));
         const liveEpStore = new LocalStore(path.join(tmpHome, "live-ep.json"));
+        const centerSyncDir = path.join(tmpHome, "center-QLEX-Projects");
+        const epSyncDir = path.join(tmpHome, "ep-QLEX-Projects");
+        liveCenterStore.setProjectSyncDir(centerSyncDir);
+        liveEpStore.setProjectSyncDir(epSyncDir);
         let centerEvents = [];
         const liveCenter = new DevicePairing(liveCenterStore, 0, null, () => ["127.0.0.1"], null, (ev) => centerEvents.push(ev));
         const liveEp = new DevicePairing(liveEpStore, 0, null, () => ["127.0.0.1"], null);
@@ -258,16 +262,36 @@ try {
             await liveEp.refresh();
             assert.equal(liveEp.view().endpoint?.status, "connected");
 
-            // Endpoint adds a project -> syncProjects() pushes to Center & fires Center onChange
+            // Endpoint adds a project with real binary deliverables (.png, .pptx, .zip) + hidden build cache (.pptx-build)
             const liveProj = path.join(tmpHome, "live-sync-repo");
-            fs.mkdirSync(liveProj, { recursive: true });
+            fs.mkdirSync(path.join(liveProj, "PPT交付"), { recursive: true });
+            fs.mkdirSync(path.join(liveProj, ".pptx-build"), { recursive: true });
+            fs.writeFileSync(path.join(liveProj, "需求说明.md"), "# 跨端项目说明\n");
+            fs.writeFileSync(path.join(liveProj, "PPT交付/方案.pptx"), Buffer.alloc(128 * 1024, 0x50));
+            fs.writeFileSync(path.join(liveProj, "PPT交付/首页.png"), Buffer.alloc(64 * 1024, 0x89));
+            fs.writeFileSync(path.join(liveProj, ".pptx-build/temp.json"), '{"junk":true}\n');
             liveEpStore.addProject(liveProj);
+
             const syncRes = await liveEp.syncProjects();
             assert.equal(syncRes.role, "endpoint");
             assert.equal(syncRes.totalShared, 1);
             assert.ok(liveEp.view().syncMeta.lastProjectsSync?.time > 0, "lastProjectsSync must be exposed");
-            assert.equal(liveCenterStore.snapshot().remoteProjects.length, 1, "Center must receive Endpoint's added project");
             assert.ok(centerEvents.includes("projects"), "Center onChange must fire immediately on project sync");
+
+            // Center has autoSaveSyncedProjects=true -> must auto-create centerSyncDir/live-sync-repo & materialize deliverables (without .pptx-build junk!)
+            const autoSavedDir = path.join(centerSyncDir, "live-sync-repo");
+            assert.equal(liveCenterStore.snapshot().projects.length, 1, "Center must auto-bind synced project into QLEX-Projects folder");
+            assert.equal(liveCenterStore.snapshot().projects[0].directory, autoSavedDir);
+            assert.equal(fs.existsSync(path.join(autoSavedDir, "需求说明.md")), true, "Markdown file must sync");
+            assert.equal(fs.existsSync(path.join(autoSavedDir, "PPT交付/方案.pptx")), true, "PPTX deliverable must sync");
+            assert.equal(fs.existsSync(path.join(autoSavedDir, "PPT交付/首页.png")), true, "PNG image deliverable must sync");
+            assert.equal(fs.existsSync(path.join(autoSavedDir, ".pptx-build/temp.json")), false, "Hidden build cache .pptx-build must be excluded");
+
+            // Reverse direction: Center creates a PDF deliverable inside autoSavedDir -> Endpoint pulls it!
+            fs.writeFileSync(path.join(autoSavedDir, "PPT交付/评审纪要.pdf"), Buffer.alloc(48 * 1024, 0x25));
+            const revSync = await liveEp.syncProjects();
+            assert.ok(revSync.filesPulled >= 1, "Endpoint must pull new PDF from Center");
+            assert.equal(fs.existsSync(path.join(liveProj, "PPT交付/评审纪要.pdf")), true, "PDF must materialize on Endpoint");
             liveHttpsProjectSyncPassed = true;
         } finally {
             liveCenter.stop();
@@ -355,7 +379,64 @@ try {
     assert.equal(fs.readFileSync(path.join(wsEmptyDst, "TASKS.md"), "utf8"), "- [x] Sync project files\n");
     assert.equal(fs.existsSync(path.join(wsEmptyDst, ".env")), false, "Sensitive .env must never be synced");
 
-    console.log("ALL QLEX v0.3.0-beta.6 CORE SYNC / WORKSPACE FILES / SKILL POLICY / COLLECTOR / TAILSCALE / UPDATER TESTS PASSED!", JSON.stringify({
+    // ---- 7. Binary Deliverables (PPTX > 8MB, PNG, PDF, DOCX, ZIP) + Hidden Build Dir Exclusion + Auto QLEX-Projects Folder ----
+    const binSrc = path.join(tmpHome, "云传项目");
+    const autoSyncRoot = path.join(tmpHome, "QLEX-Projects");
+    fs.mkdirSync(path.join(binSrc, "PPT交付"), { recursive: true });
+    fs.mkdirSync(path.join(binSrc, "设计稿"), { recursive: true });
+    fs.mkdirSync(path.join(binSrc, ".pptx-build"), { recursive: true });
+    fs.mkdirSync(path.join(binSrc, ".chart-data-abc"), { recursive: true });
+    fs.mkdirSync(path.join(binSrc, ".github/workflows"), { recursive: true });
+    const bigPptx = Buffer.alloc(9 * 1024 * 1024, 0x50); // 9 MB > 8 MB batch limit, must pack cleanly as solo batch!
+    const samplePng = Buffer.alloc(180 * 1024, 0x89);
+    const samplePdf = Buffer.alloc(120 * 1024, 0x25);
+    const sampleZip = Buffer.alloc(250 * 1024, 0x50);
+    fs.writeFileSync(path.join(binSrc, "PPT交付/汇报.pptx"), bigPptx);
+    fs.writeFileSync(path.join(binSrc, "设计稿/首页.png"), samplePng);
+    fs.writeFileSync(path.join(binSrc, "需求.pdf"), samplePdf);
+    fs.writeFileSync(path.join(binSrc, "交付包.zip"), sampleZip);
+    fs.writeFileSync(path.join(binSrc, ".github/workflows/ci.yml"), "name: CI\n");
+    fs.writeFileSync(path.join(binSrc, ".pptx-build/deck.json"), '{"junk":true}\n');
+    fs.writeFileSync(path.join(binSrc, ".chart-data-abc/snap.json"), '{"junk":true}\n');
+
+    const binScanned = scanProjectFiles(binSrc);
+    const binPaths = binScanned.files.map(f => f.path).sort();
+    assert.deepEqual(binPaths, [
+        ".github/workflows/ci.yml",
+        "PPT交付/汇报.pptx",
+        "交付包.zip",
+        "设计稿/首页.png",
+        "需求.pdf",
+    ], "Must sync binary deliverables & .github while excluding .pptx-build and .chart-data-*");
+
+    // Multi-batch pack & unpack including 9 MB single file (> 8 MB batch threshold)
+    const mirrorData2 = path.join(tmpHome, "center-data-2");
+    const binMirror = getProjectMirrorDir(mirrorData2, "proj_云传项目");
+    let pushedFiles = 0;
+    for (let idx = 0; idx < binPaths.length; ) {
+        const slice = binPaths.slice(idx, idx + 80);
+        const packed = packProjectFiles(binSrc, slice);
+        assert.ok(packed.count >= 1, "Single 9MB file must still pack as its own batch without stalling");
+        const applied = applyProjectFiles(binMirror, unpackProjectFiles(packed.gzipBase64), "proj_云传项目", path.join(tmpHome, "backups"));
+        pushedFiles += applied.written;
+        idx += packed.count;
+    }
+    assert.equal(pushedFiles, 5, "All 5 files including 9MB PPTX must sync across batches");
+
+    // Auto-bind into dedicated QLEX-Projects/<项目名> folder
+    const autoStore = new LocalStore(path.join(tmpHome, "auto-state.json"));
+    autoStore.setProjectSyncDir(autoSyncRoot);
+    const autoMerge = autoStore.mergeSharedProjects(
+        { projects: [{ syncId: "proj_云传项目", name: "云传项目", originDevice: "MacBook", updatedAt: Date.now() }], deleted: [] },
+        { peerName: "MacBook", autoBindDir: autoSyncRoot, dataDir: mirrorData2, backupRoot: path.join(tmpHome, "backups") }
+    );
+    assert.equal(autoMerge.autoBound, 1, "Remote project must auto-bind into dedicated QLEX-Projects subdir");
+    const expectedFolder = path.join(autoSyncRoot, "云传项目");
+    assert.equal(autoStore.snapshot().projects[0].directory, expectedFolder);
+    assert.equal(fs.statSync(path.join(expectedFolder, "PPT交付/汇报.pptx")).size, bigPptx.length, "9MB PPTX must materialize intact inside QLEX-Projects/云传项目");
+    assert.equal(fs.existsSync(path.join(expectedFolder, ".pptx-build/deck.json")), false);
+
+    console.log("ALL QLEX v0.3.0-beta.7 CORE SYNC / BINARY DELIVERABLES / AUTO-FOLDER / SKILL POLICY / COLLECTOR / TAILSCALE / UPDATER TESTS PASSED!", JSON.stringify({
         nativeTokens: nativeRes.today.total,
         embeddedTsnetBuilt: Boolean(findEmbeddedTsnetBin()),
         betaDetected: betaCheck.latest.version,
@@ -363,6 +444,8 @@ try {
         syncedMemoryBidirectional: true,
         syncedProjectBoundSyncId: syncId,
         workspaceFilesSynced: matRes.written,
+        binaryDeliverablesSynced: pushedFiles,
+        autoSavedProjectDir: expectedFolder,
         liveHttpsProjectSyncPassed,
         skillPolicyVerified: true,
     }));

@@ -943,7 +943,9 @@ function registerHandlers() {
             const syncId = typeof input === "string" ? input : input?.syncId;
             const directDir = typeof input === "object" && typeof input?.directory === "string" ? input.directory : "";
             let chosenDir = "";
-            if (directDir) {
+            if (directDir === "__default__") {
+                chosenDir = "__default__";
+            } else if (directDir) {
                 const resolved = (0, node_fs_1.realpathSync)(directDir);
                 await requireDirectory(resolved);
                 chosenDir = resolved;
@@ -961,6 +963,32 @@ function registerHandlers() {
             }
             store.bindRemoteProject(syncId, chosenDir);
             await pairing.syncProjects().catch(err => console.warn("QLEX project sync after bind:", err?.message || err));
+            return broadcastState(undefined, { force: true });
+        },
+        "qlex:choose-project-sync-dir": async () => {
+            if (!window) return desktopState();
+            const result = await electron_1.dialog.showOpenDialog(window, { properties: ["openDirectory", "createDirectory"] });
+            if (result.canceled || !result.filePaths[0]) return desktopState();
+            const next = store.setProjectSyncDir((0, node_fs_1.realpathSync)(result.filePaths[0]));
+            return broadcastState(next, { force: true });
+        },
+        "qlex:open-project-sync-dir": async () => {
+            const dir = store.snapshot().projectSyncDir;
+            node_fs_1.mkdirSync(dir, { recursive: true });
+            await electron_1.shell.openPath(dir);
+            return desktopState();
+        },
+        "qlex:set-auto-save-projects": async (enabled) => {
+            store.setAutoSaveSyncedProjects(Boolean(enabled));
+            if (enabled) {
+                const pending = store.snapshot().remoteProjects || [];
+                for (const rp of pending) {
+                    try { store.bindRemoteProject(rp.syncId, "__default__"); } catch { /* ignore */ }
+                }
+                if (pending.length) {
+                    await pairing.syncProjects().catch(err => console.warn("QLEX auto-save project sync:", err?.message || err));
+                }
+            }
             return broadcastState(undefined, { force: true });
         },
         "qlex:sync-memory-now": async () => {
@@ -1123,6 +1151,13 @@ else {
     void electron_1.app.whenReady().then(() => {
         const userDataDir = electron_1.app.getPath("userData");
         store = new state_1.LocalStore((0, node_path_1.join)(userDataDir, "state.json"));
+        if (!smoke) {
+            try {
+                node_fs_1.mkdirSync(store.snapshot().projectSyncDir, { recursive: true });
+            } catch (err) {
+                console.warn("QLEX projectSyncDir init warning:", err?.message || err);
+            }
+        }
         usage = createUsageCollector({
             cachePath: (0, node_path_1.join)(userDataDir, "collector-cache.json"),
             getCustomPaths: () => store.snapshot().collectorPaths,

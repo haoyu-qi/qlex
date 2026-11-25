@@ -98,6 +98,9 @@ electron_1.contextBridge.exposeInMainWorld("qlex", {
 
     // Projects & cross-device project sync
     chooseProject: () => electron_1.ipcRenderer.invoke("qlex:choose-project"),
+    chooseProjectSyncDir: () => electron_1.ipcRenderer.invoke("qlex:choose-project-sync-dir"),
+    openProjectSyncDir: () => electron_1.ipcRenderer.invoke("qlex:open-project-sync-dir"),
+    setAutoSaveProjects: (enabled) => electron_1.ipcRenderer.invoke("qlex:set-auto-save-projects", enabled),
     bindRemoteProject: (syncId, directory) => electron_1.ipcRenderer.invoke("qlex:bind-remote-project", directory ? { syncId, directory } : syncId),
     syncMemoryNow: () => electron_1.ipcRenderer.invoke("qlex:sync-memory-now"),
     syncProjectsNow: () => electron_1.ipcRenderer.invoke("qlex:sync-projects-now"),

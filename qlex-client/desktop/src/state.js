@@ -11,6 +11,7 @@ const {
     scanProjectFiles,
     getProjectMirrorDir,
     materializeMirrorToDirectory,
+    safeProjectFolderName,
 } = require("./project-sync");
 
 const DEFAULT_APPEARANCE = Object.freeze({
@@ -91,6 +92,25 @@ function normalizeSkillSyncPolicy(raw) {
 
 function defaultMemoryDir() {
     return (0, node_path_1.join)((0, node_os_1.homedir)(), "Documents", "QLEX-Memory");
+}
+
+function defaultProjectsDir() {
+    return (0, node_path_1.join)((0, node_os_1.homedir)(), "Documents", "QLEX-Projects");
+}
+
+function allocateProjectSubdir(baseDir, name, syncId, usedDirs = new Set()) {
+    const root = (0, node_path_1.resolve)(baseDir || defaultProjectsDir());
+    (0, node_fs_1.mkdirSync)(root, { recursive: true, mode: 0o755 });
+    const baseName = safeProjectFolderName(name, syncId);
+    let candidate = (0, node_path_1.join)(root, baseName);
+    let idx = 2;
+    while (usedDirs.has(candidate)) {
+        candidate = (0, node_path_1.join)(root, `${baseName}-${idx}`);
+        idx++;
+    }
+    (0, node_fs_1.mkdirSync)(candidate, { recursive: true, mode: 0o755 });
+    usedDirs.add(candidate);
+    return candidate;
 }
 
 function projectSyncSlug(name) {
@@ -185,6 +205,8 @@ const defaultState = () => ({
     skillSyncPolicy: { ...DEFAULT_SKILL_SYNC_POLICY, excludedSkills: [] },
     memoryArchiveDir: defaultMemoryDir(),
     memoryAutoCompress: true,
+    projectSyncDir: defaultProjectsDir(),
+    autoSaveSyncedProjects: true,
     updateChannel: "beta",
     autoCheckUpdates: true,
     collectorPaths: {},
@@ -217,6 +239,10 @@ class LocalStore {
                     ? value.memoryArchiveDir.trim()
                     : defaultMemoryDir(),
                 memoryAutoCompress: typeof value.memoryAutoCompress === "boolean" ? value.memoryAutoCompress : true,
+                projectSyncDir: typeof value.projectSyncDir === "string" && value.projectSyncDir.trim()
+                    ? value.projectSyncDir.trim()
+                    : defaultProjectsDir(),
+                autoSaveSyncedProjects: typeof value.autoSaveSyncedProjects === "boolean" ? value.autoSaveSyncedProjects : true,
                 updateChannel: VALID_UPDATE_CHANNELS.has(value.updateChannel) ? value.updateChannel : "beta",
                 autoCheckUpdates: typeof value.autoCheckUpdates === "boolean" ? value.autoCheckUpdates : true,
                 collectorPaths: value.collectorPaths && typeof value.collectorPaths === "object" && !Array.isArray(value.collectorPaths) ? value.collectorPaths : {},
@@ -358,7 +384,7 @@ class LocalStore {
             deleted: normalizeDeletedProjects(this.state.deletedProjects),
         };
     }
-    mergeSharedProjects(incomingPayload = [], { peerName = "", applyContext = true, backupRoot } = {}) {
+    mergeSharedProjects(incomingPayload = [], { peerName = "", applyContext = true, backupRoot, autoBindDir = "", dataDir = (0, node_path_1.dirname)(this.file) } = {}) {
         // Accept both new { projects, deleted } envelope and legacy [...] array
         const incomingList = Array.isArray(incomingPayload)
             ? incomingPayload
@@ -370,12 +396,15 @@ class LocalStore {
         const localBySync = new Map((this.state.projects || []).map(p => [p.syncId, { ...p }]));
         const remoteBySync = new Map((this.state.remoteProjects || []).map(r => [r.syncId, { ...r }]));
         const deletedBySync = new Map(normalizeDeletedProjects(this.state.deletedProjects).map(d => [d.syncId, d]));
+        const usedDirs = new Set([...localBySync.values()].map(p => p.directory));
 
         let added = 0;
         let updated = 0;
         let removed = 0;
         let contextApplied = 0;
+        let autoBound = 0;
         const now = Date.now();
+        const selfName = (0, node_os_1.hostname)();
 
         // 1. Merge incoming deletion tombstones
         for (const del of incomingDeleted) {
@@ -443,6 +472,46 @@ class LocalStore {
                 continue;
             }
 
+            if (autoBindDir) {
+                try {
+                    const targetDir = allocateProjectSubdir(autoBindDir, inc.name, inc.syncId, usedDirs);
+                    if (dataDir) {
+                        materializeMirrorToDirectory(dataDir, inc.syncId, targetDir, backupRoot);
+                    }
+                    if (applyContext && Array.isArray(inc.contextFiles) && inc.contextFiles.length) {
+                        const ctxRes = applyWorkspaceContext(targetDir, inc.contextFiles, inc.syncId, backupRoot);
+                        contextApplied += ctxRes.applied;
+                    }
+                    const refreshedMeta = inspectWorkspace(targetDir, { includeContent: false });
+                    localBySync.set(inc.syncId, {
+                        id: (0, node_crypto_1.randomUUID)(),
+                        syncId: inc.syncId,
+                        name: inc.name,
+                        directory: targetDir,
+                        shared: true,
+                        updatedAt: Math.max(now, inc.updatedAt || 0),
+                        gitRemote: refreshedMeta.gitRemote || inc.gitRemote || "",
+                        gitBranch: refreshedMeta.gitBranch || inc.gitBranch || "",
+                        gitCommit: refreshedMeta.gitCommit || inc.gitCommit || "",
+                        contextHash: refreshedMeta.contextHash || inc.contextHash || "",
+                        contextFilesCount: refreshedMeta.contextFiles.length,
+                        fileCount: refreshedMeta.fileCount || 0,
+                        totalBytes: refreshedMeta.totalBytes || 0,
+                        syncedDevices: normalizeSyncedDevices([
+                            ...peerDeviceEntries,
+                            { name: selfName, gitBranch: refreshedMeta.gitBranch, gitCommit: refreshedMeta.gitCommit, updatedAt: now },
+                        ]),
+                        lastSyncedAt: now,
+                    });
+                    remoteBySync.delete(inc.syncId);
+                    added++;
+                    autoBound++;
+                    continue;
+                } catch {
+                    // Fallback to pending remoteProjects if auto-folder allocation fails
+                }
+            }
+
             const cur = remoteBySync.get(inc.syncId);
             const enrichedRemote = {
                 ...inc,
@@ -470,6 +539,7 @@ class LocalStore {
             updated,
             removed,
             contextApplied,
+            autoBound,
             remotePending: remoteBySync.size,
             totalShared: localBySync.size + remoteBySync.size,
         };
@@ -477,7 +547,10 @@ class LocalStore {
     bindRemoteProject(syncId, directory, { backupRoot, dataDir = (0, node_path_1.dirname)(this.file) } = {}) {
         const remote = (this.state.remoteProjects || []).find(r => r.syncId === syncId);
         if (!remote) throw new Error("该远端共享项目已不存在或已完成绑定。");
-        const resolvedDir = (0, node_path_1.resolve)(directory);
+        const usedDirs = new Set((this.state.projects || []).map(p => p.directory));
+        const resolvedDir = (!directory || directory === "__default__")
+            ? allocateProjectSubdir(this.state.projectSyncDir || defaultProjectsDir(), remote.name, remote.syncId, usedDirs)
+            : (0, node_path_1.resolve)(directory);
         let next = this.addProject(resolvedDir, remote.syncId);
         // 1. Materialize any Center-mirrored workspace files into the newly bound local directory
         if (dataDir) {
@@ -554,6 +627,17 @@ class LocalStore {
     setMemoryAutoCompress(enabled) {
         if (typeof enabled !== "boolean") throw new Error("无效的记忆自动压缩设置。");
         return this.update({ memoryAutoCompress: enabled });
+    }
+    setProjectSyncDir(dir) {
+        if (typeof dir !== "string" || !dir.trim()) throw new Error("无效的同步项目目录。");
+        const normalized = (0, node_path_1.resolve)(dir.trim());
+        if (!(0, node_path_1.basename)(normalized)) throw new Error("请选择有效的文件夹路径。");
+        (0, node_fs_1.mkdirSync)(normalized, { recursive: true, mode: 0o755 });
+        return this.update({ projectSyncDir: normalized });
+    }
+    setAutoSaveSyncedProjects(enabled) {
+        if (typeof enabled !== "boolean") throw new Error("无效的项目自动落盘设置。");
+        return this.update({ autoSaveSyncedProjects: enabled });
     }
     setUpdateChannel(channel) {
         if (!VALID_UPDATE_CHANNELS.has(channel)) throw new Error("无效的更新通道设置。");

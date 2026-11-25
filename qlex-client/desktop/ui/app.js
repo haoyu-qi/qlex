@@ -983,6 +983,17 @@ function renderXStage() {
             <div class="sync-status-strip ${syncStripTone}">
               <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(syncStripText)}">${esc(syncStripText)}</span>
             </div>
+            <div class="item-row" style="padding:8px 10px;background:rgba(var(--overlay-rgb),0.035);border-radius:10px;border:1px solid var(--line)">
+              <div class="item-text" style="min-width:0">
+                <div class="item-title" style="font-size:12px">同步项目保存目录</div>
+                <div class="item-sub" style="font-size:11px" title="${esc(state.projectSyncDir || "")}">${esc(state.projectSyncDir || "~/Documents/QLEX-Projects")}</div>
+              </div>
+              <div class="btn-row" style="flex-wrap:nowrap">
+                <button type="button" class="glass-btn sm ${state.autoSaveSyncedProjects !== false ? "primary" : ""}" data-action="toggle-auto-save-projects" title="开启后，对端共享的新项目会自动在该目录新建子文件夹并拉取全部文件">${state.autoSaveSyncedProjects !== false ? "✓ 自动落盘" : "手动绑定"}</button>
+                <button type="button" class="glass-btn sm" data-action="choose-project-sync-dir">更改</button>
+                <button type="button" class="glass-btn sm" data-action="open-project-sync-dir">打开 ↗</button>
+              </div>
+            </div>
             <input id="projectSearchInput" class="glass-input" type="search" value="${esc(projectQuery)}" placeholder="筛选项目名称或目录路径…" />
 
             <div class="scroll-fill" style="display:flex;flex-direction:column;gap:10px">
@@ -999,8 +1010,8 @@ function renderXStage() {
                         ${match ? `<div class="item-sub" style="color:var(--accent)">⚡ 检测到本机同名目录（${esc(match.reason)}）：${esc(match.directory)}</div>` : ""}
                       </div>
                       <div class="btn-row" style="flex-wrap:nowrap">
-                        ${match ? `<button type="button" class="glass-btn sm primary" data-auto-bind-sync="${esc(rp.syncId)}" data-auto-bind-dir="${esc(match.directory)}">⚡ 自动绑定</button>` : ""}
-                        <button type="button" class="glass-btn sm ${match ? "" : "primary"}" data-bind-remote-project="${esc(rp.syncId)}">选择目录</button>
+                        ${match ? `<button type="button" class="glass-btn sm primary" data-auto-bind-sync="${esc(rp.syncId)}" data-auto-bind-dir="${esc(match.directory)}">⚡ 自动绑定</button>` : `<button type="button" class="glass-btn sm primary" data-auto-bind-sync="${esc(rp.syncId)}" data-auto-bind-dir="__default__">📥 保存到同步目录</button>`}
+                        <button type="button" class="glass-btn sm" data-bind-remote-project="${esc(rp.syncId)}">选目录</button>
                       </div>
                     </div>
                   `;
@@ -1860,6 +1871,14 @@ document.addEventListener("click", (event) => {
         else if (act === "update-open-release") void window.qlex.updateOpenRelease();
         else if (act === "open-dashboard-trends") void window.qlex.openDashboard("trends");
         else if (act === "add-project") void runAction(actionBtn, () => window.qlex.chooseProject(), { success: "项目已登记并同步至对端" });
+        else if (act === "open-project-sync-dir") void window.qlex.openProjectSyncDir();
+        else if (act === "choose-project-sync-dir") void runAction(actionBtn, () => window.qlex.chooseProjectSyncDir(), { success: "同步项目保存目录已更新" });
+        else if (act === "toggle-auto-save-projects") {
+            const nextVal = state?.autoSaveSyncedProjects === false;
+            void runAction(actionBtn, () => window.qlex.setAutoSaveProjects(nextVal), {
+                success: nextVal ? "已开启自动落盘：远端新项目将自动保存到同步目录" : "已切换为手动选择目录绑定",
+            });
+        }
         else if (act === "add-discovered-project") void runAction(actionBtn, () => window.qlex.addDiscoveredProject(actionBtn.dataset.directory), { success: "已登记项目并触发跨端同步" });
         else if (act === "open-discovered-project") void runAction(actionBtn, () => window.qlex.openDiscoveredProject(actionBtn.dataset.directory));
         else if (act === "open-project") void runAction(actionBtn, () => window.qlex.openProject(actionBtn.dataset.id));
