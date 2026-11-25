@@ -187,7 +187,14 @@ function fmtNum(v) {
 function fmtIsoShort(ts) {
     if (!ts) return "—";
     try {
-        return new Date(ts).toISOString().replace("T", " ").slice(0, 16);
+        const d = new Date(ts);
+        if (!Number.isFinite(d.getTime())) return "—";
+        const pad = (n) => String(n).padStart(2, "0");
+        const offsetMin = -d.getTimezoneOffset();
+        const sign = offsetMin >= 0 ? "+" : "-";
+        const absMin = Math.abs(offsetMin);
+        const tz = `UTC${sign}${pad(Math.floor(absMin / 60))}:${pad(absMin % 60)}`;
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())} (${tz})`;
     } catch {
         return "—";
     }
@@ -2217,7 +2224,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         cache.ingestedHashes ||= {};
 
         const { byDate: topicsByDate, hits, misses, resources } = extractHistoryTopicsByDate(home, cache);
-        // Merge unified multi-agent topics from native collectors (Codex rollouts, Claude projects, Antigravity T3, Hermes, DSH)
+        // Merge unified multi-agent topics from native collectors (desktop callback or CLI fallback reading desktop collector-cache.json)
         if (typeof getTopicsByDate === "function") {
             const extraTopics = getTopicsByDate();
             if (extraTopics instanceof Map) {
@@ -2229,6 +2236,34 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                         if (!list.some(x => x.text === e.text)) list.push(e);
                     }
                 }
+            }
+        } else {
+            // CLI fallback: read QLEX desktop's collector-cache.json if present so CLI `compress` also sees 8-tool topics!
+            const cacheCandidates = [
+                path.join(home, "Library", "Application Support", "QLEX", "collector-cache.json"),
+                path.join(home, "AppData", "Roaming", "QLEX", "collector-cache.json"),
+                path.join(home, ".config", "QLEX", "collector-cache.json"),
+            ];
+            for (const cFile of cacheCandidates) {
+                const colCache = readJsonSafe(cFile, null);
+                if (!colCache || !colCache.files || typeof colCache.files !== "object") continue;
+                for (const rec of Object.values(colCache.files)) {
+                    const val = rec?.value;
+                    if (!val || !Array.isArray(val.topics)) continue;
+                    const proj = val.workspace ? path.basename(val.workspace) : "";
+                    for (const t of val.topics) {
+                        const date = t?.date || (t?.ts ? localDateKey(t.ts) : "");
+                        const text = sanitizeSnippet(t?.text || "", 220);
+                        if (!date || text.length < 4) continue;
+                        let list = topicsByDate.get(date);
+                        if (!list) { list = []; topicsByDate.set(date, list); }
+                        if (list.length >= 30) continue;
+                        if (!list.some(x => x.text === text)) {
+                            list.push({ date, ts: t.ts || val.lastActive || Date.now(), source: val.source || "agent", project: proj, text });
+                        }
+                    }
+                }
+                break;
             }
         }
         const usageSnap = typeof getUsageSnapshot === "function" ? (getUsageSnapshot() || {}) : {};

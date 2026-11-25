@@ -205,6 +205,8 @@ const defaultState = () => ({
     skillSyncPolicy: { ...DEFAULT_SKILL_SYNC_POLICY, excludedSkills: [] },
     memoryArchiveDir: defaultMemoryDir(),
     memoryAutoCompress: true,
+    memoryDailySettleTime: "21:00",
+    lastDailySettleDate: "",
     projectSyncDir: defaultProjectsDir(),
     autoSaveSyncedProjects: true,
     updateChannel: "beta",
@@ -239,6 +241,10 @@ class LocalStore {
                     ? value.memoryArchiveDir.trim()
                     : defaultMemoryDir(),
                 memoryAutoCompress: typeof value.memoryAutoCompress === "boolean" ? value.memoryAutoCompress : true,
+                memoryDailySettleTime: typeof value.memoryDailySettleTime === "string" && (/^\d{2}:\d{2}$/.test(value.memoryDailySettleTime.trim()) || value.memoryDailySettleTime.trim() === "")
+                    ? value.memoryDailySettleTime.trim()
+                    : "21:00",
+                lastDailySettleDate: typeof value.lastDailySettleDate === "string" ? value.lastDailySettleDate.trim().slice(0, 10) : "",
                 projectSyncDir: typeof value.projectSyncDir === "string" && value.projectSyncDir.trim()
                     ? value.projectSyncDir.trim()
                     : defaultProjectsDir(),
@@ -627,6 +633,18 @@ class LocalStore {
     setMemoryAutoCompress(enabled) {
         if (typeof enabled !== "boolean") throw new Error("无效的记忆自动压缩设置。");
         return this.update({ memoryAutoCompress: enabled });
+    }
+    setMemoryDailySettleTime(hhmm) {
+        const clean = typeof hhmm === "string" ? hhmm.trim() : "";
+        if (clean !== "" && !/^([01]\d|2[0-3]):([0-5]\d)$/.test(clean)) {
+            throw new Error("请输入有效的 24 小时制时间，例如 21:00（留空关闭）。");
+        }
+        return this.update({ memoryDailySettleTime: clean });
+    }
+    markDailySettled(dateKey) {
+        const clean = typeof dateKey === "string" ? dateKey.trim().slice(0, 10) : "";
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) return this.snapshot();
+        return this.update({ lastDailySettleDate: clean });
     }
     setProjectSyncDir(dir) {
         if (typeof dir !== "string" || !dir.trim()) throw new Error("无效的同步项目目录。");

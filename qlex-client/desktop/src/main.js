@@ -830,6 +830,7 @@ function registerHandlers() {
             return desktopState();
         },
         "qlex:set-memory-auto": (enabled) => broadcastState(store.setMemoryAutoCompress(enabled)),
+        "qlex:set-memory-daily-time": (hhmm) => broadcastState(store.setMemoryDailySettleTime(hhmm)),
         "qlex:set-collector-path": async (input) => {
             store.setCollectorPath(input?.source, input?.dir);
             await usage.refresh();
@@ -1256,12 +1257,47 @@ else {
                 }
                 if (store.snapshot().skillSyncEnabled) void skills.refresh(pairing, store.snapshot().localSkillNamespaces);
             }, 60_000).unref();
-            // Auto daily/weekly/monthly memory compression every 30 minutes
+            // Auto daily/weekly/monthly memory compression every 30 minutes (unchanged)
             setInterval(() => {
                 if (store.snapshot().memoryAutoCompress !== false) {
                     void memoryArchive.compressNow().then(() => broadcastState()).catch(console.warn);
                 }
             }, 1_800_000).unref();
+            // Fixed daily settlement archive (default 21:00 local time, once per day — resilient across sleep/wake)
+            let dailySettleRunning = false;
+            const checkDailyMemorySettle = () => {
+                if (dailySettleRunning) return;
+                const snap = store.snapshot();
+                if (snap.memoryAutoCompress === false) return;
+                const target = typeof snap.memoryDailySettleTime === "string" ? snap.memoryDailySettleTime.trim() : "21:00";
+                const m = target.match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+                if (!m) return;
+                const now = new Date();
+                const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+                if (snap.lastDailySettleDate === todayKey) return;
+                const nowMinutes = now.getHours() * 60 + now.getMinutes();
+                const targetMinutes = Number(m[1]) * 60 + Number(m[2]);
+                if (nowMinutes < targetMinutes) return;
+
+                dailySettleRunning = true;
+                void (async () => {
+                    try {
+                        await usage.refresh().catch(console.warn);
+                        if (pairing.view().mode === "endpoint" && pairing.view().endpoint?.status === "connected") {
+                            await pairing.syncMemory().catch(console.warn);
+                        }
+                        await memoryArchive.compressNow();
+                        store.markDailySettled(todayKey);
+                        broadcastState(undefined, { force: true });
+                    } catch (err) {
+                        console.warn("QLEX daily settlement warning:", err?.message || err);
+                    } finally {
+                        dailySettleRunning = false;
+                    }
+                })();
+            };
+            setTimeout(checkDailyMemorySettle, 15_000).unref();
+            setInterval(checkDailyMemorySettle, 30_000).unref();
             // Auto check updates on startup (after 12s) and every 6 hours
             setTimeout(() => {
                 if (store.snapshot().autoCheckUpdates !== false) void updater.checkForUpdates().catch(console.warn);

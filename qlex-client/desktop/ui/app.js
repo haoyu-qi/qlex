@@ -860,6 +860,7 @@ function renderEStage() {
               <span class="mini-pill">冷 ${temps.cold || 0}</span>
               <span class="mini-pill">休眠 ${temps.dormant || 0}</span>
               <span class="mini-pill" style="color:var(--purple)">语义 ${tiers.semantic || 0} · 教训 ${tiers.procedural || 0}</span>
+              <span class="mini-pill" title="每 30 分钟自动增量归档 + 每日固定时间日结（本地时区）">日结 ${esc(state.memoryDailySettleTime || "关闭")} · 30m 周期</span>
             </div>
             <div class="btn-row">
               <button type="button" class="glass-btn sm primary" data-action="install-memory-skill">✦ 部署 ${ms.totalCount || 9} 工具技能</button>

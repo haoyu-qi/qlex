@@ -279,6 +279,18 @@ try {
     const cliProf = JSON.parse(execFileSync(process.execPath, [cliPath, "profile", "--project", "qlex-client", "--budget", "900", "--json"], { env, encoding: "utf8" }));
     assert.ok(cliProf.counts.lessons >= 1);
 
+    // Local timezone rendering check (must include UTC offset, never raw bare UTC)
+    const todayMd = fs.readFileSync(comp2.items.daily[0].mdPath, "utf8");
+    assert.match(todayMd, /更新时间\*\*：\d{4}-\d{2}-\d{2} \d{2}:\d{2} \(UTC[+-]\d{2}:\d{2}\)/, "Daily markdown must render local timestamp with explicit UTC offset");
+
+    // LocalStore daily settlement default & validation (21:00)
+    const { LocalStore } = require(path.join(root, "desktop/src/state.js"));
+    const settleStore = new LocalStore(path.join(tmpHome, "settle-state.json"));
+    assert.equal(settleStore.snapshot().memoryDailySettleTime, "21:00", "Default daily settlement time must be 21:00");
+    settleStore.markDailySettled("2026-11-25");
+    assert.equal(settleStore.snapshot().lastDailySettleDate, "2026-11-25");
+    assert.throws(() => settleStore.setMemoryDailySettleTime("25:99"));
+
     console.log("ALL QLEX v3.0 COGNITIVE MEMORY & AGENT SKILL TESTS PASSED!", JSON.stringify({
         engineVersion: diag.engineVersion,
         activeItems: diag.cognitive.activeItems,
