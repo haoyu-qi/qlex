@@ -23,6 +23,9 @@ const SOURCE_NAMES = {
     claude: "Claude Code",
     hermes: "Hermes",
     dsh: "DSH",
+    workbuddy: "WorkBuddy",
+    zcode: "ZCode",
+    t3code: "T3 Code",
 };
 
 let state = null;
@@ -56,22 +59,28 @@ function buildDailySeries() {
 }
 
 function renderSvgBarChart(container, series) {
-    const w = Math.max(360, container.clientWidth || 720);
-    const h = Math.max(140, container.clientHeight || 180);
-    const padL = 44, padR = 14, padT = 12, padB = 24;
+    const rect = container.getBoundingClientRect();
+    const cs = getComputedStyle(container);
+    const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+    const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+    const w = Math.max(360, Math.round((rect.width || container.clientWidth || 860) - padX));
+    const h = Math.max(140, Math.round((rect.height || container.clientHeight || 160) - padY));
+    const padL = 50, padR = 14, padT = 14, padB = 26;
     const plotW = w - padL - padR;
     const plotH = h - padT - padB;
     const maxVal = Math.max(1, ...series.map(s => s.tokens));
     const step = plotW / Math.max(1, series.length);
-    const barW = Math.max(3, Math.min(28, step * 0.62));
+    const barW = Math.max(4, Math.min(30, step * 0.56));
     const labelEvery = Math.max(1, Math.ceil(series.length / 8));
     const chartColor = getComputedStyle(document.documentElement).getPropertyValue("--chart-color").trim() || "#73bdf5";
+    const accentColor = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#b7ead4";
+    const gradId = `barGrad_${container.id || "c"}`;
 
     const gridLines = [0, 0.5, 1].map(frac => {
-        const y = padT + plotH * (1 - frac);
+        const y = Math.round(padT + plotH * (1 - frac)) + 0.5;
         const val = Math.round(maxVal * frac);
         return `<line class="${frac === 0 ? "axis-base" : "grid-line"}" x1="${padL}" y1="${y}" x2="${w - padR}" y2="${y}" />
-          <text class="axis-label" x="${padL - 6}" y="${y + 3}" text-anchor="end">${fmtCompact(val)}</text>`;
+          <text class="axis-label" x="${padL - 8}" y="${y + 3.5}" text-anchor="end">${fmtCompact(val)}</text>`;
     }).join("");
 
     const bars = series.map((pt, i) => {
@@ -80,13 +89,21 @@ function renderSvgBarChart(container, series) {
         const y = padT + plotH - bh;
         const showLabel = i % labelEvery === 0 || i === series.length - 1;
         return `<g>
-          <rect x="${cx - barW / 2}" y="${y}" width="${barW}" height="${Math.max(bh, pt.tokens > 0 ? 2 : 0)}" rx="3" fill="${chartColor}" opacity="0.88" />
-          <rect class="bar-hover" x="${padL + step * i}" y="${padT}" width="${step}" height="${plotH}" data-date="${pt.date}" data-tokens="${pt.tokens}" />
-          ${showLabel ? `<text class="axis-label" x="${cx}" y="${h - 6}" text-anchor="middle">${pt.date.slice(5)}</text>` : ""}
+          <rect x="${(cx - barW / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(bh, pt.tokens > 0 ? 3 : 0).toFixed(1)}" rx="4" fill="url(#${gradId})" opacity="0.94" />
+          <rect class="bar-hover" x="${(padL + step * i).toFixed(1)}" y="${padT}" width="${step.toFixed(1)}" height="${plotH}" data-date="${pt.date}" data-tokens="${pt.tokens}" />
+          ${showLabel ? `<text class="axis-label" x="${cx.toFixed(1)}" y="${h - 6}" text-anchor="middle">${pt.date.slice(5)}</text>` : ""}
         </g>`;
     }).join("");
 
-    container.innerHTML = `<svg class="dash-chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${gridLines}${bars}</svg>`;
+    container.innerHTML = `<svg class="dash-chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${accentColor}" />
+          <stop offset="100%" stop-color="${chartColor}" />
+        </linearGradient>
+      </defs>
+      ${gridLines}${bars}
+    </svg>`;
 }
 
 function render() {
@@ -127,10 +144,11 @@ function render() {
 
         const tools = Object.entries(SOURCE_NAMES)
             .map(([k, label]) => ({ k, label, tokens: report?.totals?.[k]?.tokens || 0 }))
-            .sort((a, b) => b.tokens - a.tokens);
+            .sort((a, b) => b.tokens - a.tokens)
+            .slice(0, 6);
         const topTool = Math.max(1, tools[0]?.tokens || 1);
 
-        const projects = (report?.projects || []).slice(0, 5);
+        const projects = (report?.projects || []).slice(0, 6);
         const topProj = Math.max(1, projects[0]?.tokens || 1);
 
         dashBreakdown.innerHTML = `
@@ -187,8 +205,8 @@ document.addEventListener("mousemove", (event) => {
     dashTooltip.style.top = `${y}px`;
 });
 
-activityTab.addEventListener("click", () => { tab = "activity"; render(); });
-trendsTab.addEventListener("click", () => { tab = "trends"; render(); });
+activityTab.addEventListener("click", () => { tab = "activity"; requestAnimationFrame(render); });
+trendsTab.addEventListener("click", () => { tab = "trends"; requestAnimationFrame(render); });
 rangeGroup.addEventListener("click", async (event) => {
     const btn = event.target.closest("[data-days]");
     if (!btn) return;
