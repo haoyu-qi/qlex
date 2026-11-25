@@ -69,6 +69,8 @@ let memoryCategory = "daily";
 let memoryPreview = null;
 let memoryRecallQuery = "";
 let memoryRecallLevel = "L1";
+let memoryRecallLayer = "all";
+let memoryRecallBudget = 0;
 let memoryRecallResult = null;
 let memoryRetainOpen = false;
 let noticeTimer = null;
@@ -731,27 +733,32 @@ function renderEStage() {
     const mem = state.memoryArchive || { counts: { daily: 0, weekly: 0, monthly: 0 }, items: { daily: [], weekly: [], monthly: [] } };
     const c = mem.counts || { daily: 0, weekly: 0, monthly: 0 };
     const cog = mem.cognitive || { activeItems: 0, supersededItems: 0, entities: 0, activeEdges: 0, historicalEdges: 0, reflectionsCount: 0 };
-    const ms = state.memorySkill || { installedCount: 0, totalCount: 6 };
+    const temps = cog.temperatures || { hot: 0, warm: 0, cold: 0, dormant: 0 };
+    const tiers = cog.tiers || { working: 0, episodic: 0, semantic: 0, procedural: 0 };
+    const ms = state.memorySkill || { installedCount: 0, totalCount: 9 };
     const list = mem.items?.[memoryCategory] || [];
 
     const retainForm = memoryRetainOpen ? `
       <form id="memoryRetainForm" class="card" style="background:rgba(var(--sunken-rgb),0.38)">
         <div class="card-head">
-          <span class="card-title">写入原子记忆 (Mem0 + Graphiti)</span>
+          <span class="card-title">写入原子记忆 (v3.0 · 支持 &lt;private&gt; 脱敏与 TTL)</span>
           <button type="button" class="glass-btn sm" data-action="toggle-retain-form">收起</button>
         </div>
         <input id="retainTitleInput" class="glass-input" placeholder="标题（可选，自动提取）" maxlength="90" />
-        <textarea id="retainContentInput" class="glass-textarea" placeholder="记录偏好、架构决策、排错经验或变更（支持「从 A 改用 B」自动演进图谱）…" required></textarea>
+        <textarea id="retainContentInput" class="glass-textarea" placeholder="记录偏好、架构决策、排错教训或变更（支持「从 A 改用 B」自动演进图谱）…" required></textarea>
         <div class="btn-grid-2">
           <select id="retainBankSelect" class="glass-select">
             <option value="">自动判别分区</option>
-            <option value="world">world · 事实/决策</option>
-            <option value="experience">experience · 经验/排错</option>
-            <option value="opinion">opinion · 偏好/观点</option>
+            <option value="world">world · 语义事实/决策</option>
+            <option value="experience">experience · 过程教训/排错</option>
+            <option value="opinion">opinion · 偏好/长期约束</option>
           </select>
           <input id="retainProjectInput" class="glass-input" placeholder="所属项目（可选）" maxlength="64" />
         </div>
-        <input id="retainFactKeyInput" class="glass-input" placeholder="Fact Key（同 Key 新事实自动 SUPERSEDE 旧事实）" maxlength="64" />
+        <div class="btn-grid-2">
+          <input id="retainFactKeyInput" class="glass-input" placeholder="Fact Key（同 Key 自动 SUPERSEDE）" maxlength="64" />
+          <input id="retainTtlInput" class="glass-input" type="number" min="1" max="3650" placeholder="TTL 天数（可选，如 30）" />
+        </div>
         <div class="btn-row"><button type="submit" class="glass-btn sm primary">保存并更新图谱</button></div>
       </form>
     ` : "";
@@ -826,7 +833,7 @@ function renderEStage() {
       <div class="stage-header">
         <div class="stage-title-group">
           <h2 class="stage-title">记忆与图谱</h2>
-          <span class="stage-subtitle">Mem0 · Hindsight · memU · Cognee · Graphiti · OpenViking 分层召回</span>
+          <span class="stage-subtitle">v3.0 引擎 · RRF 三路混合召回 · Ebbinghaus 遗忘强化 · 4 层固化 · 双时态图谱</span>
         </div>
         <div class="stage-actions">
           <button type="button" class="glass-btn sm" data-action="open-memory-dir">归档目录 ↗</button>
@@ -839,7 +846,7 @@ function renderEStage() {
         <div class="col-stack">
           <div class="card">
             <div class="card-head">
-              <span class="card-title">认知记忆引擎与跨 Agent 技能</span>
+              <span class="card-title">认知记忆引擎 v${esc(cog.engineVersion || "3.0.0")}</span>
               <span class="tag ${ms.installedCount === ms.totalCount ? "ok" : "warn"}">qlex-memory ${ms.installedCount}/${ms.totalCount}</span>
             </div>
             <div class="kpi-strip-3">
@@ -847,9 +854,18 @@ function renderEStage() {
               <div class="kpi-chip"><span>图谱实体/边</span><strong>${cog.entities || 0}/${cog.activeEdges || 0}</strong></div>
               <div class="kpi-chip"><span>日/周/月</span><strong>${c.daily}/${c.weekly}/${c.monthly}</strong></div>
             </div>
+            <div class="proj-meta-badges" style="margin-top:2px">
+              <span class="mini-pill" style="color:var(--accent)">热 ${temps.hot || 0}</span>
+              <span class="mini-pill" style="color:var(--blue)">温 ${temps.warm || 0}</span>
+              <span class="mini-pill">冷 ${temps.cold || 0}</span>
+              <span class="mini-pill">休眠 ${temps.dormant || 0}</span>
+              <span class="mini-pill" style="color:var(--purple)">语义 ${tiers.semantic || 0} · 教训 ${tiers.procedural || 0}</span>
+            </div>
             <div class="btn-row">
-              <button type="button" class="glass-btn sm primary" data-action="install-memory-skill">✦ 部署 ${ms.totalCount || 9} 工具 Agent 技能</button>
+              <button type="button" class="glass-btn sm primary" data-action="install-memory-skill">✦ 部署 ${ms.totalCount || 9} 工具技能</button>
+              <button type="button" class="glass-btn sm" data-action="memory-profile">项目画像</button>
               <button type="button" class="glass-btn sm" data-action="reflect-memory">执行反思</button>
+              <button type="button" class="glass-btn sm" data-action="memory-auto-forget">清理与诊断</button>
               <button type="button" class="glass-btn sm" data-action="choose-memory-dir">更改目录</button>
             </div>
             <div class="mono-line">${esc(mem.archiveDir || state.memoryArchiveDir || "")}</div>
@@ -859,17 +875,25 @@ function renderEStage() {
 
           <div class="card card-fill">
             <div class="card-head">
-              <span class="card-title">OpenViking 分层检索</span>
+              <span class="card-title">RRF 混合分层检索</span>
               <div class="seg-bar">
                 ${["L0", "L1", "L2"].map(lv => `<button type="button" class="seg-btn ${memoryRecallLevel === lv ? "active" : ""}" data-mem-level="${lv}">${lv}</button>`).join("")}
               </div>
             </div>
+            <div class="btn-row" style="justify-content:space-between;gap:6px">
+              <div class="seg-bar">
+                ${[["all", "全部"], ["memory", "记忆"], ["lesson", "教训"], ["observation", "洞察"]].map(([k, lbl]) => `<button type="button" class="seg-btn ${memoryRecallLayer === k ? "active" : ""}" data-mem-layer="${k}">${lbl}</button>`).join("")}
+              </div>
+              <div class="seg-bar">
+                ${[[0, "全量"], [600, "600t"], [1200, "1200t"]].map(([b, lbl]) => `<button type="button" class="seg-btn ${memoryRecallBudget === b ? "active" : ""}" data-mem-budget="${b}">${lbl}</button>`).join("")}
+              </div>
+            </div>
             <form id="memoryRecallForm" class="search-bar-row">
-              <input id="memoryRecallInput" class="glass-input" type="search" value="${esc(memoryRecallQuery)}" placeholder="检索架构决策、偏好、排错经验或实体…" />
+              <input id="memoryRecallInput" class="glass-input" type="search" value="${esc(memoryRecallQuery)}" placeholder="BM25 + 2-hop 图谱 + 衰减强化混合检索…" />
               <button type="submit" class="glass-btn sm primary">检索</button>
             </form>
             ${memoryRecallResult ? `
-              <div class="muted-note">命中 ${memoryRecallResult.results.length}/${memoryRecallResult.totalMatched} 条（${memoryRecallResult.level}）</div>
+              <div class="muted-note">命中 ${memoryRecallResult.results.length}/${memoryRecallResult.totalMatched} 条（${memoryRecallResult.level} · ~${memoryRecallResult.tokens_used || 0} tok${memoryRecallResult.excluded_by_budget ? ` · 预算裁剪 ${memoryRecallResult.excluded_by_budget} 条` : ""}）</div>
               <div class="item-list scroll-fill">
                 ${memoryRecallResult.results.length ? memoryRecallResult.results.slice(0, 12).map(r => `
                   <div class="item-row clickable" data-browse-uri="${esc(r.uri)}">
@@ -877,11 +901,11 @@ function renderEStage() {
                       <div class="item-title">${esc(r.title)}</div>
                       <div class="item-sub">${esc(memoryRecallLevel === "L0" ? r.l0 : memoryRecallLevel === "L1" ? (r.l1 || r.l0) : (r.l2 || r.l1 || r.l0))}</div>
                     </div>
-                    <span class="tag ok">${esc(r.bank)}</span>
+                    <span class="tag ${r.temperature === "hot" ? "ok" : ""}" title="RRF ${r.score} · 留存 ${Math.round((r.retentionScore || 0) * 100)}%">${esc(r.temperature || r.bank)}</span>
                   </div>
                 `).join("") : `<div class="muted-note">未检索到相关记忆，试试其他关键词。</div>`}
               </div>
-            ` : `<div class="muted-note">输入关键词检索任意历史记忆，点击结果可在右侧完整阅读 L2 正文。</div>`}
+            ` : `<div class="muted-note">支持中英文同义词扩展、2-hop 图谱联查与 Token 预算控制，点击结果可在右侧完整阅读 L2 正文。</div>`}
           </div>
         </div>
 
@@ -1851,6 +1875,40 @@ document.addEventListener("click", (event) => {
                 notify(`已将 qlex-memory 部署到 ${st?.installedCount || 0}/${st?.totalCount || 6} 个工具目录`);
                 return res.state;
             });
+        } else if (act === "memory-profile") {
+            void runAction(actionBtn, async () => {
+                const prof = await window.qlex.memoryProfile({ tokenBudget: 1200 });
+                memoryPreview = { kind: "profile", key: `上下文画像 (~${prof.tokens_used} tok)`, uri: "qlex://profile", content: prof.text || "(暂无活跃记忆)" };
+                renderEStage();
+                return null;
+            });
+        } else if (act === "memory-auto-forget") {
+            void runAction(actionBtn, async () => {
+                const res = await window.qlex.memoryAutoForget({ dryRun: false });
+                const diag = await window.qlex.memoryDiagnose();
+                const cleaned = res.result?.cleanedCount || 0;
+                const conflicts = res.result?.contradictions?.length || 0;
+                const lines = [
+                    `# QLEX 记忆健康诊断 (v${diag.engineVersion}) · 健康分 ${diag.healthScore}/100`,
+                    "",
+                    `- 本次自动清理：TTL 过期 ${res.result?.ttlExpired?.length || 0} 条 · 休眠工作记忆 ${res.result?.dormantEvicted?.length || 0} 条`,
+                    `- 潜在冲突检测：${conflicts} 组`,
+                    `- 温度分布：热 ${diag.cognitive?.temperatures?.hot || 0} · 温 ${diag.cognitive?.temperatures?.warm || 0} · 冷 ${diag.cognitive?.temperatures?.cold || 0} · 休眠 ${diag.cognitive?.temperatures?.dormant || 0}`,
+                    `- 4 层固化：Working ${diag.cognitive?.tiers?.working || 0} · Episodic ${diag.cognitive?.tiers?.episodic || 0} · Semantic ${diag.cognitive?.tiers?.semantic || 0} · Procedural ${diag.cognitive?.tiers?.procedural || 0}`,
+                    "",
+                    "## 诊断建议",
+                    ...(diag.recommendations || []).map(x => `- ${x}`),
+                ];
+                if (diag.contradictions?.length) {
+                    lines.push("", "## 潜在冲突候选");
+                    for (const c of diag.contradictions) {
+                        lines.push(`- (${c.reason}, 相似度 ${c.similarity}) 「${c.memoryA.title}」 ↔ 「${c.memoryB.title}」`);
+                    }
+                }
+                memoryPreview = { kind: "diagnose", key: `健康诊断 · ${diag.healthScore}分`, uri: "qlex://diagnose", content: lines.join("\n") };
+                notify(`记忆清理与诊断完成：清理 ${cleaned} 条，发现 ${conflicts} 组潜在冲突`);
+                return res.state;
+            });
         } else if (act === "toggle-retain-form") {
             memoryRetainOpen = !memoryRetainOpen;
             renderEStage();
@@ -1980,7 +2038,31 @@ document.addEventListener("click", (event) => {
     if (memLvBtn) {
         memoryRecallLevel = memLvBtn.dataset.memLevel;
         if (memoryRecallResult) {
-            void window.qlex.memoryRecall({ query: memoryRecallQuery, level: memoryRecallLevel, limit: 10 }).then(res => {
+            void window.qlex.memoryRecall({ query: memoryRecallQuery, level: memoryRecallLevel, targetLayer: memoryRecallLayer, tokenBudget: memoryRecallBudget, limit: 10 }).then(res => {
+                memoryRecallResult = res;
+                renderEStage();
+            });
+        } else renderEStage();
+        return;
+    }
+
+    const memLayerBtn = target.closest("[data-mem-layer]");
+    if (memLayerBtn) {
+        memoryRecallLayer = memLayerBtn.dataset.memLayer;
+        if (memoryRecallResult) {
+            void window.qlex.memoryRecall({ query: memoryRecallQuery, level: memoryRecallLevel, targetLayer: memoryRecallLayer, tokenBudget: memoryRecallBudget, limit: 10 }).then(res => {
+                memoryRecallResult = res;
+                renderEStage();
+            });
+        } else renderEStage();
+        return;
+    }
+
+    const memBudgetBtn = target.closest("[data-mem-budget]");
+    if (memBudgetBtn) {
+        memoryRecallBudget = Number(memBudgetBtn.dataset.memBudget) || 0;
+        if (memoryRecallResult) {
+            void window.qlex.memoryRecall({ query: memoryRecallQuery, level: memoryRecallLevel, targetLayer: memoryRecallLayer, tokenBudget: memoryRecallBudget, limit: 10 }).then(res => {
                 memoryRecallResult = res;
                 renderEStage();
             });
@@ -2077,7 +2159,7 @@ document.addEventListener("submit", (event) => {
     if (form.id === "memoryRecallForm") {
         event.preventDefault();
         memoryRecallQuery = document.querySelector("#memoryRecallInput")?.value || "";
-        void window.qlex.memoryRecall({ query: memoryRecallQuery, level: memoryRecallLevel, limit: 10 }).then(res => {
+        void window.qlex.memoryRecall({ query: memoryRecallQuery, level: memoryRecallLevel, targetLayer: memoryRecallLayer, tokenBudget: memoryRecallBudget, limit: 10 }).then(res => {
             memoryRecallResult = res;
             renderEStage();
         }).catch(() => notify("记忆检索失败"));
@@ -2087,17 +2169,22 @@ document.addEventListener("submit", (event) => {
         event.preventDefault();
         const content = document.querySelector("#retainContentInput")?.value?.trim();
         if (!content) return;
+        const ttlRaw = document.querySelector("#retainTtlInput")?.value?.trim();
         const payload = {
             title: document.querySelector("#retainTitleInput")?.value?.trim() || "",
             content,
             bank: document.querySelector("#retainBankSelect")?.value || "",
             project: document.querySelector("#retainProjectInput")?.value?.trim() || "",
             factKey: document.querySelector("#retainFactKeyInput")?.value?.trim() || "",
+            ttlDays: ttlRaw ? Number(ttlRaw) : undefined,
+            source: "user",
+            originChannel: "user",
         };
         void runAction(form.querySelector('button[type="submit"]'), async () => {
             const res = await window.qlex.memoryRetain(payload);
             memoryRetainOpen = false;
-            notify(`原子记忆已保存（${res.result?.action || "ADD"}）`);
+            const simHint = res.result?.similarTo?.length ? ` · 发现 ${res.result.similarTo.length} 条相似记忆` : "";
+            notify(`原子记忆已保存（${res.result?.operation || "ADD"}${simHint}）`);
             return res.state;
         });
         return;

@@ -19,10 +19,14 @@ const zlib = require("node:zlib");
 const { createHash, randomUUID } = require("node:crypto");
 const { homedir } = require("node:os");
 
-const ENGINE_VERSION = "2.0.0";
+const ENGINE_VERSION = "3.0.0";
 const VALID_BANKS = new Set(["world", "experience", "opinion", "observation", "mental_model"]);
 const VALID_SCOPES = new Set(["user", "project", "agent", "session"]);
 const VALID_LEVELS = new Set(["L0", "L1", "L2"]);
+const VALID_TIERS = new Set(["working", "episodic", "semantic", "procedural"]);
+const VALID_LAYERS = new Set(["all", "memory", "observation", "lesson"]);
+const VALID_FORMATS = new Set(["compact", "narrative", "full"]);
+const VALID_ORIGIN_CHANNELS = new Set(["user", "agent", "tool", "import", "shared"]);
 const SINGLE_VALUED_PREDICATES = new Set([
     "uses_framework",
     "uses_theme",
@@ -34,17 +38,53 @@ const SINGLE_VALUED_PREDICATES = new Set([
     "decided_strategy",
 ]);
 
+const DEFAULT_DECAY = Object.freeze({
+    lambda: 0.01,
+    sigma: 0.25,
+    tierThresholds: { hot: 0.70, warm: 0.40, cold: 0.15 },
+});
+
+const ACCESS_RECENT_CAP = 20;
+const MS_PER_DAY = 86_400_000;
+
+const QUERY_SYNONYMS = {
+    "穿透": ["tailscale", "tsnet", "nat"],
+    "tailscale": ["穿透", "tsnet"],
+    "记忆": ["memory", "recall", "retain"],
+    "memory": ["记忆", "归档"],
+    "图谱": ["graph", "entity", "关系"],
+    "graph": ["图谱", "实体"],
+    "同步": ["sync", "双向"],
+    "sync": ["同步"],
+    "修复": ["fix", "bug", "排错"],
+    "fix": ["修复", "bug"],
+    "bug": ["修复", "报错", "排错"],
+    "技能": ["skill", "skills"],
+    "skill": ["技能"],
+    "部署": ["deploy", "install"],
+    "deploy": ["部署"],
+    "冲突": ["conflict", "supersede"],
+    "conflict": ["冲突"],
+    "偏好": ["preference", "opinion", "风格"],
+    "架构": ["architecture", "decision", "设计"],
+    "打包": ["build", "package", "release"],
+};
+
 const SOURCE_NAMES = {
     antigravity: "Antigravity",
     codex: "Codex",
     claude: "Claude Code",
     hermes: "Hermes",
     dsh: "DSH",
+    workbuddy: "WorkBuddy",
+    zcode: "ZCode",
+    t3code: "T3 Code",
     user: "User",
     agent: "Agent",
     system: "System",
 };
 
+const PRIVATE_TAG_PATTERN = /<private>[\s\S]*?<\/private>/gi;
 const SECRET_PATTERN = /(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{30,}|Bearer\s+[A-Za-z0-9._-]{16,}|(?:password|passwd|secret|api[_-]?key|access[_-]?token)\s*[:=]\s*["']?[^\s"',;]{6,}["']?|-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+PRIVATE KEY-----)/gi;
 
 const KNOWN_TECH_PATTERNS = [
@@ -87,7 +127,9 @@ const STOPWORDS = new Set([
 
 function scrubSecrets(text) {
     if (typeof text !== "string") return "";
-    return text.replace(SECRET_PATTERN, "[REDACTED]");
+    return text
+        .replace(PRIVATE_TAG_PATTERN, "[PRIVATE_REDACTED]")
+        .replace(SECRET_PATTERN, "[REDACTED]");
 }
 
 function sanitizeSnippet(text, maxLen = 180) {
@@ -251,6 +293,77 @@ function classifyCategory(bank, text, project) {
 
 function detectSupersedeSignal(text) {
     return /(?:改用|改为|换成|替换|不再使用|弃用|放弃|迁移到|升级到|改为默认|switched\s+(?:from|to)|replaced|instead\s+of|no\s+longer|deprecated|migrated\s+to|changed\s+from)/i.test(String(text || ""));
+}
+
+function classifyTier(bank, category = "", scope = "", memoryType = "") {
+    if (memoryType === "lesson" || bank === "experience" || bank === "mental_model") return "procedural";
+    if (bank === "opinion" || category === "decisions" || category === "preferences" || bank === "world") return "semantic";
+    if (bank === "observation" || category === "observations") return "episodic";
+    if (scope === "session") return "working";
+    return "semantic";
+}
+
+function resolveMemoryLayer(item) {
+    if (!item) return "memory";
+    if (item.memoryType === "lesson" || (item.bank === "experience" && item.tier === "procedural")) return "lesson";
+    if (item.bank === "observation" || item.bank === "mental_model" || item.originChannel === "import" || item.originChannel === "tool") {
+        return "observation";
+    }
+    return "memory";
+}
+
+function normalizeAccessLog(raw) {
+    const r = raw && typeof raw === "object" ? raw : {};
+    const recent = Array.isArray(r.recent)
+        ? r.recent.filter(x => typeof x === "number" && Number.isFinite(x)).slice(-ACCESS_RECENT_CAP)
+        : [];
+    const count = Math.max(recent.length, Number.isFinite(Number(r.count)) ? Math.max(0, Math.floor(Number(r.count))) : 0);
+    const lastAt = Number.isFinite(Number(r.lastAt)) ? Number(r.lastAt) : (recent.at(-1) || 0);
+    return { count, lastAt, recent };
+}
+
+function computeItemSalience(item) {
+    const conf = Number.isFinite(Number(item?.confidence)) ? Number(item.confidence) : 0.8;
+    const bankBonus = item?.bank === "mental_model" ? 0.12 : item?.bank === "opinion" ? 0.08 : item?.bank === "experience" ? 0.06 : 0;
+    const reinforceBonus = Math.min(0.15, (Number(item?.reinforcements) || 0) * 0.03);
+    const evidenceBonus = Math.min(0.08, (Array.isArray(item?.evidence) ? item.evidence.length : 0) * 0.015);
+    return Math.min(1, Math.max(0.2, conf * 0.82 + bankBonus + reinforceBonus + evidenceBonus));
+}
+
+function computeRetention(item, now = Date.now(), config = DEFAULT_DECAY) {
+    const createdTs = Number(item?.updatedAt || item?.recordedAt || now);
+    const ageDays = Math.max(0, (now - createdTs) / MS_PER_DAY);
+    const salience = computeItemSalience(item);
+    const temporalDecay = Math.exp(-config.lambda * ageDays);
+    const log = normalizeAccessLog(item?.accessLog);
+    let boost = 0;
+    for (const ts of log.recent) {
+        const daysSince = Math.max(0.5, (now - ts) / MS_PER_DAY);
+        boost += 1 / daysSince;
+    }
+    const retentionScore = Number(Math.min(1, salience * temporalDecay + boost * config.sigma).toFixed(3));
+    const t = config.tierThresholds || DEFAULT_DECAY.tierThresholds;
+    const temperature = retentionScore >= t.hot ? "hot"
+        : retentionScore >= t.warm ? "warm"
+            : retentionScore >= t.cold ? "cold"
+                : "dormant";
+    return { retentionScore, temperature, ageDays: Number(ageDays.toFixed(1)), accessCount: log.count };
+}
+
+function estimateTokens(value) {
+    const str = typeof value === "string" ? value : JSON.stringify(value);
+    return Math.max(1, Math.ceil(Buffer.byteLength(str, "utf8") / 3));
+}
+
+function expandQueryTokens(tokens) {
+    const expanded = new Set(tokens);
+    for (const t of tokens) {
+        const syns = QUERY_SYNONYMS[t];
+        if (syns) {
+            for (const s of syns) expanded.add(s);
+        }
+    }
+    return [...expanded];
 }
 
 /**
@@ -664,15 +777,26 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
 
     function computeCognitiveStats(itemStore, graphStore) {
         const banks = { world: 0, experience: 0, opinion: 0, observation: 0, mental_model: 0 };
+        const tiers = { working: 0, episodic: 0, semantic: 0, procedural: 0 };
+        const temperatures = { hot: 0, warm: 0, cold: 0, dormant: 0 };
         const categories = {};
         let activeItems = 0;
         let supersededItems = 0;
         let deletedItems = 0;
+        let lessonsCount = 0;
+        let expiringSoon = 0;
+        const now = Date.now();
 
         for (const it of itemStore.items) {
             if (it.status === "active") {
                 activeItems++;
                 if (Object.hasOwn(banks, it.bank)) banks[it.bank]++;
+                const tier = VALID_TIERS.has(it.tier) ? it.tier : classifyTier(it.bank, it.category, it.scope, it.memoryType);
+                tiers[tier]++;
+                const ret = computeRetention(it, now);
+                temperatures[ret.temperature]++;
+                if (resolveMemoryLayer(it) === "lesson") lessonsCount++;
+                if (it.forgetAfter && it.forgetAfter <= now + 3 * MS_PER_DAY) expiringSoon++;
                 categories[it.category] = (categories[it.category] || 0) + 1;
             } else if (it.status === "superseded") {
                 supersededItems++;
@@ -694,6 +818,10 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             historicalEdges,
             totalEdges: graphStore.edges.length,
             banks,
+            tiers,
+            temperatures,
+            lessonsCount,
+            expiringSoon,
             categories,
             reflectionsCount: banks.observation + banks.mental_model,
         };
@@ -980,8 +1108,18 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         const scope = VALID_SCOPES.has(input.scope) ? input.scope : (input.project ? "project" : "user");
         const project = input.project ? sanitizeSnippet(input.project, 64) : "";
         const agent = input.agent ? sanitizeSnippet(input.agent, 48) : "";
+        const agentId = input.agentId ? sanitizeSnippet(input.agentId, 64) : agent;
         const source = input.source ? sanitizeSnippet(input.source, 32) : "agent";
+        const originChannel = VALID_ORIGIN_CHANNELS.has(input.originChannel)
+            ? input.originChannel
+            : (source === "user" ? "user" : source === "system" ? "shared" : source === "import" ? "import" : "agent");
+        const memoryType = typeof input.memoryType === "string" && input.memoryType.trim()
+            ? sanitizeSnippet(input.memoryType, 32).toLowerCase()
+            : (bank === "opinion" ? "preference" : bank === "experience" ? "lesson" : bank === "observation" || bank === "mental_model" ? "insight" : "fact");
         const category = input.category ? sanitizeSnippet(input.category, 64) : classifyCategory(bank, rawText, project);
+        const tier = VALID_TIERS.has(input.tier) ? input.tier : classifyTier(bank, category, scope, memoryType);
+        const ttlDays = Number.isFinite(Number(input.ttlDays)) && Number(input.ttlDays) > 0 ? Number(input.ttlDays) : null;
+        const forgetAfter = parseTimestamp(input.forgetAfter, ttlDays ? now + Math.round(ttlDays * MS_PER_DAY) : null);
         const factKey = input.factKey ? slugify(input.factKey) : "";
         const tags = Array.isArray(input.tags)
             ? [...new Set(input.tags.map(t => sanitizeSnippet(t, 32)).filter(Boolean))].slice(0, 12)
@@ -1005,7 +1143,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         const itemStore = opts._itemStore || loadItemStore(p);
         const graphStore = opts._graphStore || loadGraphStore(p);
 
-        // Mem0 Conflict Resolution against active items in same scope + project
+        // Mem0 Conflict Resolution + agentmemory near-duplicate advisory hints (`similarTo`)
         const candidates = itemStore.items.filter(it =>
             it.status === "active" &&
             it.scope === scope &&
@@ -1015,6 +1153,8 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         let matched = null;
         let matchReason = "";
         let bestSim = 0;
+        let bestCand = null;
+        const similarCandidates = [];
 
         if (input.updateId) {
             matched = itemStore.items.find(it => it.id === input.updateId && it.status === "active") || null;
@@ -1024,20 +1164,32 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             matched = candidates.find(it => it.factKey && it.factKey === factKey) || null;
             if (matched) matchReason = "fact_key";
         }
-        if (!matched) {
-            for (const cand of candidates) {
-                if (cand.bank !== bank && !factKey) continue;
-                const candTokens = tokenize(`${cand.title} ${cand.l1} ${(cand.tags || []).join(" ")}`);
-                const sim = jaccardSimilarity(newTokens, candTokens);
+        for (const cand of candidates) {
+            const candTokens = tokenize(`${cand.title} ${cand.l1} ${(cand.tags || []).join(" ")}`);
+            const sim = jaccardSimilarity(newTokens, candTokens);
+            if (sim >= 0.35 && (!matched || cand.id !== matched.id)) {
+                similarCandidates.push({ id: cand.id, uri: `qlex://items/${cand.id}`, title: cand.title, bank: cand.bank, similarity: Number(sim.toFixed(2)) });
+            }
+            if (!matched && (cand.bank === bank || factKey)) {
                 if (sim > bestSim) {
                     bestSim = sim;
-                    matched = cand;
+                    bestCand = cand;
                 }
             }
-            if (bestSim >= 0.86) matchReason = "near_duplicate";
-            else if (bestSim >= 0.6) matchReason = "similar";
-            else matched = null;
         }
+        if (!matched && bestCand) {
+            if (bestSim >= 0.86) {
+                matched = bestCand;
+                matchReason = "near_duplicate";
+            } else if (bestSim >= 0.6) {
+                matched = bestCand;
+                matchReason = "similar";
+            }
+        }
+        const similarTo = similarCandidates
+            .filter(s => !matched || s.id !== matched.id)
+            .sort((a, b) => b.similarity - a.similarity)
+            .slice(0, 3);
 
         let operation = "ADD";
         let resultItem = null;
@@ -1058,7 +1210,14 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         if (isExactDuplicate) {
             operation = "NOOP";
             matched.hitCount = (matched.hitCount || 1) + 1;
+            matched.reinforcements = (matched.reinforcements || 0) + 1;
+            matched.confidence = Number(Math.min(1, (matched.confidence ?? 0.8) + 0.1 * (1 - (matched.confidence ?? 0.8))).toFixed(3));
             matched.lastSeenAt = now;
+            const log = normalizeAccessLog(matched.accessLog);
+            log.count += 1;
+            log.lastAt = now;
+            log.recent = [...log.recent, now].slice(-ACCESS_RECENT_CAP);
+            matched.accessLog = log;
             if (evidence.length) matched.evidence = [...new Set([...(matched.evidence || []), ...evidence])].slice(0, 20);
             resultItem = matched;
         } else if (isSupersede) {
@@ -1074,9 +1233,13 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                 id: newId,
                 uri: `qlex://items/${newId}`,
                 bank,
+                tier,
+                memoryType,
+                originChannel,
                 scope,
                 project,
                 agent,
+                agentId,
                 source,
                 category,
                 factKey: factKey || matched.factKey || "",
@@ -1086,6 +1249,9 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                 l1: layers.l1,
                 l2: layers.l2,
                 confidence,
+                reinforcements: 0,
+                accessLog: { count: 1, lastAt: now, recent: [now] },
+                forgetAfter,
                 status: "active",
                 version: (matched.version || 1) + 1,
                 hitCount: 1,
@@ -1097,6 +1263,9 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                 supersedes: matched.id,
                 supersededBy: null,
                 evidence: [...new Set([...evidence, matched.id])].slice(0, 20),
+                evidenceVersion: input.evidenceVersion || undefined,
+                sourceMemoryIds: Array.isArray(input.sourceMemoryIds) ? input.sourceMemoryIds : undefined,
+                sourceLessonIds: Array.isArray(input.sourceLessonIds) ? input.sourceLessonIds : undefined,
                 revisions: [],
                 explicitTriples: input.triples,
             };
@@ -1116,9 +1285,17 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             matched.l0 = layers.l0;
             matched.l1 = layers.l1;
             matched.l2 = layers.l2.length >= matched.l2.length ? layers.l2 : `${matched.l2}\n\n[补充 ${fmtIsoShort(now)}]\n${layers.l2}`.slice(0, 12000);
+            matched.tier = tier;
+            matched.memoryType = matched.memoryType || memoryType;
+            matched.originChannel = matched.originChannel || originChannel;
+            if (forgetAfter !== null) matched.forgetAfter = forgetAfter;
             matched.tags = [...new Set([...(matched.tags || []), ...tags])].slice(0, 12);
             matched.evidence = [...new Set([...(matched.evidence || []), ...evidence])].slice(0, 20);
-            matched.confidence = Math.max(matched.confidence || 0.7, confidence);
+            if (input.evidenceVersion) matched.evidenceVersion = input.evidenceVersion;
+            if (Array.isArray(input.sourceMemoryIds)) matched.sourceMemoryIds = input.sourceMemoryIds;
+            if (Array.isArray(input.sourceLessonIds)) matched.sourceLessonIds = input.sourceLessonIds;
+            matched.reinforcements = (matched.reinforcements || 0) + 1;
+            matched.confidence = Number(Math.min(1, Math.max(matched.confidence || 0.7, confidence) + 0.05 * (1 - Math.max(matched.confidence || 0.7, confidence))).toFixed(3));
             matched.version = (matched.version || 1) + 1;
             matched.updatedAt = now;
             matched.lastSeenAt = now;
@@ -1131,9 +1308,13 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                 id: newId,
                 uri: `qlex://items/${newId}`,
                 bank,
+                tier,
+                memoryType,
+                originChannel,
                 scope,
                 project,
                 agent,
+                agentId,
                 source,
                 category,
                 factKey,
@@ -1143,6 +1324,9 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                 l1: layers.l1,
                 l2: layers.l2,
                 confidence,
+                reinforcements: 0,
+                accessLog: { count: 1, lastAt: now, recent: [now] },
+                forgetAfter,
                 status: "active",
                 version: 1,
                 hitCount: 1,
@@ -1154,6 +1338,9 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                 supersedes: null,
                 supersededBy: null,
                 evidence,
+                evidenceVersion: input.evidenceVersion || undefined,
+                sourceMemoryIds: Array.isArray(input.sourceMemoryIds) ? input.sourceMemoryIds : undefined,
+                sourceLessonIds: Array.isArray(input.sourceLessonIds) ? input.sourceLessonIds : undefined,
                 revisions: [],
                 explicitTriples: input.triples,
             };
@@ -1179,6 +1366,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             operation,
             item: structuredClone(resultItem),
             supersededId,
+            similarTo,
             graphDelta,
         };
     }
@@ -1215,52 +1403,200 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
     }
 
     /**
-     * Hybrid Recall (Lexical BM25 + Cognee/Graphiti 1-hop Graph Boost + Bi-Temporal asOf + OpenViking L0/L1/L2)
+     * Save or Reinforce Procedural Lesson (agentmemory-inspired diminishing-returns confidence)
+     */
+    function saveLesson(input = {}) {
+        const trigger = sanitizeSnippet(input.trigger || input.problem || "", 240);
+        const solution = scrubSecrets(String(input.solution || input.content || "")).trim();
+        const combined = trigger && solution && !solution.includes(trigger)
+            ? `场景/问题：${trigger}\n解决方案：${solution}`
+            : (solution || trigger);
+        if (!combined) throw new Error("saveLesson 需要提供 solution 或 content。");
+        return retain({
+            ...input,
+            title: input.title || sanitizeSnippet(trigger || solution, 64),
+            content: combined,
+            bank: "experience",
+            tier: "procedural",
+            memoryType: "lesson",
+            category: "experiences",
+            originChannel: input.originChannel || "agent",
+            confidence: input.confidence ?? 0.85,
+            sourceMemoryIds: Array.isArray(input.sourceMemoryIds) ? input.sourceMemoryIds : undefined,
+        });
+    }
+
+    /**
+     * Hybrid Recall v3:
+     *  - Pre-index targetLayer filter (all | memory | observation | lesson)
+     *  - Direct selective ID expansion (`expandIds`)
+     *  - 3-Stream Reciprocal Rank Fusion (Okapi BM25 + Bounded 2-Hop Graph BFS + Ebbinghaus Retention)
+     *  - Rank-preserving token-budgeted packing (`tokenBudget`, `format`, `excluded_results`)
+     *  - Spaced-repetition access strengthening on matched results
      */
     function recall(query = "", opts = {}) {
         const p = pathsOf();
         const itemStore = loadItemStore(p);
         const graphStore = loadGraphStore(p);
+        const now = Date.now();
         const level = VALID_LEVELS.has(String(opts.level || "").toUpperCase()) ? String(opts.level).toUpperCase() : "L1";
+        const format = VALID_FORMATS.has(String(opts.format || "").toLowerCase()) ? String(opts.format).toLowerCase() : "full";
+        const targetLayer = VALID_LAYERS.has(String(opts.targetLayer || opts.layer || "").toLowerCase())
+            ? String(opts.targetLayer || opts.layer).toLowerCase()
+            : "all";
         const limit = Math.max(1, Math.min(50, Number(opts.limit) || 10));
+        const tokenBudget = Number.isFinite(Number(opts.tokenBudget ?? opts.token_budget)) && Number(opts.tokenBudget ?? opts.token_budget) > 0
+            ? Math.max(80, Math.floor(Number(opts.tokenBudget ?? opts.token_budget)))
+            : 0;
         const asOfTs = parseTimestamp(opts.asOf, null);
         const includeSuperseded = Boolean(opts.includeSuperseded) || Boolean(asOfTs);
         const filterBank = opts.bank && VALID_BANKS.has(opts.bank) ? opts.bank : null;
+        const filterTier = opts.tier && VALID_TIERS.has(opts.tier) ? opts.tier : null;
         const filterScope = opts.scope && VALID_SCOPES.has(opts.scope) ? opts.scope : null;
         const filterProject = opts.project ? String(opts.project).trim().toLowerCase() : null;
         const filterCategory = opts.category ? String(opts.category).trim().toLowerCase() : null;
+        const filterAgentId = opts.agentId ? String(opts.agentId).trim().toLowerCase() : null;
+
+        // Direct ID expansion mode (agentmemory `expandIds`, no query required!)
+        const rawExpand = opts.expandIds;
+        const expandList = Array.isArray(rawExpand)
+            ? rawExpand.map(x => String(x || "").trim()).filter(Boolean).slice(0, 100)
+            : typeof rawExpand === "string" && rawExpand.trim()
+                ? rawExpand.split(/[\s,]+/).map(x => x.trim()).filter(Boolean).slice(0, 100)
+                : [];
+        if (expandList.length) {
+            const wantSet = new Set(expandList);
+            const matchedExpanded = itemStore.items
+                .filter(it => wantSet.has(it.id) && it.status !== "deleted")
+                .filter(it => !filterProject || (it.project || "").toLowerCase() === filterProject)
+                .filter(it => !filterAgentId || (it.agentId || it.agent || "").toLowerCase() === filterAgentId)
+                .slice(0, 20);
+            const expandedResults = matchedExpanded.map(item => {
+                const ret = computeRetention(item, now);
+                return {
+                    id: item.id,
+                    uri: `qlex://items/${item.id}`,
+                    score: 1,
+                    bank: item.bank,
+                    tier: item.tier || classifyTier(item.bank, item.category, item.scope, item.memoryType),
+                    layer: resolveMemoryLayer(item),
+                    memoryType: item.memoryType || "fact",
+                    originChannel: item.originChannel || "agent",
+                    scope: item.scope,
+                    project: item.project || "",
+                    category: item.category,
+                    status: item.status,
+                    confidence: item.confidence,
+                    retentionScore: ret.retentionScore,
+                    temperature: ret.temperature,
+                    validFrom: item.validFrom,
+                    validTo: item.validTo,
+                    supersededBy: item.supersededBy,
+                    title: item.title,
+                    l0: item.l0,
+                    l1: item.l1,
+                    l2: item.l2,
+                    tags: item.tags || [],
+                    version: item.version || 1,
+                    evidence: item.evidence || [],
+                    revisions: item.revisions || [],
+                    supersedes: item.supersedes,
+                };
+            });
+            return {
+                query: "",
+                level: "L2",
+                format,
+                targetLayer,
+                asOf: null,
+                totalMatched: expandedResults.length,
+                matched_count: expandedResults.length,
+                tokens_used: expandedResults.reduce((s, r) => s + estimateTokens(r), 0),
+                excluded_by_budget: 0,
+                excluded_results: [],
+                truncated: expandList.length > 20,
+                results: expandedResults,
+                graphContext: [],
+            };
+        }
 
         const qClean = String(query || "").trim();
         const qLower = qClean.toLowerCase();
-        const qTokens = tokenize(qClean);
+        const rawQTokens = tokenize(qClean);
+        const qTokens = expandQueryTokens(rawQTokens);
         const qTokenSet = new Set(qTokens);
 
-        // Identify matching graph entities and their 1-hop neighbors
-        const matchedEntityIds = new Set();
+        // Stream 2: Bounded 2-Hop Graph BFS (max 25 seed nodes, stronger edges first, max 500 visited)
+        const seedEntities = [];
         for (const ent of graphStore.entities) {
             const nameLower = ent.name.toLowerCase();
-            if (qLower && (qLower.includes(nameLower) || nameLower.includes(qLower) || qTokenSet.has(nameLower))) {
-                matchedEntityIds.add(ent.id);
+            if (!qLower) continue;
+            const exact = qLower === nameLower || qTokenSet.has(nameLower);
+            const partial = !exact && (qLower.includes(nameLower) || nameLower.includes(qLower));
+            if (exact || partial) {
+                seedEntities.push({ ent, priority: exact ? 2 : 1 });
             }
         }
-        const graphBoostItemIds = new Map();
-        const relatedEdges = [];
+        seedEntities.sort((a, b) => b.priority - a.priority || (b.ent.mentions || 0) - (a.ent.mentions || 0) || a.ent.name.localeCompare(b.ent.name));
+        const seedIds = new Set(seedEntities.slice(0, 25).map(s => s.ent.id));
+
+        const adjacency = new Map();
+        const validEdges = [];
         for (const edge of graphStore.edges) {
             const edgeValidAtTime = asOfTs
                 ? (edge.validFrom <= asOfTs && (!edge.validTo || edge.validTo > asOfTs))
                 : !edge.validTo;
             if (!edgeValidAtTime && !opts.includeSuperseded) continue;
-            if (matchedEntityIds.has(edge.subjectId) || matchedEntityIds.has(edge.objectId)) {
-                relatedEdges.push(edge);
+            validEdges.push(edge);
+            if (!adjacency.has(edge.subjectId)) adjacency.set(edge.subjectId, []);
+            if (!adjacency.has(edge.objectId)) adjacency.set(edge.objectId, []);
+            adjacency.get(edge.subjectId).push({ neighbor: edge.objectId, edge });
+            adjacency.get(edge.objectId).push({ neighbor: edge.subjectId, edge });
+        }
+        // Sort adjacency lists by edge confidence descending so stronger edges traverse first
+        for (const list of adjacency.values()) {
+            list.sort((a, b) => (b.edge.confidence || 0.8) - (a.edge.confidence || 0.8) || (b.edge.lastConfirmedAt || 0) - (a.edge.lastConfirmedAt || 0));
+        }
+
+        const graphScoreMap = new Map();
+        const relatedEdges = [];
+        const seenEdges = new Set();
+        const visitedNodes = new Set(seedIds);
+        const hop1Nodes = new Set();
+
+        // Hop 1
+        for (const nid of seedIds) {
+            for (const { neighbor, edge } of adjacency.get(nid) || []) {
+                if (!seenEdges.has(edge.id)) {
+                    seenEdges.add(edge.id);
+                    relatedEdges.push(edge);
+                }
                 for (const evId of edge.evidence || []) {
-                    graphBoostItemIds.set(evId, (graphBoostItemIds.get(evId) || 0) + 1);
+                    graphScoreMap.set(evId, (graphScoreMap.get(evId) || 0) + (edge.confidence || 0.85));
+                }
+                if (!visitedNodes.has(neighbor) && visitedNodes.size < 500) {
+                    visitedNodes.add(neighbor);
+                    hop1Nodes.add(neighbor);
+                }
+            }
+        }
+        // Hop 2 (bounded)
+        let examinedHop2 = 0;
+        for (const nid of hop1Nodes) {
+            if (examinedHop2 >= 600) break;
+            for (const { edge } of adjacency.get(nid) || []) {
+                examinedHop2++;
+                if (examinedHop2 > 600) break;
+                for (const evId of edge.evidence || []) {
+                    graphScoreMap.set(evId, (graphScoreMap.get(evId) || 0) + 0.45 * (edge.confidence || 0.8));
                 }
             }
         }
 
-        // Filter candidate items
+        // Pre-index candidate filter (targetLayer runs BEFORE BM25 & graph ranking!)
         const candidates = itemStore.items.filter(it => {
             if (it.status === "deleted") return false;
+            if (!asOfTs && it.forgetAfter && it.forgetAfter <= now) return false;
             if (asOfTs) {
                 const vf = it.validFrom || it.recordedAt || 0;
                 if (vf > asOfTs) return false;
@@ -1268,104 +1604,229 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             } else if (!includeSuperseded && it.status !== "active") {
                 return false;
             }
+            if (targetLayer !== "all" && resolveMemoryLayer(it) !== targetLayer) return false;
             if (filterBank && it.bank !== filterBank) return false;
+            if (filterTier && (it.tier || classifyTier(it.bank, it.category, it.scope, it.memoryType)) !== filterTier) return false;
             if (filterScope && it.scope !== filterScope) return false;
             if (filterProject && (it.project || "").toLowerCase() !== filterProject) return false;
             if (filterCategory && (it.category || "").toLowerCase() !== filterCategory) return false;
+            if (filterAgentId && (it.agentId || it.agent || "").toLowerCase() !== filterAgentId) return false;
             return true;
         });
 
-        // Compute document frequency for IDF weighting
+        // Stream 1: Field-Weighted Okapi BM25 (k1 = 1.5, b = 0.75)
         const df = new Map();
-        const docTokensMap = new Map();
+        const docTfMap = new Map();
+        const docLenMap = new Map();
+        let totalDocLen = 0;
+
         for (const it of candidates) {
-            const toks = new Set(tokenize(`${it.title} ${it.l0} ${it.l1} ${it.l2} ${(it.tags || []).join(" ")} ${it.project || ""}`));
-            docTokensMap.set(it.id, toks);
-            for (const t of toks) df.set(t, (df.get(t) || 0) + 1);
+            const tf = new Map();
+            const addField = (text, weight) => {
+                for (const t of tokenize(text)) {
+                    tf.set(t, (tf.get(t) || 0) + weight);
+                }
+            };
+            addField(it.title, 3.0);
+            addField(`${(it.tags || []).join(" ")} ${it.project || ""}`, 2.0);
+            addField(`${it.l0} ${it.l1}`, 1.5);
+            addField(it.l2, 1.0);
+
+            let dl = 0;
+            for (const [t, w] of tf.entries()) {
+                dl += w;
+                df.set(t, (df.get(t) || 0) + 1);
+            }
+            docTfMap.set(it.id, tf);
+            docLenMap.set(it.id, dl);
+            totalDocLen += dl;
         }
         const N = Math.max(1, candidates.length);
-        const now = Date.now();
+        const avgDl = Math.max(1, totalDocLen / N);
+        const K1 = 1.5;
+        const B = 0.75;
+
+        const bm25List = [];
+        const graphList = [];
+        const retList = [];
+        const retMetaMap = new Map();
+        const exactBonusMap = new Map();
+
+        for (const it of candidates) {
+            const ret = computeRetention(it, now);
+            retMetaMap.set(it.id, ret);
+            retList.push({ id: it.id, score: ret.retentionScore * (it.bank === "mental_model" ? 1.15 : it.bank === "opinion" ? 1.08 : 1.0) });
+
+            const gScore = graphScoreMap.get(it.id) || 0;
+            if (gScore > 0) graphList.push({ id: it.id, score: gScore });
+
+            if (!qClean) {
+                bm25List.push({ id: it.id, score: 1.0 });
+                continue;
+            }
+
+            const tf = docTfMap.get(it.id);
+            const dl = docLenMap.get(it.id) || 1;
+            let bm25 = 0;
+            for (const qt of qTokenSet) {
+                const f = tf.get(qt) || 0;
+                if (f <= 0) continue;
+                const docFreq = df.get(qt) || 0;
+                const idf = Math.log(1 + (N - docFreq + 0.5) / (docFreq + 0.5));
+                const rawBoost = rawQTokens.includes(qt) ? 1.0 : 0.65;
+                bm25 += rawBoost * idf * ((f * (K1 + 1)) / (f + K1 * (1 - B + B * (dl / avgDl))));
+            }
+            const hay = `${it.title} ${it.l0} ${it.l1} ${it.l2}`.toLowerCase();
+            let exactBonus = 0;
+            if (hay.includes(qLower)) exactBonus += 0.045;
+            if (it.title.toLowerCase().includes(qLower)) exactBonus += 0.035;
+            if (it.project && qLower.includes(it.project.toLowerCase())) exactBonus += 0.015;
+            if (exactBonus > 0) exactBonusMap.set(it.id, exactBonus);
+
+            if (bm25 > 0 || exactBonus > 0) {
+                bm25List.push({ id: it.id, score: bm25 + exactBonus * 40 });
+            }
+        }
+
+        // Reciprocal Rank Fusion (RRF, k = 60)
+        const RRF_K = 60;
+        bm25List.sort((a, b) => b.score - a.score);
+        graphList.sort((a, b) => b.score - a.score);
+        retList.sort((a, b) => b.score - a.score);
+
+        const bm25Rank = new Map(bm25List.map((x, i) => [x.id, i + 1]));
+        const graphRank = new Map(graphList.map((x, i) => [x.id, i + 1]));
+        const retRank = new Map(retList.map((x, i) => [x.id, i + 1]));
 
         const scored = [];
         for (const it of candidates) {
-            const toks = docTokensMap.get(it.id);
-            let score = 0;
-
-            if (!qClean) {
-                // Browse-style recall sorted by recency + importance
-                score = 1.0;
-            } else {
-                // 1. IDF-weighted lexical overlap
-                for (const qt of qTokenSet) {
-                    if (toks.has(qt)) {
-                        const idf = Math.log(1 + (N / (1 + (df.get(qt) || 0))));
-                        score += 1.2 + idf;
-                    }
-                }
-                // 2. Exact substring bonus
-                const hay = `${it.title} ${it.l0} ${it.l1} ${it.l2}`.toLowerCase();
-                if (hay.includes(qLower)) score += 4.5;
-                if (it.title.toLowerCase().includes(qLower)) score += 2.5;
-                if (it.project && qLower.includes(it.project.toLowerCase())) score += 1.5;
-
-                // 3. Cognee/Graphiti graph neighbor boost
-                const gHits = graphBoostItemIds.get(it.id) || 0;
-                if (gHits > 0) score += Math.min(3.5, gHits * 1.4);
-
-                if (score <= 0) continue;
-            }
-
-            // 4. Hindsight confidence & bank boost + gentle recency decay
-            const ageDays = Math.max(0, (now - (it.updatedAt || it.recordedAt || now)) / 86400000);
-            const recencyBoost = 1 / (1 + ageDays / 45);
-            const bankWeight = it.bank === "mental_model" ? 1.18 : it.bank === "observation" ? 1.12 : it.bank === "opinion" ? 1.08 : 1.0;
-            const finalScore = Number(((score * bankWeight * (0.65 + 0.35 * (it.confidence ?? 0.8))) + recencyBoost * 0.6).toFixed(3));
-
-            scored.push({ item: it, score: finalScore });
+            const rb = bm25Rank.get(it.id);
+            const rg = graphRank.get(it.id);
+            if (qClean && !rb && !rg) continue;
+            const rr = retRank.get(it.id) || candidates.length;
+            const rrfScore =
+                (rb ? 1.0 / (RRF_K + rb) : 0) +
+                (rg ? 0.65 / (RRF_K + rg) : 0) +
+                (0.35 / (RRF_K + rr)) +
+                (exactBonusMap.get(it.id) || 0);
+            scored.push({
+                item: it,
+                score: Number((rrfScore * 100).toFixed(3)),
+                streams: { bm25Rank: rb || null, graphRank: rg || null, retentionRank: rr },
+            });
         }
 
         scored.sort((a, b) => b.score - a.score || (b.item.updatedAt || 0) - (a.item.updatedAt || 0));
 
-        const results = scored.slice(0, limit).map(({ item, score }) => {
+        // Build formatted entries & apply rank-preserving tokenBudget packing
+        const rankedTop = scored.slice(0, limit);
+        const packedResults = [];
+        const excludedResults = [];
+        let tokensUsed = 0;
+        let truncated = false;
+        let minimumBudget = null;
+
+        const formatResult = ({ item, score, streams }, clipLen = 0) => {
+            const ret = retMetaMap.get(item.id) || computeRetention(item, now);
             const base = {
                 id: item.id,
                 uri: `qlex://items/${item.id}`,
                 score,
                 bank: item.bank,
+                tier: item.tier || classifyTier(item.bank, item.category, item.scope, item.memoryType),
+                layer: resolveMemoryLayer(item),
+                memoryType: item.memoryType || "fact",
+                originChannel: item.originChannel || "agent",
                 scope: item.scope,
                 project: item.project || "",
                 category: item.category,
                 status: item.status,
                 confidence: item.confidence,
+                retentionScore: ret.retentionScore,
+                temperature: ret.temperature,
+                accessCount: ret.accessCount,
                 validFrom: item.validFrom,
                 validTo: item.validTo,
                 supersededBy: item.supersededBy,
                 title: item.title,
-                l0: item.l0,
+                l0: clipLen ? `${item.l0.slice(0, clipLen)}…` : item.l0,
+                streams,
+                ...(clipLen ? { content_truncated: true } : {}),
             };
-            if (level === "L0") return base;
+            if (format === "compact" || level === "L0") return base;
             if (level === "L1") {
-                return {
-                    ...base,
-                    l1: item.l1,
-                    tags: item.tags || [],
-                    version: item.version || 1,
-                };
+                const l1Text = clipLen ? `${(item.l1 || item.l0).slice(0, clipLen)}…` : item.l1;
+                return { ...base, l1: l1Text, tags: item.tags || [], version: item.version || 1 };
             }
+            const l2Text = clipLen ? `${(item.l2 || item.l1 || item.l0).slice(0, clipLen)}…` : item.l2;
             return {
                 ...base,
-                l1: item.l1,
-                l2: item.l2,
+                l1: clipLen ? `${(item.l1 || item.l0).slice(0, Math.min(clipLen, 180))}…` : item.l1,
+                l2: l2Text,
                 tags: item.tags || [],
                 version: item.version || 1,
                 evidence: item.evidence || [],
                 revisions: item.revisions || [],
                 supersedes: item.supersedes,
             };
-        });
+        };
+
+        for (let i = 0; i < rankedTop.length; i++) {
+            const entry = formatResult(rankedTop[i]);
+            const cost = estimateTokens(entry);
+            if (!tokenBudget || tokensUsed + cost <= tokenBudget) {
+                packedResults.push(entry);
+                tokensUsed += cost;
+                continue;
+            }
+            // Try graceful clipped preview for the remaining budget (rank-preserving!)
+            const remaining = tokenBudget - tokensUsed;
+            const clipped = formatResult(rankedTop[i], 90);
+            const clippedCost = estimateTokens(clipped);
+            if (clippedCost <= remaining) {
+                packedResults.push(clipped);
+                tokensUsed += clippedCost;
+                truncated = true;
+                continue;
+            }
+            if (i === 0 && minimumBudget === null) {
+                minimumBudget = clippedCost;
+            }
+            truncated = true;
+            if (excludedResults.length < 10) {
+                excludedResults.push({
+                    id: rankedTop[i].item.id,
+                    uri: `qlex://items/${rankedTop[i].item.id}`,
+                    title: rankedTop[i].item.title,
+                    score: rankedTop[i].score,
+                });
+            }
+        }
+
+        // Spaced-repetition access strengthening on top matched hits (when real query runs)
+        if (qClean && packedResults.length && opts.trackAccess !== false) {
+            const hitIds = new Set(packedResults.slice(0, 5).map(r => r.id));
+            let touched = false;
+            for (const it of itemStore.items) {
+                if (!hitIds.has(it.id)) continue;
+                const log = normalizeAccessLog(it.accessLog);
+                // Throttle access recording to at most once per minute per item
+                if (now - log.lastAt >= 60_000 || log.count === 0) {
+                    log.count += 1;
+                    log.lastAt = now;
+                    log.recent = [...log.recent, now].slice(-ACCESS_RECENT_CAP);
+                    it.accessLog = log;
+                    it.lastSeenAt = now;
+                    touched = true;
+                }
+            }
+            if (touched) {
+                try { saveItemStore(itemStore, p); } catch { /* non-fatal */ }
+            }
+        }
 
         const entMap = new Map(graphStore.entities.map(e => [e.id, e]));
-        const graphContext = relatedEdges.slice(0, 8).map(e => ({
+        const graphContext = relatedEdges.slice(0, 10).map(e => ({
             subject: entMap.get(e.subjectId)?.name || e.subjectId,
             predicate: e.predicate,
             object: entMap.get(e.objectId)?.name || e.objectId,
@@ -1374,12 +1835,26 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             active: !e.validTo,
         }));
 
+        const narrative = format === "narrative"
+            ? packedResults.map((r, idx) => `${idx + 1}. [${r.bank}/${r.temperature}] ${r.title}: ${r.l1 || r.l0}`).join("\n")
+            : undefined;
+
         return {
             query: qClean,
             level,
+            format,
+            targetLayer,
             asOf: asOfTs ? fmtIsoShort(asOfTs) : null,
             totalMatched: scored.length,
-            results,
+            matched_count: rankedTop.length,
+            tokens_used: tokensUsed,
+            token_budget: tokenBudget || null,
+            excluded_by_budget: Math.max(0, rankedTop.length - packedResults.length),
+            excluded_results: excludedResults,
+            truncated,
+            ...(minimumBudget !== null ? { minimum_budget: minimumBudget } : {}),
+            ...(narrative !== undefined ? { text: narrative } : {}),
+            results: packedResults,
             graphContext,
         };
     }
@@ -1404,12 +1879,16 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         const created = [];
         const entMap = new Map(graphStore.entities.map(e => [e.id, e]));
 
-        // 1. Synthesize User Preference & Working Style Mental Model
+        // 1. Synthesize User Preference & Working Style Mental Model (with evidence provenance validation)
+        const activeIdSet = new Set(itemStore.items.filter(i => i.status === "active").map(i => i.id));
+        const validateEv = (ids) => [...new Set((ids || []).filter(id => activeIdSet.has(id)))].slice(0, 20);
+
         const opinions = active.filter(i => i.bank === "opinion");
         if (opinions.length > 0 && !targetProject) {
-            const l0 = `用户偏好心智模型：提炼自 ${opinions.length} 条偏好记忆（${opinions.slice(0, 3).map(o => o.title).join("；")}）`;
+            const evIds = validateEv(opinions.map(o => o.id));
+            const l0 = `用户偏好心智模型：提炼自 ${evIds.length} 条偏好记忆（${opinions.slice(0, 3).map(o => o.title).join("；")}）`;
             const l2 = [
-                `基于 ${opinions.length} 条活跃偏好记录自动合成：`,
+                `基于 ${evIds.length} 条活跃偏好记录自动合成（evidenceVersion: 1）：`,
                 ...opinions.slice(0, 12).map(o => `- ${o.l0} (\`${o.id}\`)`),
             ].join("\n");
             created.push(retain({
@@ -1419,11 +1898,15 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                 l1: l2.slice(0, 600),
                 l2,
                 bank: "mental_model",
+                tier: "procedural",
+                memoryType: "insight",
                 scope: "user",
                 category: "observations",
                 factKey: "mental_model:user_preferences",
                 confidence: 0.9,
-                evidence: opinions.map(o => o.id),
+                evidence: evIds,
+                evidenceVersion: 1,
+                sourceMemoryIds: evIds,
                 source: "system",
             }, { _itemStore: itemStore, _graphStore: graphStore, _deferPersist: true }));
         }
@@ -2117,12 +2600,201 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         return { itemsAdded, itemsUpdated, entitiesAdded, edgesAdded, edgesUpdated };
     }
 
+    /**
+     * Auto-Forget Lifecycle Sweep (agentmemory-inspired: TTL expiry, contradiction detection, dormant working eviction)
+     */
+    function autoForget({ dryRun = false, dormantDays = 45 } = {}) {
+        const p = pathsOf();
+        ensureDirs(p);
+        const itemStore = loadItemStore(p);
+        const graphStore = loadGraphStore(p);
+        const now = Date.now();
+
+        const ttlExpired = [];
+        const dormantEvicted = [];
+        const contradictions = [];
+        const active = itemStore.items.filter(i => i.status === "active");
+
+        // 1. TTL expiry sweep
+        for (const it of active) {
+            if (it.forgetAfter && it.forgetAfter <= now) {
+                ttlExpired.push({ id: it.id, uri: it.uri, title: it.title, forgetAfter: it.forgetAfter });
+                if (!dryRun) {
+                    it.status = "deleted";
+                    it.validTo = now;
+                    it.updatedAt = now;
+                    it.deleteReason = "auto-forget TTL expired";
+                    for (const edge of graphStore.edges) {
+                        if (!edge.validTo && Array.isArray(edge.evidence) && edge.evidence.length === 1 && edge.evidence[0] === it.id) {
+                            edge.validTo = now;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Dormant low-value working-tier eviction
+        const remainingActive = itemStore.items.filter(i => i.status === "active");
+        for (const it of remainingActive) {
+            const tier = it.tier || classifyTier(it.bank, it.category, it.scope, it.memoryType);
+            const ret = computeRetention(it, now);
+            if (tier === "working" && ret.temperature === "dormant" && ret.ageDays >= dormantDays) {
+                dormantEvicted.push({ id: it.id, uri: it.uri, title: it.title, retentionScore: ret.retentionScore, ageDays: ret.ageDays });
+                if (!dryRun) {
+                    it.status = "superseded";
+                    it.validTo = now;
+                    it.updatedAt = now;
+                    it.deleteReason = "auto-forget dormant working memory";
+                }
+            }
+        }
+
+        // 3. Contradiction detector across active non-reflection memories in same scope + project
+        const pool = itemStore.items
+            .filter(i => i.status === "active" && i.bank !== "observation" && i.bank !== "mental_model")
+            .slice(-250);
+        const tokCache = new Map(pool.map(m => [m.id, tokenize(`${m.title} ${m.l1}`)]));
+        for (let i = 0; i < pool.length; i++) {
+            for (let j = i + 1; j < pool.length; j++) {
+                const a = pool[i];
+                const b = pool[j];
+                if (a.scope !== b.scope || (a.project || "") !== (b.project || "")) continue;
+                const sim = jaccardSimilarity(tokCache.get(a.id), tokCache.get(b.id));
+                const negDiff = (/(?:不要|禁止|不用|弃用|avoid|never|not|don't)/i.test(a.l1)) !== (/(?:不要|禁止|不用|弃用|avoid|never|not|don't)/i.test(b.l1));
+                if (sim >= 0.78 || (sim >= 0.52 && negDiff)) {
+                    contradictions.push({
+                        memoryA: { id: a.id, title: a.title, updatedAt: a.updatedAt },
+                        memoryB: { id: b.id, title: b.title, updatedAt: b.updatedAt },
+                        similarity: Number(sim.toFixed(2)),
+                        reason: negDiff ? "polarity_conflict" : "near_duplicate_conflict",
+                    });
+                    if (contradictions.length >= 20) break;
+                }
+            }
+            if (contradictions.length >= 20) break;
+        }
+
+        if (!dryRun && (ttlExpired.length || dormantEvicted.length)) {
+            saveItemStore(itemStore, p);
+            saveGraphStore(graphStore, p);
+            materializeViews(itemStore, graphStore, p);
+            syncIndexCognitiveStats(itemStore, graphStore, p);
+        }
+
+        return {
+            dryRun,
+            ttlExpired,
+            dormantEvicted,
+            contradictions,
+            cleanedCount: dryRun ? 0 : (ttlExpired.length + dormantEvicted.length),
+        };
+    }
+
+    /**
+     * SessionStart Project / User Profile Briefing (agentmemory-inspired token-budgeted context injection)
+     */
+    function profile({ project = "", tokenBudget = 1200 } = {}) {
+        const p = pathsOf();
+        const itemStore = loadItemStore(p);
+        const graphStore = loadGraphStore(p);
+        const now = Date.now();
+        const projLower = String(project || "").trim().toLowerCase();
+
+        const scoped = itemStore.items
+            .filter(i => i.status === "active" && (!i.forgetAfter || i.forgetAfter > now))
+            .filter(i => !projLower || (i.project || "").toLowerCase() === projLower || i.scope === "user")
+            .map(i => ({ item: i, ret: computeRetention(i, now) }))
+            .sort((a, b) => b.ret.retentionScore - a.ret.retentionScore || (b.item.updatedAt || 0) - (a.item.updatedAt || 0));
+
+        const preferences = scoped.filter(x => x.item.bank === "opinion").slice(0, 6);
+        const lessons = scoped.filter(x => resolveMemoryLayer(x.item) === "lesson").slice(0, 6);
+        const decisions = scoped.filter(x => x.item.category === "decisions" || x.item.bank === "world").slice(0, 8);
+        const topEntities = [...graphStore.entities]
+            .sort((a, b) => (b.mentions || 0) - (a.mentions || 0))
+            .slice(0, 12)
+            .map(e => ({ name: e.name, type: e.type, mentions: e.mentions || 1 }));
+
+        const lines = [
+            `# QLEX 上下文画像${project ? ` · ${project}` : "（全局）"}`,
+            `- 活跃记忆：${scoped.length} 条 · 偏好 ${preferences.length} · 教训 ${lessons.length} · 决策/事实 ${decisions.length}`,
+            topEntities.length ? `- 核心实体：${topEntities.slice(0, 8).map(e => e.name).join("、")}` : "",
+            "",
+        ].filter(x => x !== "");
+
+        const pushSection = (title, list) => {
+            if (!list.length) return;
+            lines.push(`## ${title}`);
+            for (const { item, ret } of list) {
+                const candidate = `- [${ret.temperature}/${Math.round((item.confidence ?? 0.8) * 100)}%] **${item.title}**：${item.l0} (\`${item.id}\`)`;
+                if (estimateTokens(lines.join("\n") + "\n" + candidate) > tokenBudget) break;
+                lines.push(candidate);
+            }
+            lines.push("");
+        };
+
+        pushSection("用户偏好与长期约束", preferences);
+        pushSection("高频教训与排错经验 (Procedural Lessons)", lessons);
+        pushSection("关键决策与事实 (Semantic Memory)", decisions);
+
+        const text = lines.join("\n").trim();
+        return {
+            project: project || null,
+            token_budget: tokenBudget,
+            tokens_used: estimateTokens(text),
+            counts: {
+                totalScoped: scoped.length,
+                preferences: preferences.length,
+                lessons: lessons.length,
+                decisions: decisions.length,
+            },
+            topEntities,
+            text,
+        };
+    }
+
+    /**
+     * Memory Health Diagnostics (agentmemory doctor/diagnose style)
+     */
+    function diagnose() {
+        const st = getStatus();
+        const sweepPreview = autoForget({ dryRun: true });
+        const cog = st.cognitive;
+        const recommendations = [];
+        if (sweepPreview.ttlExpired.length > 0) {
+            recommendations.push(`发现 ${sweepPreview.ttlExpired.length} 条已超过 TTL 的记忆，建议执行 autoForget 清理。`);
+        }
+        if (sweepPreview.contradictions.length > 0) {
+            recommendations.push(`检测到 ${sweepPreview.contradictions.length} 组潜在冲突/高度重复记忆，建议核对或使用 factKey 触发演进替代。`);
+        }
+        if (cog.activeItems >= 5 && cog.reflectionsCount === 0) {
+            recommendations.push("尚未生成反思洞察与心智模型，建议执行 reflect 提炼跨会话规律。");
+        }
+        if (!recommendations.length) {
+            recommendations.push("记忆库健康状况良好：RRF 混合检索、Ebbinghaus 衰减与双时态图谱均运行正常。");
+        }
+        return {
+            engineVersion: ENGINE_VERSION,
+            archiveDir: st.archiveDir,
+            healthScore: Math.max(40, 100 - sweepPreview.ttlExpired.length * 5 - Math.min(25, sweepPreview.contradictions.length * 5)),
+            cognitive: cog,
+            ttlExpiredCount: sweepPreview.ttlExpired.length,
+            dormantWorkingCount: sweepPreview.dormantEvicted.length,
+            contradictionsCount: sweepPreview.contradictions.length,
+            contradictions: sweepPreview.contradictions.slice(0, 8),
+            recommendations,
+        };
+    }
+
     return {
         pathsOf,
         retain,
+        saveLesson,
         recall,
         reflect,
         forget,
+        autoForget,
+        profile,
+        diagnose,
         graphQuery,
         browse,
         compressSync,
@@ -2137,9 +2809,14 @@ module.exports = {
     VALID_BANKS,
     VALID_SCOPES,
     VALID_LEVELS,
+    VALID_TIERS,
+    VALID_LAYERS,
+    VALID_FORMATS,
     SOURCE_NAMES,
+    DEFAULT_DECAY,
     createCognitiveMemoryEngine,
     resolveDefaultMemoryDir,
+    computeRetention,
     scrubSecrets,
     sanitizeSnippet,
     isoWeekKey,

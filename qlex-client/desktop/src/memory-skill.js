@@ -16,15 +16,16 @@ const { SKILL_ROOTS } = require("./skill-sync");
 const { ENGINE_VERSION } = require("./memory-core");
 
 const MEMORY_SKILL_NAME = "qlex-memory";
-const MEMORY_SKILL_VERSION = "2.0.0";
+const MEMORY_SKILL_VERSION = "3.0.0";
 
 function buildSkillMarkdown() {
     return `---
 name: qlex-memory
 description: >
-  QLEX 统一长期记忆与时序知识图谱检索技能。融合 Mem0（原子记忆与冲突消解）、Hindsight（Retain/Recall/Reflect 认知分区）、
-  memU（Resources/Items/Categories 三层文件系统）、Cognee + Graphiti（双时态知识图谱与演进链）、OpenViking（qlex:// 虚拟上下文与 L0/L1/L2 分层加载）
-  以及每日/每周/每月自动压缩归档。
+  QLEX 统一长期记忆与时序知识图谱检索技能 (v3.0 · 融合 agentmemory 架构)。
+  具备 3 路混合 RRF 检索（Okapi BM25 + 2-hop 有界知识图谱 BFS + Ebbinghaus 艾宾浩斯遗忘衰减与访问强化）、
+  4 层记忆固化（working/episodic/semantic/procedural）、Token 预算精确裁剪与 expandIds 按需展开、
+  过程教训强化 (lesson)、TTL 过期与冲突自检 (auto-forget)、SessionStart 项目画像 (profile) 及 <private> 隐私过滤。
   触发场景：当你需要回忆历史决策、用户偏好、项目上下文、排错经验、事实随时间的变化，或需要把重要结论沉淀为跨 Agent 持久记忆时调用。
 ---
 
@@ -32,19 +33,21 @@ description: >
 
 本技能由 **QLEX 桌面工作台**自动维护，直接读写本机统一记忆目录（默认 \`~/Documents/QLEX-Memory\`，支持通过环境变量 \`QLEX_MEMORY_DIR\` 覆盖）。
 
-## 核心原则：OpenViking L0 → L1 → L2 渐进式检索（极致省 Token）
+## 核心工作流：SessionStart 画像 + Token 预算 RRF 召回 + 按需展开
 
-在检索历史记忆时，**不要一次全量加载全文**，请遵循三层渐进式工作流：
-
-1. **先用 L0 快速扫描**（每条仅 ~1 句话摘要 + \`qlex://\` URI）：
+1. **会话开始先拉取项目画像**（按 Token 预算一次注入热记忆、教训与核心实体）：
    \`\`\`bash
-   node <skill_dir>/scripts/qlex_memory.mjs recall "关键词或问题" --level L0 --limit 8
+   node <skill_dir>/scripts/qlex_memory.mjs profile --project myproj --budget 900
    \`\`\`
-2. **命中候选后，按需读取 L1 概览或 L2 全文证据**：
+2. **用 RRF 混合检索 + Token 预算扫描**（支持 \`--layer memory|observation|lesson|all\` 与 \`--budget 800\`）：
    \`\`\`bash
-   node <skill_dir>/scripts/qlex_memory.mjs browse qlex://items/<id> --level L2
+   node <skill_dir>/scripts/qlex_memory.mjs recall "关键词或问题" --level L1 --layer memory --budget 800 --format narrative
    \`\`\`
-3. **追踪事实随时间的演进（Graphiti 双时态知识图谱）**：
+3. **如返回 \`content_truncated: true\` 或 \`excluded_results\`，按 ID 精准展开 L2 全文**：
+   \`\`\`bash
+   node <skill_dir>/scripts/qlex_memory.mjs recall --expand mem_xxx,mem_yyy --json
+   \`\`\`
+4. **追踪事实随时间的演进（Graphiti 双时态知识图谱）**：
    \`\`\`bash
    node <skill_dir>/scripts/qlex_memory.mjs graph --entity "项目或技术名" --history
    node <skill_dir>/scripts/qlex_memory.mjs recall "架构决策" --as-of 2026-03-01 --level L1
@@ -56,30 +59,19 @@ description: >
 
 | 操作 | 命令示例 | 说明 |
 | --- | --- | --- |
-| **检索记忆 (Recall)** | \`node <skill_dir>/scripts/qlex_memory.mjs recall "查询词" --level L1 --project myproj\` | 混合词法 + 知识图谱 1-hop 邻域召回；支持 \`--bank\`, \`--scope\`, \`--project\`, \`--as-of\`, \`--level L0\\|L1\\|L2\` |
-| **写入记忆 (Retain)** | \`node <skill_dir>/scripts/qlex_memory.mjs retain "内容" --title "标题" --bank opinion --scope user --fact-key "ui-style"\` | 自动脱敏 + Mem0 冲突消解（ADD / UPDATE / SUPERSEDE / NOOP）+ 自动抽取知识图谱三元组 |
-| **触发反思 (Reflect)** | \`node <skill_dir>/scripts/qlex_memory.mjs reflect\` | 基于活跃事实、经验与图谱演进链，合成 \`observation\` 与 \`mental_model\`（附证据 ID） |
+| **混合检索 (Recall)** | \`node <skill_dir>/scripts/qlex_memory.mjs recall "查询词" --level L1 --layer memory --budget 800\` | Okapi BM25 + 2-hop 图谱 BFS + Ebbinghaus RRF 融合；支持 \`--expand\`, \`--format compact\\|narrative\\|full\`, \`--as-of\` |
+| **项目画像 (Profile)** | \`node <skill_dir>/scripts/qlex_memory.mjs profile --project myproj --budget 1200\` | 生成 SessionStart 精简上下文画像（用户偏好、高频教训、活跃决策与核心实体） |
+| **写入记忆 (Retain)** | \`node <skill_dir>/scripts/qlex_memory.mjs retain "内容" --title "标题" --bank opinion --ttl-days 30\` | 自动脱敏（含 \`<private>\` 标签）+ 冲突消解 + \`similarTo\` 相似提示 + TTL 过期 |
+| **过程教训 (Lesson)** | \`node <skill_dir>/scripts/qlex_memory.mjs lesson "解决方案" --trigger "触发问题" --project myproj\` | 保存或强化可复用排错教训（重复确认自动按边际递减提升置信度） |
+| **触发反思 (Reflect)** | \`node <skill_dir>/scripts/qlex_memory.mjs reflect\` | 基于经校验的活跃证据合成 \`observation\` 与 \`mental_model\`（\`evidenceVersion: 1\`） |
+| **过期与冲突清理 (Auto-Forget)** | \`node <skill_dir>/scripts/qlex_memory.mjs auto-forget [--dry-run]\` | 清理超期 TTL 记忆、归档长期休眠工作记忆并报告潜在冲突对 |
+| **健康诊断 (Diagnose)** | \`node <skill_dir>/scripts/qlex_memory.mjs diagnose\` | 输出健康分、热/温/冷/休眠分布、4 层固化统计与优化建议 |
 | **知识图谱 (Graph)** | \`node <skill_dir>/scripts/qlex_memory.mjs graph --entity "QLEX" --history\` | 查询实体关系及 \`validFrom → validTo\` 双时态演进历史 |
-| **虚拟目录 (Browse)** | \`node <skill_dir>/scripts/qlex_memory.mjs browse qlex://categories --level L0\` | 浏览 \`qlex://\`, \`qlex://categories\`, \`qlex://items\`, \`qlex://graph\`, \`qlex://reflections\`, \`qlex://daily\`, \`qlex://weekly\`, \`qlex://monthly\` |
-| **周期归档 (Timeline)** | \`node <skill_dir>/scripts/qlex_memory.mjs timeline --kind daily --limit 7\` | 查看每日 / 每周 / 每月压缩记忆索引 |
-| **压缩同步 (Compress)** | \`node <skill_dir>/scripts/qlex_memory.mjs compress\` | 增量采集本机 AI 日志，更新日/周/月压缩缓存、分类与知识图谱 |
+| **虚拟目录 (Browse)** | \`node <skill_dir>/scripts/qlex_memory.mjs browse qlex://categories --level L0\` | 浏览 \`qlex://\` 分层虚拟文件系统 |
 | **遗忘条目 (Forget)** | \`node <skill_dir>/scripts/qlex_memory.mjs forget <mem_id> --reason "已过时"\` | 软失效指定记忆条目并同步标记关联图谱边 |
-| **查看状态 (Status)** | \`node <skill_dir>/scripts/qlex_memory.mjs status\` | 查看记忆库目录、原子记忆数、实体/边数、日/周/月归档与压缩率 |
+| **查看状态 (Status)** | \`node <skill_dir>/scripts/qlex_memory.mjs status\` | 查看引擎版本、热/温/冷/休眠记忆统计、图谱与压缩率 |
 
-## 认知分区（Hindsight Memory Banks）选择指南
-
-- \`world\`：客观事实、架构说明、环境路径、依赖版本
-- \`experience\`：踩坑记录、Bug 根因与修复步骤、有效命令与工作流
-- \`opinion\`：用户明确表达的偏好、风格品味、长期约束（如“不要用某方案”）
-- \`observation\` / \`mental_model\`：由 \`reflect\` 自动合成的高层洞察与项目画像
-
-## 何时应当主动调用 \`retain\`
-
-- 用户明确提出长期偏好、代码/设计规范或工作流要求时（\`--bank opinion\`）
-- 解决了较难的 Bug 或完成了关键架构决策时（\`--bank experience\` 或 \`--bank world\`）
-- 技术选型发生变更时，请传入相同的 \`--fact-key\` 或使用“从 A 改用 B”表述，触发 Graphiti 双时态 \`SUPERSEDE\` 自动保留演进链
-
-> **安全约束**：引擎会自动对 \`sk-*\`、\`ghp_*\`、\`Bearer\`、\`password\` 等敏感凭证做 \`[REDACTED]\` 脱敏；请勿主动写入明文密钥。
+> **安全约束**：引擎会自动剥离 \`<private>...</private>\` 隐私块以及 \`sk-*\`、\`ghp_*\`、\`Bearer\`、\`password\` 等敏感凭证；请勿主动写入明文密钥。
 `;
 }
 
@@ -149,8 +141,12 @@ function printHelp() {
     console.log(\`QLEX Memory CLI (v${MEMORY_SKILL_VERSION})
 
 Usage:
-  qlex_memory.mjs recall "<query>" [--level L0|L1|L2] [--bank world|experience|opinion|observation|mental_model] [--scope user|project|agent|session] [--project <name>] [--as-of YYYY-MM-DD] [--limit N] [--history] [--json]
-  qlex_memory.mjs retain "<content>" [--title "..."] [--bank ...] [--scope ...] [--project ...] [--category ...] [--tags a,b] [--fact-key ...] [--supersede] [--json]
+  qlex_memory.mjs recall "<query>" [--level L0|L1|L2] [--layer all|memory|observation|lesson] [--format full|compact|narrative] [--budget N] [--expand id1,id2] [--bank ...] [--scope ...] [--project <name>] [--as-of YYYY-MM-DD] [--limit N] [--history] [--json]
+  qlex_memory.mjs retain "<content>" [--title "..."] [--bank ...] [--tier working|episodic|semantic|procedural] [--scope ...] [--project ...] [--category ...] [--tags a,b] [--fact-key ...] [--ttl-days N] [--supersede] [--json]
+  qlex_memory.mjs lesson "<solution>" [--trigger "..."] [--title "..."] [--project <name>] [--tags a,b] [--json]
+  qlex_memory.mjs profile [--project <name>] [--budget 1200] [--json]
+  qlex_memory.mjs auto-forget [--dry-run] [--json]
+  qlex_memory.mjs diagnose [--json]
   qlex_memory.mjs reflect [--project <name>] [--json]
   qlex_memory.mjs graph [--entity <name>] [--history] [--as-of YYYY-MM-DD] [--limit N] [--json]
   qlex_memory.mjs browse [qlex://uri] [--level L0|L1|L2] [--json]
@@ -191,15 +187,26 @@ async function main() {
         const query = positionals.slice(1).join(" ");
         const res = engine.recall(query, {
             level: flags.level || "L1",
+            targetLayer: flags.layer || flags["target-layer"] || "all",
+            format: flags.format || "full",
+            tokenBudget: flags.budget ? Number(flags.budget) : (flags["token-budget"] ? Number(flags["token-budget"]) : 0),
+            expandIds: flags.expand || flags["expand-ids"],
             bank: flags.bank,
+            tier: flags.tier,
             scope: flags.scope,
             project: flags.project,
+            agentId: flags.agent || flags["agent-id"],
             category: flags.category,
             asOf: flags["as-of"] || flags.asOf,
             includeSuperseded: Boolean(flags.history || flags["include-superseded"]),
             limit: flags.limit ? Number(flags.limit) : 10,
         });
         if (asJson) return console.log(JSON.stringify(res, null, 2));
+        if (res.text) {
+            console.log(res.text);
+            if (res.excluded_by_budget > 0) console.log(\`\\n[budget] tokens=\${res.tokens_used}/\${res.token_budget}, excluded=\${res.excluded_by_budget}: \${res.excluded_results.map(x => x.id).join(", ")}\`);
+            return;
+        }
         printMarkdownRecall(res);
         return;
     }
@@ -214,21 +221,65 @@ async function main() {
             content,
             title: typeof flags.title === "string" ? flags.title : undefined,
             bank: typeof flags.bank === "string" ? flags.bank : undefined,
+            tier: typeof flags.tier === "string" ? flags.tier : undefined,
             scope: typeof flags.scope === "string" ? flags.scope : undefined,
             project: typeof flags.project === "string" ? flags.project : undefined,
             agent: typeof flags.agent === "string" ? flags.agent : "external-agent",
             source: typeof flags.source === "string" ? flags.source : "agent",
             category: typeof flags.category === "string" ? flags.category : undefined,
             factKey: typeof flags["fact-key"] === "string" ? flags["fact-key"] : (typeof flags.factKey === "string" ? flags.factKey : undefined),
+            ttlDays: flags["ttl-days"] ? Number(flags["ttl-days"]) : undefined,
             tags: typeof flags.tags === "string" ? flags.tags : undefined,
             confidence: flags.confidence ? Number(flags.confidence) : undefined,
             supersede: Boolean(flags.supersede),
             triples,
         });
         if (asJson) return console.log(JSON.stringify(res, null, 2));
-        console.log(\`[\${res.operation}] \${res.item.uri} (\${res.item.bank}/\${res.item.scope}) — \${res.item.l0}\`);
+        console.log(\`[\${res.operation}] \${res.item.uri} (\${res.item.bank}/\${res.item.tier}/\${res.item.scope}) — \${res.item.l0}\`);
         if (res.supersededId) console.log(\`  ↳ 替代旧记忆：qlex://items/\${res.supersededId}\`);
+        if (res.similarTo?.length) console.log(\`  ↳ 相似提示：\${res.similarTo.map(s => \`\${s.id}(\${s.similarity})\`).join(", ")}\`);
         console.log(\`  ↳ 图谱增量：+\${res.graphDelta.entitiesAdded} 实体 / +\${res.graphDelta.edgesAdded} 关系 / \${res.graphDelta.edgesSuperseded} 演进替代\`);
+        return;
+    }
+
+    if (cmd === "lesson") {
+        const solution = positionals.slice(1).join(" ") || (typeof flags.solution === "string" ? flags.solution : "");
+        const res = engine.saveLesson({
+            title: typeof flags.title === "string" ? flags.title : undefined,
+            trigger: typeof flags.trigger === "string" ? flags.trigger : "",
+            solution,
+            project: typeof flags.project === "string" ? flags.project : undefined,
+            tags: typeof flags.tags === "string" ? flags.tags : undefined,
+        });
+        if (asJson) return console.log(JSON.stringify(res, null, 2));
+        console.log(\`[LESSON:\${res.operation}] \${res.item.uri} (conf \${Math.round((res.item.confidence ?? 0.85) * 100)}%, reinforce \${res.item.reinforcements || 0}) — \${res.item.l0}\`);
+        return;
+    }
+
+    if (cmd === "profile") {
+        const res = engine.profile({
+            project: typeof flags.project === "string" ? flags.project : (positionals[1] || ""),
+            tokenBudget: flags.budget ? Number(flags.budget) : 1200,
+        });
+        if (asJson) return console.log(JSON.stringify(res, null, 2));
+        console.log(res.text);
+        return;
+    }
+
+    if (cmd === "auto-forget") {
+        const res = engine.autoForget({ dryRun: Boolean(flags["dry-run"] || flags.dryRun) });
+        if (asJson) return console.log(JSON.stringify(res, null, 2));
+        console.log(\`Auto-Forget (\${res.dryRun ? "dry-run" : "applied"}): TTL过期=\${res.ttlExpired.length}, 休眠清理=\${res.dormantEvicted.length}, 潜在冲突=\${res.contradictions.length}\`);
+        return;
+    }
+
+    if (cmd === "diagnose") {
+        const res = engine.diagnose();
+        if (asJson) return console.log(JSON.stringify(res, null, 2));
+        console.log(\`# QLEX Memory Diagnose (v\${res.engineVersion}) · 健康分 \${res.healthScore}\`);
+        console.log(\`- 温度分布：热=\${res.cognitive.temperatures.hot} 温=\${res.cognitive.temperatures.warm} 冷=\${res.cognitive.temperatures.cold} 休眠=\${res.cognitive.temperatures.dormant}\`);
+        console.log(\`- 4层固化：working=\${res.cognitive.tiers.working} episodic=\${res.cognitive.tiers.episodic} semantic=\${res.cognitive.tiers.semantic} procedural=\${res.cognitive.tiers.procedural}\`);
+        for (const r of res.recommendations) console.log(\`- \${r}\`);
         return;
     }
 

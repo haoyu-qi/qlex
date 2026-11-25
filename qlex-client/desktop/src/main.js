@@ -782,10 +782,20 @@ function registerHandlers() {
             const result = memoryArchive.retain(input || {});
             return { result, state: broadcastState() };
         },
+        "qlex:memory-lesson": (input) => {
+            const result = memoryArchive.saveLesson(input || {});
+            return { result, state: broadcastState() };
+        },
         "qlex:memory-reflect": (input) => {
             const result = memoryArchive.reflect(input || {});
             return { result, state: broadcastState() };
         },
+        "qlex:memory-auto-forget": (input) => {
+            const result = memoryArchive.autoForget(input || {});
+            return { result, state: broadcastState() };
+        },
+        "qlex:memory-profile": (input) => memoryArchive.profile(input || {}),
+        "qlex:memory-diagnose": () => memoryArchive.diagnose(),
         "qlex:memory-graph": (input) => memoryArchive.graphQuery(input || {}),
         "qlex:memory-browse": (input) => memoryArchive.browse(input?.uri || "qlex://", input?.level || "L1"),
         "qlex:memory-forget": (input) => {

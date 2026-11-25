@@ -25,7 +25,7 @@ function createMemoryArchiver({ getArchiveDir, getProjects, getUsageSnapshot, ge
         cacheMisses: 0,
         counts: { daily: 0, weekly: 0, monthly: 0 },
         cognitive: {
-            engineVersion: "2.0.0",
+            engineVersion: "3.0.0",
             activeItems: 0,
             supersededItems: 0,
             deletedItems: 0,
@@ -35,6 +35,10 @@ function createMemoryArchiver({ getArchiveDir, getProjects, getUsageSnapshot, ge
             historicalEdges: 0,
             totalEdges: 0,
             banks: { world: 0, experience: 0, opinion: 0, observation: 0, mental_model: 0 },
+            tiers: { working: 0, episodic: 0, semantic: 0, procedural: 0 },
+            temperatures: { hot: 0, warm: 0, cold: 0, dormant: 0 },
+            lessonsCount: 0,
+            expiringSoon: 0,
             categories: {},
             reflectionsCount: 0,
         },
@@ -90,6 +94,12 @@ function createMemoryArchiver({ getArchiveDir, getProjects, getUsageSnapshot, ge
         return res;
     }
 
+    function saveLesson(input) {
+        const res = engine.saveLesson(input);
+        loadExistingIndex();
+        return res;
+    }
+
     function recall(query, opts) {
         return engine.recall(query, opts);
     }
@@ -98,6 +108,20 @@ function createMemoryArchiver({ getArchiveDir, getProjects, getUsageSnapshot, ge
         const res = engine.reflect(opts);
         loadExistingIndex();
         return res;
+    }
+
+    function autoForget(opts) {
+        const res = engine.autoForget(opts);
+        loadExistingIndex();
+        return res;
+    }
+
+    function profile(opts) {
+        return engine.profile(opts);
+    }
+
+    function diagnose() {
+        return engine.diagnose();
     }
 
     function graphQuery(opts) {
@@ -150,8 +174,12 @@ function createMemoryArchiver({ getArchiveDir, getProjects, getUsageSnapshot, ge
     return {
         compressNow,
         retain,
+        saveLesson,
         recall,
         reflect,
+        autoForget,
+        profile,
+        diagnose,
         graphQuery,
         browse,
         forget,

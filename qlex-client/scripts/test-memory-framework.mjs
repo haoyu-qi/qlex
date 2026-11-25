@@ -213,12 +213,81 @@ try {
     const cliBrowse = execFileSync(process.execPath, [cliPath, "browse", "qlex://categories", "--level", "L0"], { env, encoding: "utf8" });
     assert.ok(cliBrowse.includes("qlex://categories/"));
 
-    console.log("ALL QLEX COGNITIVE MEMORY & AGENT SKILL TESTS PASSED!", JSON.stringify({
-        activeItems: cliStatus.cognitive.activeItems + 1,
-        supersededItems: cliStatus.cognitive.supersededItems,
-        entities: cliStatus.cognitive.entities,
-        activeEdges: cliStatus.cognitive.activeEdges,
-        historicalEdges: cliStatus.cognitive.historicalEdges,
+    // ---- 7. v3.0 agentmemory-inspired upgrades: <private>, Lesson reinforcement, Token-budgeted RRF recall, expandIds, TTL autoForget, Profile & Diagnose ----
+    const privRes = engine.retain({
+        title: "隐私标签过滤测试",
+        content: "正式环境使用 Tailscale 穿透直连，<private>内部测试密码=top-secret-999</private> 对外不可见。",
+        project: "qlex-client",
+        tags: ["tailscale", "security"],
+    });
+    assert.ok(privRes.item.l2.includes("[PRIVATE_REDACTED]"), "<private> tag block must be stripped");
+    assert.ok(!privRes.item.l2.includes("top-secret-999"), "Private tag secret must never persist");
+    assert.equal(privRes.item.tier, "semantic");
+
+    // Procedural Lesson + diminishing-returns confidence reinforcement
+    const l1 = engine.saveLesson({
+        title: "Tailscale 大文件拉取分片步进修复",
+        trigger: "同步多张 2MB PNG 时只拉取了前 4 张",
+        solution: "toPull 循环按服务端实际返回 count 推进，单文件超过 8MB 自动独立分片传输",
+        project: "qlex-client",
+    });
+    const l2 = engine.saveLesson({
+        title: "Tailscale 大文件拉取分片步进修复",
+        trigger: "同步多张 2MB PNG 时只拉取了前 4 张",
+        solution: "toPull 循环按服务端实际返回 count 推进，单文件超过 8MB 自动独立分片传输",
+        project: "qlex-client",
+    });
+    assert.equal(l2.operation, "NOOP");
+    assert.ok(l2.item.confidence > l1.item.confidence, "Repeated lesson confirmation must reinforce confidence");
+    assert.ok(l2.item.reinforcements >= 1, "Lesson reinforcement counter must increment");
+
+    // Pre-index layer filter + token-budgeted packing + narrative + expandIds recovery
+    const budgeted = engine.recall("qlex-client", { targetLayer: "lesson", level: "L2", tokenBudget: 260, format: "narrative", limit: 10 });
+    assert.ok(budgeted.tokens_used <= 260 || budgeted.minimum_budget != null, "Budgeted recall must respect tokenBudget");
+    assert.ok(budgeted.results.every(r => r.layer === "lesson"), "targetLayer='lesson' must return only lesson-layer items");
+    assert.equal(typeof budgeted.text, "string", "Narrative format must return readable text");
+
+    const expanded = engine.recall("", { expandIds: [l1.item.id, privRes.item.id] });
+    assert.equal(expanded.results.length, 2, "expandIds must recover full L2 content without query");
+    assert.ok(expanded.results.some(r => r.id === l1.item.id && r.l2.includes("8MB")));
+
+    // Synonym query expansion ("穿透" -> matches "Tailscale")
+    const synRecall = engine.recall("穿透", { level: "L0", limit: 5 });
+    assert.ok(synRecall.results.some(r => r.id === privRes.item.id), "Bilingual synonym expansion must recall Tailscale note via 穿透");
+
+    // TTL Expiry + autoForget sweep
+    const ttlMem = engine.retain({
+        title: "临时调试开关",
+        content: "仅今日临时跳过缓存验证用于排查。",
+        project: "qlex-client",
+        forgetAfter: Date.now() - 5000,
+    });
+    const drySweep = engine.autoForget({ dryRun: true });
+    assert.ok(drySweep.ttlExpired.some(x => x.id === ttlMem.item.id), "autoForget dryRun must detect TTL-expired memory");
+    const realSweep = engine.autoForget({ dryRun: false });
+    assert.ok(realSweep.cleanedCount >= 1, "autoForget must clean expired TTL memory");
+
+    // Profile & Diagnose (direct + CLI)
+    const prof = engine.profile({ project: "qlex-client", tokenBudget: 900 });
+    assert.ok(prof.text.includes("qlex-client") && prof.tokens_used <= 920);
+    const diag = engine.diagnose();
+    assert.equal(diag.engineVersion, "3.0.0");
+    assert.ok(diag.healthScore >= 40 && diag.cognitive.temperatures.hot >= 1);
+
+    const cliDiag = JSON.parse(execFileSync(process.execPath, [cliPath, "diagnose", "--json"], { env, encoding: "utf8" }));
+    assert.equal(cliDiag.engineVersion, "3.0.0");
+    const cliProf = JSON.parse(execFileSync(process.execPath, [cliPath, "profile", "--project", "qlex-client", "--budget", "900", "--json"], { env, encoding: "utf8" }));
+    assert.ok(cliProf.counts.lessons >= 1);
+
+    console.log("ALL QLEX v3.0 COGNITIVE MEMORY & AGENT SKILL TESTS PASSED!", JSON.stringify({
+        engineVersion: diag.engineVersion,
+        activeItems: diag.cognitive.activeItems,
+        supersededItems: diag.cognitive.supersededItems,
+        temperatures: diag.cognitive.temperatures,
+        tiers: diag.cognitive.tiers,
+        entities: diag.cognitive.entities,
+        activeEdges: diag.cognitive.activeEdges,
+        historicalEdges: diag.cognitive.historicalEdges,
         dailyWeeklyMonthly: comp2.counts,
         compressionRatio: comp2.compressionRatio,
         installedAgentDirs: installRes.status.installedCount,
