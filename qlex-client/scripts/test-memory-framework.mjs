@@ -291,6 +291,107 @@ try {
     assert.equal(settleStore.snapshot().lastDailySettleDate, "2026-11-25");
     assert.throws(() => settleStore.setMemoryDailySettleTime("25:99"));
 
+    // ---- 8. Regression: Multi-day session token attribution & historical daily archive protection ----
+    const { createFileCache, allocateCumulativeSessionBuckets } = require(path.join(root, "desktop/src/collectors/index.js"));
+    const ledgerCachePath = path.join(tmpHome, "collector-cache.json");
+    const ledgerCache = createFileCache(ledgerCachePath);
+
+    // Day 1 (2026-11-24): Hermes session reaches 15,020,327 tokens
+    const bDay1 = allocateCumulativeSessionBuckets(
+        ledgerCache,
+        "hermes:test.db:sess_long",
+        { input: 2000000, output: 20327, cacheRead: 13000000, cacheWrite: 0, tokens: 15020327 },
+        "2026-11-24"
+    );
+    assert.equal(bDay1["2026-11-24"].tokens, 15020327);
+
+    // Day 2 (2026-11-25): Same session resumed and grows to 21,529,409 (+6,509,082 delta)
+    // 2026-11-24 MUST remain frozen at 15,020,327 and 2026-11-25 gets ONLY +6,509,082!
+    const bDay2 = allocateCumulativeSessionBuckets(
+        ledgerCache,
+        "hermes:test.db:sess_long",
+        { input: 2500000, output: 29409, cacheRead: 19000000, cacheWrite: 0, tokens: 21529409 },
+        "2026-11-25"
+    );
+    assert.equal(bDay2["2026-11-24"].tokens, 15020327, "Past day tokens must NEVER drop when multi-day session resumes");
+    assert.equal(bDay2["2026-11-25"].tokens, 6509082, "Today must receive ONLY the positive delta");
+
+    // First-time multi-day session backfill via per-day message weights preserves exact total
+    const bSplit = allocateCumulativeSessionBuckets(
+        ledgerCache,
+        "hermes:test.db:sess_backfill",
+        { input: 1000, output: 200, cacheRead: 8800, cacheWrite: 0, tokens: 10000 },
+        "2026-11-25",
+        [{ date: "2026-11-24", weight: 3 }, { date: "2026-11-25", weight: 1 }]
+    );
+    assert.equal(bSplit["2026-11-24"].tokens + bSplit["2026-11-25"].tokens, 10000, "Initial weighted split must conserve exact total");
+    assert.equal(bSplit["2026-11-24"].tokens, 7500);
+    assert.equal(bSplit["2026-11-25"].tokens, 2500);
+
+    // Historical daily archive protection in compressSync(): past date never drops tokens or loses topics
+    const guardHome = path.join(tmpHome, "guard-home");
+    fs.mkdirSync(guardHome, { recursive: true });
+    let mockUsage = {
+        today: { total: 898164, totals: { hermes: { tokens: 898164, sessions: 1 } }, projects: [] },
+        week: { daily: [{ date: "2026-11-24", tokens: 15667036 }, { date: "2026-11-25", tokens: 898164 }] },
+    };
+    let mockTopics = new Map([
+        ["2026-11-24", [
+            { date: "2026-11-24", ts: Date.now() - 86400_000, source: "hermes", project: "mini", text: "历史要点A：配置飞书日报与采集" },
+            { date: "2026-11-24", ts: Date.now() - 86000_000, source: "hermes", project: "mini", text: "历史要点B：核对 QLEX 归档结构" },
+        ]],
+    ]);
+    const guardEngine = createCognitiveMemoryEngine({
+        home: guardHome,
+        getArchiveDir: () => path.join(guardHome, "QLEX-Memory-Guard"),
+        getProjects: () => [],
+        getUsageSnapshot: () => mockUsage,
+        getTopicsByDate: () => mockTopics,
+    });
+    const run1 = guardEngine.compressSync({ settle: true });
+    const nov24Run1 = run1.items.daily.find(d => d.key === "2026-11-24");
+    assert.ok(nov24Run1 && nov24Run1.sub.includes("15,667,036") && nov24Run1.sub.includes("2 要点"));
+    const settledTodayMd = fs.readFileSync(run1.items.daily[0].mdPath, "utf8");
+    assert.ok(settledTodayMd.includes("日结状态"), "Settled daily archive must record 日结状态");
+
+    // Simulate a second run where usage reports a dropped count (646,709) and only 1 topic for past date 2026-11-24
+    mockUsage = {
+        today: { total: 22427573, totals: { hermes: { tokens: 22427573, sessions: 2 } }, projects: [] },
+        week: { daily: [{ date: "2026-11-24", tokens: 646709 }, { date: "2026-11-25", tokens: 22427573 }] },
+    };
+    mockTopics = new Map([
+        ["2026-11-24", [
+            { date: "2026-11-24", ts: Date.now() - 86400_000, source: "hermes", project: "mini", text: "历史要点A：配置飞书日报与采集" },
+        ]],
+    ]);
+    const run2 = guardEngine.compressSync();
+    const nov24Run2 = run2.items.daily.find(d => d.key === "2026-11-24");
+    assert.ok(nov24Run2 && nov24Run2.sub.includes("15,667,036"), "Past daily tokens must NEVER regress on recomputation");
+    assert.ok(nov24Run2 && nov24Run2.sub.includes("2 要点"), "Past daily topics must union-merge and NEVER shrink");
+
+    // CLI fallback reading nativeSummary (including Hermes tokens + topics) from collector-cache.json
+    const cliHome = path.join(tmpHome, "cli-home");
+    const cliAppSupport = path.join(cliHome, "Library", "Application Support", "QLEX");
+    fs.mkdirSync(cliAppSupport, { recursive: true });
+    fs.writeFileSync(path.join(cliAppSupport, "collector-cache.json"), JSON.stringify({
+        version: 1,
+        files: {},
+        nativeSummary: {
+            updatedAt: Date.now(),
+            dailyTokens: { "2026-11-23": 1234567 },
+            topicsByDate: {
+                "2026-11-23": [{ date: "2026-11-23", ts: Date.now() - 172800_000, source: "hermes", project: "mini", text: "Hermes CLI 回退采集验证要点" }],
+            },
+        },
+    }));
+    const cliFallbackEngine = createCognitiveMemoryEngine({
+        home: cliHome,
+        getArchiveDir: () => path.join(cliHome, "QLEX-Memory-CliFallback"),
+    });
+    const cliComp = cliFallbackEngine.compressSync();
+    const nov23Cli = cliComp.items.daily.find(d => d.key === "2026-11-23");
+    assert.ok(nov23Cli && nov23Cli.sub.includes("1,234,567") && nov23Cli.sub.includes("1 要点"), "CLI compress fallback must ingest Hermes nativeSummary tokens and topics");
+
     console.log("ALL QLEX v3.0 COGNITIVE MEMORY & AGENT SKILL TESTS PASSED!", JSON.stringify({
         engineVersion: diag.engineVersion,
         activeItems: diag.cognitive.activeItems,

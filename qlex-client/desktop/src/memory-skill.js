@@ -68,6 +68,7 @@ description: >
 | **健康诊断 (Diagnose)** | \`node <skill_dir>/scripts/qlex_memory.mjs diagnose\` | 输出健康分、热/温/冷/休眠分布、4 层固化统计与优化建议 |
 | **知识图谱 (Graph)** | \`node <skill_dir>/scripts/qlex_memory.mjs graph --entity "QLEX" --history\` | 查询实体关系及 \`validFrom → validTo\` 双时态演进历史 |
 | **虚拟目录 (Browse)** | \`node <skill_dir>/scripts/qlex_memory.mjs browse qlex://categories --level L0\` | 浏览 \`qlex://\` 分层虚拟文件系统 |
+| **同步并压缩 (Compress)** | \`node <skill_dir>/scripts/qlex_memory.mjs compress [--desktop] [--settle]\` | 离线压缩归档；追加 \`--desktop\` 直接触发运行中的 QLEX 桌面端执行全量采集、同步与压缩（无需屏幕录制权限） |
 | **遗忘条目 (Forget)** | \`node <skill_dir>/scripts/qlex_memory.mjs forget <mem_id> --reason "已过时"\` | 软失效指定记忆条目并同步标记关联图谱边 |
 | **查看状态 (Status)** | \`node <skill_dir>/scripts/qlex_memory.mjs status\` | 查看引擎版本、热/温/冷/休眠记忆统计、图谱与压缩率 |
 
@@ -151,7 +152,7 @@ Usage:
   qlex_memory.mjs graph [--entity <name>] [--history] [--as-of YYYY-MM-DD] [--limit N] [--json]
   qlex_memory.mjs browse [qlex://uri] [--level L0|L1|L2] [--json]
   qlex_memory.mjs timeline [--kind daily|weekly|monthly] [--limit N] [--json]
-  qlex_memory.mjs compress [--json]
+  qlex_memory.mjs compress [--desktop] [--settle] [--json]
   qlex_memory.mjs forget <mem_id> [--reason "..."] [--hard] [--json]
   qlex_memory.mjs status [--json]
 \`);
@@ -328,7 +329,49 @@ async function main() {
     }
 
     if (cmd === "compress") {
-        const res = engine.compressSync();
+        if (flags.desktop) {
+            const fs = require("node:fs");
+            const crypto = require("node:crypto");
+            const archiveDir = customDir || core.resolveDefaultMemoryDir();
+            const cacheDir = path.join(archiveDir, "cache");
+            const triggerFile = path.join(cacheDir, ".trigger-compress.json");
+            const resultFile = path.join(cacheDir, ".trigger-result.json");
+            const reqId = crypto.randomUUID();
+            fs.mkdirSync(cacheDir, { recursive: true });
+            fs.writeFileSync(triggerFile, JSON.stringify({
+                id: reqId,
+                action: "compressNow",
+                settle: Boolean(flags.settle),
+                refreshUsage: true,
+                syncMemory: true,
+                requestedAt: Date.now(),
+            }, null, 2));
+            const timeoutMs = flags.timeout ? Number(flags.timeout) : 25_000;
+            const deadline = Date.now() + timeoutMs;
+            let result = null;
+            while (Date.now() < deadline) {
+                await new Promise(r => setTimeout(r, 400));
+                try {
+                    if (fs.existsSync(resultFile)) {
+                        const parsed = JSON.parse(fs.readFileSync(resultFile, "utf8"));
+                        if (parsed && parsed.id === reqId) {
+                            result = parsed;
+                            break;
+                        }
+                    }
+                } catch { /* retry */ }
+            }
+            if (!result) {
+                throw new Error("等待 QLEX 桌面端响应超时（请确认 QLEX >= 0.3.0-beta.10 正在运行，或改用离线 compress）");
+            }
+            if (!result.ok) throw new Error(result.error || "桌面端压缩失败");
+            if (asJson) return console.log(JSON.stringify(result, null, 2));
+            console.log(\`已触发 QLEX 桌面端完成全量采集、同步与压缩：\`);
+            if (result.latestDaily) console.log(\`- 最新日档：\${result.latestDaily.key}（\${result.latestDaily.sub}）\`);
+            console.log(\`- 归档：每日 \${result.counts?.daily ?? 0} · 每周 \${result.counts?.weekly ?? 0} · 每月 \${result.counts?.monthly ?? 0}\`);
+            return;
+        }
+        const res = engine.compressSync({ settle: Boolean(flags.settle) });
         if (asJson) return console.log(JSON.stringify(res, null, 2));
         console.log(\`压缩与归档完成：\${res.archiveDir}\`);
         console.log(\`- 活跃记忆：\${res.cognitive.activeItems} · 图谱实体：\${res.cognitive.entities} · 边：\${res.cognitive.activeEdges}\`);

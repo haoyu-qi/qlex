@@ -1286,7 +1286,7 @@ else {
                         if (pairing.view().mode === "endpoint" && pairing.view().endpoint?.status === "connected") {
                             await pairing.syncMemory().catch(console.warn);
                         }
-                        await memoryArchive.compressNow();
+                        await memoryArchive.compressNow({ settle: true });
                         store.markDailySettled(todayKey);
                         broadcastState(undefined, { force: true });
                     } catch (err) {
@@ -1298,6 +1298,63 @@ else {
             };
             setTimeout(checkDailyMemorySettle, 15_000).unref();
             setInterval(checkDailyMemorySettle, 30_000).unref();
+            // Lightweight local file trigger for external scripts / agents (e.g. Hermes cron without screen recording or open HTTP ports)
+            let localTriggerRunning = false;
+            const checkLocalCompressTrigger = () => {
+                if (localTriggerRunning) return;
+                const cacheDir = (0, node_path_1.join)(store.snapshot().memoryArchiveDir, "cache");
+                const triggerFile = (0, node_path_1.join)(cacheDir, ".trigger-compress.json");
+                if (!(0, node_fs_1.existsSync)(triggerFile)) return;
+                let req = null;
+                try {
+                    req = JSON.parse((0, node_fs_1.readFileSync)(triggerFile, "utf8"));
+                    (0, node_fs_1.rmSync)(triggerFile, { force: true });
+                } catch {
+                    try { (0, node_fs_1.rmSync)(triggerFile, { force: true }); } catch { /* ignore */ }
+                    return;
+                }
+                if (!req || req.action !== "compressNow") return;
+                localTriggerRunning = true;
+                void (async () => {
+                    const resultFile = (0, node_path_1.join)(cacheDir, ".trigger-result.json");
+                    try {
+                        if (req.refreshUsage !== false) await usage.refresh().catch(console.warn);
+                        if (req.syncMemory !== false && pairing.view().mode === "endpoint" && pairing.view().endpoint?.status === "connected") {
+                            await pairing.syncMemory().catch(console.warn);
+                        }
+                        const idx = await memoryArchive.compressNow({ settle: Boolean(req.settle) });
+                        if (req.settle) {
+                            const now = new Date();
+                            const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+                            store.markDailySettled(todayKey);
+                        }
+                        broadcastState(undefined, { force: true });
+                        const todayItem = idx?.items?.daily?.[0] || null;
+                        (0, node_fs_1.mkdirSync)(cacheDir, { recursive: true });
+                        (0, node_fs_1.writeFileSync)(resultFile, JSON.stringify({
+                            id: req.id || "",
+                            ok: true,
+                            completedAt: Date.now(),
+                            counts: idx?.counts || {},
+                            ingestedItems: idx?.ingestedItems || 0,
+                            latestDaily: todayItem ? { key: todayItem.key, sub: todayItem.sub, mdPath: todayItem.mdPath } : null,
+                        }, null, 2));
+                    } catch (err) {
+                        try {
+                            (0, node_fs_1.mkdirSync)(cacheDir, { recursive: true });
+                            (0, node_fs_1.writeFileSync)(resultFile, JSON.stringify({
+                                id: req.id || "",
+                                ok: false,
+                                completedAt: Date.now(),
+                                error: err?.message || String(err),
+                            }, null, 2));
+                        } catch { /* ignore */ }
+                    } finally {
+                        localTriggerRunning = false;
+                    }
+                })();
+            };
+            setInterval(checkLocalCompressTrigger, 3_000).unref();
             // Auto check updates on startup (after 12s) and every 6 hours
             setTimeout(() => {
                 if (store.snapshot().autoCheckUpdates !== false) void updater.checkForUpdates().catch(console.warn);

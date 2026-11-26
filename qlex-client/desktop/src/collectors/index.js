@@ -127,11 +127,18 @@ function decompressZstdSync(buf) {
 }
 
 function createFileCache(cachePath) {
-    let data = { version: 1, files: {} };
+    let data = { version: 1, files: {}, sessionLedgers: {}, nativeSummary: null };
     if (cachePath) {
         try {
             const parsed = JSON.parse(fs.readFileSync(cachePath, "utf8"));
-            if (parsed && parsed.version === 1 && parsed.files) data = parsed;
+            if (parsed && parsed.version === 1 && parsed.files) {
+                data = {
+                    version: 1,
+                    files: parsed.files || {},
+                    sessionLedgers: parsed.sessionLedgers && typeof parsed.sessionLedgers === "object" ? parsed.sessionLedgers : {},
+                    nativeSummary: parsed.nativeSummary || null,
+                };
+            }
         } catch { /* fresh cache */ }
     }
     let dirty = false;
@@ -147,6 +154,20 @@ function createFileCache(cachePath) {
         dirty = true;
     }
 
+    function getLedger(key) {
+        return data.sessionLedgers[key] || null;
+    }
+
+    function setLedger(key, ledger) {
+        data.sessionLedgers[key] = ledger;
+        dirty = true;
+    }
+
+    function setNativeSummary(summary) {
+        data.nativeSummary = summary;
+        dirty = true;
+    }
+
     function flush() {
         if (!dirty || !cachePath) return;
         try {
@@ -155,13 +176,121 @@ function createFileCache(cachePath) {
             if (keys.length > 1500) {
                 for (const k of keys.slice(0, keys.length - 1200)) delete data.files[k];
             }
+            const ledgerKeys = Object.keys(data.sessionLedgers);
+            if (ledgerKeys.length > 2000) {
+                const sorted = ledgerKeys.sort((a, b) => (data.sessionLedgers[a]?.updatedAt || 0) - (data.sessionLedgers[b]?.updatedAt || 0));
+                for (const k of sorted.slice(0, ledgerKeys.length - 1600)) delete data.sessionLedgers[k];
+            }
             fs.mkdirSync(path.dirname(cachePath), { recursive: true });
             fs.writeFileSync(cachePath, JSON.stringify(data));
             dirty = false;
         } catch { /* non-fatal */ }
     }
 
-    return { get, set, flush };
+    return { get, set, getLedger, setLedger, setNativeSummary, flush };
+}
+
+/**
+ * Attribute cumulative session token counters (e.g. Hermes / WorkBuddy SQLite sessions)
+ * into stable per-day buckets so resuming a multi-day session NEVER steals tokens from past days.
+ *
+ * - First sight: if `initialDayWeights` spans multiple dates (from messages timestamps), split
+ *   proportionally across those dates with integer remainder on the latest date.
+ * - Subsequent sights: freeze all historical date buckets and attribute ONLY positive deltas
+ *   (`newTotal - prevTotal`) to `activeDate`.
+ */
+function allocateCumulativeSessionBuckets(cache, ledgerKey, totals, activeDate, initialDayWeights = null) {
+    const clean = {
+        input: num(totals?.input),
+        output: num(totals?.output),
+        cacheRead: num(totals?.cacheRead),
+        cacheWrite: num(totals?.cacheWrite),
+        tokens: num(totals?.tokens),
+    };
+    if (clean.tokens <= 0) {
+        const existing = cache?.getLedger?.(ledgerKey);
+        return existing?.buckets ? structuredClone(existing.buckets) : {};
+    }
+
+    const existing = cache?.getLedger?.(ledgerKey);
+    if (existing && existing.buckets && existing.lastTotals) {
+        const buckets = structuredClone(existing.buckets);
+        const prev = existing.lastTotals;
+        const dIn = Math.max(0, clean.input - num(prev.input));
+        const dOut = Math.max(0, clean.output - num(prev.output));
+        const dCr = Math.max(0, clean.cacheRead - num(prev.cacheRead));
+        const dCw = Math.max(0, clean.cacheWrite - num(prev.cacheWrite));
+        const dTok = Math.max(0, clean.tokens - num(prev.tokens));
+        if (dTok > 0 || dIn > 0 || dOut > 0 || dCr > 0 || dCw > 0) {
+            const b = buckets[activeDate] || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, tokens: 0 };
+            b.input += dIn;
+            b.output += dOut;
+            b.cacheRead += dCr;
+            b.cacheWrite += dCw;
+            b.tokens += dTok || (dIn + dOut + dCr + dCw);
+            buckets[activeDate] = b;
+            cache.setLedger(ledgerKey, {
+                lastTotals: {
+                    input: Math.max(num(prev.input), clean.input),
+                    output: Math.max(num(prev.output), clean.output),
+                    cacheRead: Math.max(num(prev.cacheRead), clean.cacheRead),
+                    cacheWrite: Math.max(num(prev.cacheWrite), clean.cacheWrite),
+                    tokens: Math.max(num(prev.tokens), clean.tokens),
+                },
+                buckets,
+                updatedAt: Date.now(),
+            });
+        }
+        return buckets;
+    }
+
+    // First-time attribution
+    const buckets = {};
+    const weightEntries = Array.isArray(initialDayWeights)
+        ? initialDayWeights.filter(w => w && /^\d{4}-\d{2}-\d{2}$/.test(w.date) && num(w.weight) > 0)
+            .sort((a, b) => a.date.localeCompare(b.date))
+        : [];
+    const totalWeight = weightEntries.reduce((s, w) => s + num(w.weight), 0);
+
+    if (weightEntries.length > 1 && totalWeight > 0) {
+        const rem = { ...clean };
+        for (let i = 0; i < weightEntries.length; i++) {
+            const { date, weight } = weightEntries[i];
+            const isLast = i === weightEntries.length - 1;
+            const share = isLast
+                ? { ...rem }
+                : {
+                    input: Math.min(rem.input, Math.round((clean.input * num(weight)) / totalWeight)),
+                    output: Math.min(rem.output, Math.round((clean.output * num(weight)) / totalWeight)),
+                    cacheRead: Math.min(rem.cacheRead, Math.round((clean.cacheRead * num(weight)) / totalWeight)),
+                    cacheWrite: Math.min(rem.cacheWrite, Math.round((clean.cacheWrite * num(weight)) / totalWeight)),
+                    tokens: 0,
+                };
+            if (!isLast) {
+                share.tokens = share.input + share.output + share.cacheRead + share.cacheWrite;
+                if (share.tokens === 0 && clean.tokens > 0) {
+                    share.tokens = Math.min(rem.tokens, Math.round((clean.tokens * num(weight)) / totalWeight));
+                }
+                rem.input = Math.max(0, rem.input - share.input);
+                rem.output = Math.max(0, rem.output - share.output);
+                rem.cacheRead = Math.max(0, rem.cacheRead - share.cacheRead);
+                rem.cacheWrite = Math.max(0, rem.cacheWrite - share.cacheWrite);
+                rem.tokens = Math.max(0, rem.tokens - share.tokens);
+            }
+            if (share.tokens > 0) buckets[date] = share;
+        }
+    } else {
+        buckets[activeDate] = { ...clean };
+    }
+
+    if (cache?.setLedger) {
+        cache.setLedger(ledgerKey, {
+            lastTotals: { ...clean },
+            buckets,
+            updatedAt: Date.now(),
+        });
+    }
+    return buckets;
 }
 
 /**
@@ -388,8 +517,10 @@ function parseAntigravityTranscript(fileInfo, cache) {
 
 /**
  * 4. Hermes Collector (~/.hermes/state.db & profiles/<p>/state.db via sqlite3 -readonly -json)
+ * Uses per-session incremental ledger + per-day messages timestamps so resumed multi-day
+ * sessions never retroactively steal tokens or topics from earlier days.
  */
-async function collectHermesSessions(home, env, sinceMs) {
+async function collectHermesSessions(home, env, sinceMs, cache = null) {
     const dbCandidates = [
         path.join(env.HERMES_HOME || path.join(home, ".hermes"), "state.db"),
     ];
@@ -409,24 +540,63 @@ async function collectHermesSessions(home, env, sinceMs) {
         try {
             const { stdout } = await execFileAsync("sqlite3", ["-readonly", "-json", dbPath, sql], { timeout: 8000, maxBuffer: 8 * 1024 * 1024 });
             const rows = JSON.parse(stdout || "[]");
+
+            // Load per-day message weights for multi-day sessions (used on first-time ledger backfill)
+            const msgWeightsBySession = new Map();
+            try {
+                const msgSql = `SELECT session_id, date(timestamp, 'unixepoch', 'localtime') AS d, COUNT(*) AS cnt, SUM(CASE WHEN role = 'assistant' THEN 1 ELSE 0 END) AS asst_cnt, SUM(COALESCE(token_count, 0)) AS tok_sum FROM messages WHERE timestamp >= ${sinceSec} GROUP BY session_id, d;`;
+                const { stdout: msgOut } = await execFileAsync("sqlite3", ["-readonly", "-json", dbPath, msgSql], { timeout: 8000, maxBuffer: 8 * 1024 * 1024 });
+                for (const m of JSON.parse(msgOut || "[]")) {
+                    if (!m.session_id || !m.d) continue;
+                    const sid = String(m.session_id);
+                    if (!msgWeightsBySession.has(sid)) msgWeightsBySession.set(sid, []);
+                    const weight = num(m.tok_sum) > 0 ? num(m.tok_sum) : (num(m.asst_cnt) > 0 ? num(m.asst_cnt) : num(m.cnt));
+                    if (weight > 0) msgWeightsBySession.get(sid).push({ date: String(m.d), weight });
+                }
+            } catch { /* older schema without messages table is fine */ }
+
             for (const r of rows) {
-                const tsSec = num(r.last_activity_at || r.ended_at || r.started_at);
-                const ts = tsSec > 1e12 ? tsSec : tsSec * 1000;
-                if (!ts) continue;
-                const date = localDateKey(ts);
+                const activeSec = num(r.last_activity_at || r.ended_at || r.started_at);
+                const activeTs = activeSec > 1e12 ? activeSec : activeSec * 1000;
+                const startSec = num(r.started_at || activeSec);
+                const startTs = startSec > 1e12 ? startSec : startSec * 1000;
+                if (!activeTs) continue;
+                const activeDate = localDateKey(activeTs);
+                const startDate = startTs ? localDateKey(startTs) : activeDate;
                 const input = num(r.input_tokens);
                 const output = num(r.output_tokens);
                 const cacheRead = num(r.cache_read_tokens);
                 const cacheWrite = num(r.cache_write_tokens);
                 const tokens = input + output + cacheRead + cacheWrite;
                 const workspace = typeof r.cwd === "string" && path.isAbsolute(r.cwd) ? path.normalize(r.cwd) : "";
-                const topics = r.title ? [{ date, ts, source: "hermes", project: workspace ? path.basename(workspace) : "", text: sanitizeTopic(r.title, 180) }] : [];
+                const sid = String(r.id);
+                const ledgerKey = `hermes:${dbPath}:${sid}`;
+                const dailyBuckets = allocateCumulativeSessionBuckets(
+                    cache,
+                    ledgerKey,
+                    { input, output, cacheRead, cacheWrite, tokens },
+                    activeDate,
+                    msgWeightsBySession.get(sid) || null
+                );
+
+                // Anchor topic to creation date so resuming the session on a later day never erases yesterday's topic
+                const topics = [];
+                if (r.title) {
+                    const cleanTitle = sanitizeTopic(r.title, 180);
+                    if (cleanTitle) {
+                        const proj = workspace ? path.basename(workspace) : "";
+                        topics.push({ date: startDate, ts: startTs || activeTs, source: "hermes", project: proj, text: cleanTitle });
+                        if (activeDate !== startDate) {
+                            topics.push({ date: activeDate, ts: activeTs, source: "hermes", project: proj, text: cleanTitle });
+                        }
+                    }
+                }
                 sessions.push({
                     source: "hermes",
-                    sessionId: String(r.id),
+                    sessionId: sid,
                     workspace,
-                    lastActive: ts,
-                    dailyBuckets: tokens > 0 ? { [date]: { input, output, cacheRead, cacheWrite, tokens } } : {},
+                    lastActive: activeTs,
+                    dailyBuckets,
                     topics,
                 });
             }
@@ -498,7 +668,7 @@ function parseDshFile(fileInfo, cache) {
 /**
  * 6. WorkBuddy Collector (~/.workbuddy-ai/workbuddy.db + ~/.workbuddy)
  */
-async function collectWorkBuddySessions(home, env, customPath, sinceMs) {
+async function collectWorkBuddySessions(home, env, customPath, sinceMs, cache = null) {
     const dbCandidates = [
         customPath && (customPath.endsWith(".db") ? customPath : path.join(customPath, "workbuddy.db")),
         env.WORKBUDDY_HOME && path.join(env.WORKBUDDY_HOME, "workbuddy.db"),
@@ -508,7 +678,7 @@ async function collectWorkBuddySessions(home, env, customPath, sinceMs) {
     const sessions = [];
 
     for (const dbPath of dbCandidates) {
-        const sql = `SELECT s.id, s.cwd, COALESCE(NULLIF(s.custom_title,''), s.title) AS title, COALESCE(s.last_activity_at, s.updated_at, s.created_at) AS ts, COALESCE(u.used, 0) AS used_tokens FROM sessions s LEFT JOIN session_usage u ON u.session_id = s.id WHERE s.deleted_at IS NULL ORDER BY ts DESC LIMIT 500;`;
+        const sql = `SELECT s.id, s.cwd, COALESCE(NULLIF(s.custom_title,''), s.title) AS title, s.created_at, COALESCE(s.last_activity_at, s.updated_at, s.created_at) AS ts, COALESCE(u.used, 0) AS used_tokens FROM sessions s LEFT JOIN session_usage u ON u.session_id = s.id WHERE s.deleted_at IS NULL ORDER BY ts DESC LIMIT 500;`;
         try {
             const { stdout } = await execFileAsync("sqlite3", ["-readonly", "-json", dbPath, sql], { timeout: 8000, maxBuffer: 8 * 1024 * 1024 });
             const rows = JSON.parse(stdout || "[]");
@@ -516,16 +686,36 @@ async function collectWorkBuddySessions(home, env, customPath, sinceMs) {
                 const rawTs = num(r.ts);
                 const ts = rawTs > 1e12 ? rawTs : rawTs * 1000;
                 if (!ts || ts < sinceMs) continue;
-                const date = localDateKey(ts);
+                const rawStart = num(r.created_at || r.ts);
+                const startTs = rawStart > 1e12 ? rawStart : rawStart * 1000;
+                const activeDate = localDateKey(ts);
+                const startDate = startTs ? localDateKey(startTs) : activeDate;
                 const tokens = num(r.used_tokens);
                 const workspace = typeof r.cwd === "string" && path.isAbsolute(r.cwd) ? path.normalize(r.cwd) : "";
-                const topics = r.title ? [{ date, ts, source: "workbuddy", project: workspace ? path.basename(workspace) : "", text: sanitizeTopic(r.title, 180) }] : [];
+                const sid = String(r.id);
+                const dailyBuckets = allocateCumulativeSessionBuckets(
+                    cache,
+                    `workbuddy:${dbPath}:${sid}`,
+                    { input: tokens, output: 0, cacheRead: 0, cacheWrite: 0, tokens },
+                    activeDate
+                );
+                const topics = [];
+                if (r.title) {
+                    const clean = sanitizeTopic(r.title, 180);
+                    if (clean) {
+                        const proj = workspace ? path.basename(workspace) : "";
+                        topics.push({ date: startDate, ts: startTs || ts, source: "workbuddy", project: proj, text: clean });
+                        if (activeDate !== startDate) {
+                            topics.push({ date: activeDate, ts, source: "workbuddy", project: proj, text: clean });
+                        }
+                    }
+                }
                 sessions.push({
                     source: "workbuddy",
-                    sessionId: String(r.id),
+                    sessionId: sid,
                     workspace,
                     lastActive: ts,
-                    dailyBuckets: tokens > 0 ? { [date]: { input: tokens, output: 0, cacheRead: 0, cacheWrite: 0, tokens } } : {},
+                    dailyBuckets,
                     topics,
                 });
             }
@@ -628,10 +818,19 @@ async function collectT3CodeSessions(home, env, customPath, sinceMs) {
         for (const r of rows) {
             const ts = Date.parse(r.updated_at || r.created_at || "") || 0;
             if (!ts || ts < sinceMs) continue;
-            const date = localDateKey(ts);
+            const startTs = Date.parse(r.created_at || "") || ts;
+            const activeDate = localDateKey(ts);
+            const startDate = localDateKey(startTs);
             const workspace = typeof r.cwd === "string" && path.isAbsolute(r.cwd) ? path.normalize(r.cwd) : "";
             const title = sanitizeTopic(r.title || "", 180);
-            const topics = title && title !== "New thread" ? [{ date, ts, source: "t3code", project: workspace ? path.basename(workspace) : "", text: title }] : [];
+            const topics = [];
+            if (title && title !== "New thread") {
+                const proj = workspace ? path.basename(workspace) : "";
+                topics.push({ date: startDate, ts: startTs, source: "t3code", project: proj, text: title });
+                if (activeDate !== startDate) {
+                    topics.push({ date: activeDate, ts, source: "t3code", project: proj, text: title });
+                }
+            }
             sessions.push({
                 source: "t3code",
                 sessionId: String(r.id),
@@ -773,7 +972,7 @@ async function collectAllNative({ home = homedir(), env = process.env, cachePath
     };
 
     // 4. Hermes
-    const hermesRes = await collectHermesSessions(home, env, minMtimeMs);
+    const hermesRes = await collectHermesSessions(home, env, minMtimeMs, cache);
     allSessions.push(...hermesRes.sessions);
     diagnostics.hermes = {
         source: "hermes", label: SOURCE_LABELS.hermes,
@@ -807,7 +1006,7 @@ async function collectAllNative({ home = homedir(), env = process.env, cachePath
     };
 
     // 6. WorkBuddy
-    const wbRes = await collectWorkBuddySessions(home, env, customPaths.workbuddy, minMtimeMs);
+    const wbRes = await collectWorkBuddySessions(home, env, customPaths.workbuddy, minMtimeMs, cache);
     allSessions.push(...wbRes.sessions);
     diagnostics.workbuddy = {
         source: "workbuddy", label: SOURCE_LABELS.workbuddy,
@@ -853,18 +1052,32 @@ async function collectAllNative({ home = homedir(), env = process.env, cachePath
         status: t3Res.sessions.length ? "ok" : (t3Res.paths.length ? "empty" : "missing"),
     };
 
-    cache.flush();
-
     const todayKey = localDateKey(now);
     const weekStart = localDateKey(now - 6 * 86400_000);
     const topicsByDate = new Map();
+    const allDailyTokens = {};
     for (const sess of allSessions) {
+        for (const [d, b] of Object.entries(sess.dailyBuckets || {})) {
+            if (b?.tokens > 0) allDailyTokens[d] = (allDailyTokens[d] || 0) + b.tokens;
+        }
         for (const t of sess.topics || []) {
             if (!topicsByDate.has(t.date)) topicsByDate.set(t.date, []);
             const list = topicsByDate.get(t.date);
             if (list.length < 30 && !list.some(x => x.text === t.text)) list.push(t);
         }
     }
+
+    // Persist compact unified 8-tool summary (including Hermes/WorkBuddy/T3 Code) for standalone CLI fallback
+    const recentTopicObj = {};
+    for (const d of [...topicsByDate.keys()].sort().slice(-30)) {
+        recentTopicObj[d] = topicsByDate.get(d).slice(0, 25);
+    }
+    cache.setNativeSummary({
+        updatedAt: now,
+        dailyTokens: allDailyTokens,
+        topicsByDate: recentTopicObj,
+    });
+    cache.flush();
 
     return {
         sessions: allSessions,
@@ -882,6 +1095,8 @@ module.exports = {
     SOURCE_LABELS,
     collectAllNative,
     buildWindowReport,
+    createFileCache,
+    allocateCumulativeSessionBuckets,
     extractRealUserText,
     localDateKey,
 };

@@ -597,6 +597,7 @@ function renderDailyMarkdown(record) {
         `- **总计 Token**：${fmtNum(record.totalTokens)}`,
         `- **会话次数**：${fmtNum(record.totalSessions)}`,
         `- **更新时间**：${fmtIsoShort(record.updatedAt)}`,
+        ...(record.settledAt ? [`- **日结状态**：已日结固定于 ${fmtIsoShort(record.settledAt)}`] : []),
         "",
     ];
 
@@ -2214,7 +2215,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
     /**
      * Full Incremental Compression + Ingestion + Cognitive Extraction + Reflection + Daily/Weekly/Monthly Rollups
      */
-    function compressSync() {
+    function compressSync(opts = {}) {
         const p = pathsOf();
         ensureDirs(p);
 
@@ -2224,6 +2225,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         cache.ingestedHashes ||= {};
 
         const { byDate: topicsByDate, hits, misses, resources } = extractHistoryTopicsByDate(home, cache);
+        const fallbackDailyTokens = new Map();
         // Merge unified multi-agent topics from native collectors (desktop callback or CLI fallback reading desktop collector-cache.json)
         if (typeof getTopicsByDate === "function") {
             const extraTopics = getTopicsByDate();
@@ -2238,7 +2240,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                 }
             }
         } else {
-            // CLI fallback: read QLEX desktop's collector-cache.json if present so CLI `compress` also sees 8-tool topics!
+            // CLI fallback: read QLEX desktop's collector-cache.json (including nativeSummary for Hermes/WorkBuddy/T3 Code!)
             const cacheCandidates = [
                 path.join(home, "Library", "Application Support", "QLEX", "collector-cache.json"),
                 path.join(home, "AppData", "Roaming", "QLEX", "collector-cache.json"),
@@ -2246,24 +2248,62 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             ];
             for (const cFile of cacheCandidates) {
                 const colCache = readJsonSafe(cFile, null);
-                if (!colCache || !colCache.files || typeof colCache.files !== "object") continue;
-                for (const rec of Object.values(colCache.files)) {
-                    const val = rec?.value;
-                    if (!val || !Array.isArray(val.topics)) continue;
-                    const proj = val.workspace ? path.basename(val.workspace) : "";
-                    for (const t of val.topics) {
-                        const date = t?.date || (t?.ts ? localDateKey(t.ts) : "");
-                        const text = sanitizeSnippet(t?.text || "", 220);
-                        if (!date || text.length < 4) continue;
-                        let list = topicsByDate.get(date);
-                        if (!list) { list = []; topicsByDate.set(date, list); }
-                        if (list.length >= 30) continue;
-                        if (!list.some(x => x.text === text)) {
-                            list.push({ date, ts: t.ts || val.lastActive || Date.now(), source: val.source || "agent", project: proj, text });
+                if (!colCache || typeof colCache !== "object") continue;
+                let foundAny = false;
+                if (colCache.nativeSummary && typeof colCache.nativeSummary === "object") {
+                    const ns = colCache.nativeSummary;
+                    if (ns.dailyTokens && typeof ns.dailyTokens === "object") {
+                        for (const [date, tok] of Object.entries(ns.dailyTokens)) {
+                            if (/^\d{4}-\d{2}-\d{2}$/.test(date) && Number(tok) > 0) {
+                                fallbackDailyTokens.set(date, Math.max(fallbackDailyTokens.get(date) || 0, Number(tok)));
+                                foundAny = true;
+                            }
+                        }
+                    }
+                    if (ns.topicsByDate && typeof ns.topicsByDate === "object") {
+                        for (const [date, entries] of Object.entries(ns.topicsByDate)) {
+                            if (!Array.isArray(entries)) continue;
+                            let list = topicsByDate.get(date);
+                            if (!list) { list = []; topicsByDate.set(date, list); }
+                            for (const t of entries) {
+                                const text = sanitizeSnippet(t?.text || "", 220);
+                                if (text.length < 4 || list.length >= 30) continue;
+                                if (!list.some(x => x.text === text)) {
+                                    list.push({ date, ts: t.ts || Date.now(), source: t.source || "agent", project: t.project || "", text });
+                                    foundAny = true;
+                                }
+                            }
                         }
                     }
                 }
-                break;
+                if (colCache.files && typeof colCache.files === "object") {
+                    for (const rec of Object.values(colCache.files)) {
+                        const val = rec?.value;
+                        if (!val) continue;
+                        if (val.dailyBuckets && typeof val.dailyBuckets === "object" && !colCache.nativeSummary) {
+                            for (const [date, b] of Object.entries(val.dailyBuckets)) {
+                                if (/^\d{4}-\d{2}-\d{2}$/.test(date) && Number(b?.tokens) > 0) {
+                                    fallbackDailyTokens.set(date, (fallbackDailyTokens.get(date) || 0) + Number(b.tokens));
+                                }
+                            }
+                        }
+                        if (!Array.isArray(val.topics)) continue;
+                        const proj = val.workspace ? path.basename(val.workspace) : "";
+                        for (const t of val.topics) {
+                            const date = t?.date || (t?.ts ? localDateKey(t.ts) : "");
+                            const text = sanitizeSnippet(t?.text || "", 220);
+                            if (!date || text.length < 4) continue;
+                            let list = topicsByDate.get(date);
+                            if (!list) { list = []; topicsByDate.set(date, list); }
+                            if (list.length >= 30) continue;
+                            if (!list.some(x => x.text === text)) {
+                                list.push({ date, ts: t.ts || val.lastActive || Date.now(), source: val.source || "agent", project: proj, text });
+                                foundAny = true;
+                            }
+                        }
+                    }
+                }
+                if (foundAny || colCache.files) break;
             }
         }
         const usageSnap = typeof getUsageSnapshot === "function" ? (getUsageSnapshot() || {}) : {};
@@ -2321,21 +2361,23 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             }
         }
 
-        // Merge known dates from daily usage, history topics, and previously cached daily records
+        // Merge known dates from daily usage, history topics, fallback collector cache, and previously cached daily records
         const allDates = new Set(Object.keys(cache.dailyRecords));
         allDates.add(todayKey);
         for (const date of topicsByDate.keys()) allDates.add(date);
+        for (const date of fallbackDailyTokens.keys()) allDates.add(date);
         for (const row of usageSnap.week?.daily || []) if (row.date) allDates.add(row.date);
         for (const report of Object.values(usageSnap.history || {})) {
             for (const row of report?.daily || []) if (row.date) allDates.add(row.date);
         }
 
         const dailyUsageTokens = new Map();
+        for (const [date, tok] of fallbackDailyTokens.entries()) dailyUsageTokens.set(date, tok);
         for (const report of Object.values(usageSnap.history || {})) {
-            for (const row of report?.daily || []) dailyUsageTokens.set(row.date, row.tokens || 0);
+            for (const row of report?.daily || []) dailyUsageTokens.set(row.date, Math.max(dailyUsageTokens.get(row.date) || 0, row.tokens || 0));
         }
-        for (const row of usageSnap.week?.daily || []) dailyUsageTokens.set(row.date, row.tokens || 0);
-        if (usageSnap.today?.total != null) dailyUsageTokens.set(todayKey, usageSnap.today.total);
+        for (const row of usageSnap.week?.daily || []) dailyUsageTokens.set(row.date, Math.max(dailyUsageTokens.get(row.date) || 0, row.tokens || 0));
+        if (usageSnap.today?.total != null) dailyUsageTokens.set(todayKey, Math.max(dailyUsageTokens.get(todayKey) || 0, usageSnap.today.total));
 
         const writeCompressedArchive = (baseDir, relDir, stem, payloadObj, markdownText) => {
             const rawBuf = Buffer.from(JSON.stringify(payloadObj), "utf8");
@@ -2357,29 +2399,58 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
             const existing = cache.dailyRecords[date];
             const isToday = date === todayKey;
-            const topics = topicsByDate.get(date) || existing?.topics || [];
-            const tokens = dailyUsageTokens.get(date) ?? existing?.totalTokens ?? 0;
+            const isPast = date < todayKey;
+            // Union-merge topics so previously captured topics for a day are NEVER dropped on recomputation
+            const mergedTopics = [];
+            const seenTopicTexts = new Set();
+            for (const t of [...(existing?.topics || []), ...(topicsByDate.get(date) || [])]) {
+                if (!t?.text) continue;
+                if (seenTopicTexts.has(t.text)) continue;
+                seenTopicTexts.add(t.text);
+                mergedTopics.push(t);
+                if (mergedTopics.length >= 25) break;
+            }
+            const topics = mergedTopics;
+
+            // Protect historical daily archives from retroactive token drops (non-regressing monotonic merge unless forceRebuild)
+            const incomingTokens = dailyUsageTokens.has(date) ? dailyUsageTokens.get(date) : null;
+            const prevTokens = Number(existing?.totalTokens) || 0;
+            let tokens;
+            if (opts.forceRebuild) {
+                tokens = incomingTokens ?? prevTokens;
+            } else if (isPast) {
+                tokens = Math.max(prevTokens, incomingTokens ?? 0);
+            } else {
+                tokens = incomingTokens != null ? Math.max(prevTokens, incomingTokens) : prevTokens;
+            }
 
             let tools = existing?.tools || [];
             let projects = existing?.projects || [];
             let totalSessions = existing?.totalSessions || 0;
 
             if (isToday && usageSnap.today) {
-                tools = Object.entries(usageSnap.today.totals || {})
+                const liveTools = Object.entries(usageSnap.today.totals || {})
                     .filter(([, v]) => v.tokens > 0 || v.sessions > 0)
                     .map(([source, v]) => ({ source, tokens: v.tokens, sessions: v.sessions }))
                     .sort((a, b) => b.tokens - a.tokens);
-                projects = (usageSnap.today.projects || []).slice(0, 20).map(pr => ({
+                if (liveTools.length) tools = liveTools;
+                const liveProjects = (usageSnap.today.projects || []).slice(0, 20).map(pr => ({
                     name: pr.name,
                     directory: pr.directory,
                     tokens: pr.tokens,
                 }));
-                totalSessions = Object.values(usageSnap.today.totals || {}).reduce((s, x) => s + (x.sessions || 0), 0);
+                if (liveProjects.length) projects = liveProjects;
+                const liveSessions = Object.values(usageSnap.today.totals || {}).reduce((s, x) => s + (x.sessions || 0), 0);
+                totalSessions = Math.max(totalSessions, liveSessions);
             } else if (!projects.length && isToday) {
                 projects = managedProjects.slice(0, 10).map(pr => ({ name: pr.name, directory: pr.directory, tokens: 0 }));
             }
 
             if (!isToday && tokens === 0 && !topics.length && !projects.length) continue;
+
+            const settledAt = (isToday && opts.settle)
+                ? Date.now()
+                : (existing?.settledAt || (isPast && existing?.updatedAt ? existing.updatedAt : 0));
 
             const record = {
                 date,
@@ -2391,6 +2462,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                 projects,
                 topics: topics.slice(0, 25),
                 updatedAt: Date.now(),
+                ...(settledAt ? { settledAt } : {}),
             };
             cache.dailyRecords[date] = record;
             dailyRecords.set(date, record);

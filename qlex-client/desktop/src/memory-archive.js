@@ -70,11 +70,11 @@ function createMemoryArchiver({ getArchiveDir, getProjects, getUsageSnapshot, ge
         }
     }
 
-    async function compressNow() {
+    async function compressNow(opts = {}) {
         if (running) return running;
         running = (async () => {
             state = { ...state, phase: "compressing", archiveDir: getArchiveDir(), error: null };
-            const nextIndex = engine.compressSync();
+            const nextIndex = engine.compressSync(opts);
             state = {
                 ...nextIndex,
                 phase: "ready",
