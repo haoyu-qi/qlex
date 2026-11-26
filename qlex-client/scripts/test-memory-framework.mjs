@@ -392,6 +392,104 @@ try {
     const nov23Cli = cliComp.items.daily.find(d => d.key === "2026-11-23");
     assert.ok(nov23Cli && nov23Cli.sub.includes("1,234,567") && nov23Cli.sub.includes("1 要点"), "CLI compress fallback must ingest Hermes nativeSummary tokens and topics");
 
+    // ---- 9. Regression: Antigravity top-level tokens, workspace resolution, per-day topics & noise quality gate ----
+    const { parseAntigravityTranscript, isNoiseTopicText } = require(path.join(root, "desktop/src/collectors/index.js"));
+    const { isNoiseMemoryText, isReusableMemoryCandidate, classifyBank } = require(path.join(root, "desktop/src/memory-core.js"));
+
+    // Create a synthetic multi-day Antigravity transcript with 18 old prompts + 1 today prompt + top-level token fields
+    const agDir = path.join(tmpHome, "brain", "ag-test-uuid-0001", ".system_generated", "logs");
+    fs.mkdirSync(agDir, { recursive: true });
+    const agFile = path.join(agDir, "transcript.jsonl");
+    const agLines = [];
+    for (let i = 0; i < 18; i++) {
+        agLines.push(JSON.stringify({
+            type: "USER_INPUT",
+            created_at: "2026-11-25T10:00:00Z",
+            content: `<user_request>第 ${i + 1} 轮历史架构设计讨论：决定采用原生毛玻璃与双时态图谱</user_request>\n- Your working directory: /tmp/workcontext`,
+        }));
+    }
+    agLines.push(JSON.stringify({
+        type: "USER_INPUT",
+        created_at: "2026-11-26T12:00:00Z",
+        content: "<user_request>今天重新设计跨级跨域会议号逻辑，由顶级平台管理 4 位区号字典</user_request>",
+    }));
+    agLines.push(JSON.stringify({
+        type: "PLANNER_RESPONSE",
+        created_at: "2026-11-26T12:01:00Z",
+        input_tokens: 350000,
+        output_tokens: 12000,
+        cache_read_tokens: 10200000,
+        content: "已完成跨级跨域会议号设计",
+    }));
+    fs.writeFileSync(agFile, agLines.join("\n") + "\n");
+    const agStat = fs.statSync(agFile);
+    const agParsed = parseAntigravityTranscript({ path: agFile, mtimeMs: agStat.mtimeMs, size: agStat.size }, ledgerCache);
+    assert.equal(agParsed.workspace, "/tmp/workcontext", "Must parse 'Your working directory:' workspace");
+    assert.equal(agParsed.dailyBuckets["2026-11-26"].input, 350000);
+    assert.equal(agParsed.dailyBuckets["2026-11-26"].output, 12000);
+    assert.equal(agParsed.dailyBuckets["2026-11-26"].cacheRead, 10200000);
+    assert.equal(agParsed.dailyBuckets["2026-11-26"].tokens, 10562000, "Must sum top-level Antigravity token fields accurately");
+    assert.ok(agParsed.topics.some(t => t.date === "2026-11-26" && t.text.includes("跨级跨域会议号")), "Multi-day Antigravity session must preserve today's topics even after 18 prior prompts");
+
+    // Noise filter & bank classification fixes
+    assert.equal(isNoiseTopicText("个人日报 · Nov 15 18:35"), true);
+    assert.equal(isNoiseTopicText("邮件简报-傍晚 · Nov 25 17:31"), true);
+    assert.equal(isNoiseTopicText("Describe contents of attached image"), true);
+    assert.equal(isNoiseTopicText("Implement the plan."), true);
+    assert.equal(isNoiseTopicText("<system-reminder> Attribution for git commits"), true);
+    assert.equal(isNoiseMemoryText("https://github.com/haoyu-qi/qlex"), true);
+    assert.equal(isReusableMemoryCandidate("将项目 274 的任务合并到 460"), false, "One-off operational command must not auto-ingest as long-term memory");
+    assert.equal(isReusableMemoryCandidate("不是 分两块 新增功能 问题修复，对外发布口径统一按这两类拆分"), true);
+    assert.equal(classifyBank("不是 分两块 新增功能 问题修复"), "opinion", "Classification/preference correction must map to opinion, not experience");
+
+    // autoForget noise hygiene sweep on legacy polluted auto-ingested items
+    const hygieneHome = path.join(tmpHome, "hygiene-home");
+    const hygieneEngine = createCognitiveMemoryEngine({
+        home: hygieneHome,
+        getArchiveDir: () => path.join(hygieneHome, "QLEX-Memory"),
+    });
+    hygieneEngine.retain({ title: "个人日报 · Nov 18 18:56", content: "个人日报 · Nov 18 18:56", source: "hermes", originChannel: "import", tags: ["hermes", "2026-11-18"] });
+    hygieneEngine.retain({ title: "Implement the plan.", content: "Implement the plan.", source: "codex", originChannel: "import", tags: ["codex", "2026-11-20"] });
+    hygieneEngine.retain({ title: "不是 分两块 新增功能 问题修复", content: "不是 分两块 新增功能 问题修复，统一按两类整理", bank: "experience", source: "antigravity", originChannel: "import", tags: ["antigravity", "2026-11-22"] });
+    const hygieneRes = hygieneEngine.autoForget({ dryRun: false });
+    assert.equal(hygieneRes.noiseEvicted.length, 2, "autoForget must evict legacy auto-ingested cron & fragment noise");
+    assert.equal(hygieneRes.reclassified.length, 1, "autoForget must reclassify misrouted preference item from experience to opinion");
+    const afterDiag = hygieneEngine.diagnose();
+    assert.equal(afterDiag.noiseCount, 0);
+
+    // ---- 10. Regression: DSH multi-frame ZSTD + camelCase usage & Codex response_item user messages ----
+    const zlib = require("node:zlib");
+    const { parseDshFile, parseCodexFile } = require(path.join(root, "desktop/src/collectors/index.js"));
+    if (typeof zlib.zstdCompressSync === "function") {
+        const dshDir = path.join(tmpHome, "dsh-test", "sess-1");
+        fs.mkdirSync(dshDir, { recursive: true });
+        const dshFile = path.join(dshDir, "session.v4.jsonl.zstd");
+        const frame1 = zlib.zstdCompressSync(Buffer.from(JSON.stringify({ type: "session", version: 4, cwd: "/tmp/dsh-proj", createdAt: Date.parse("2026-11-26T04:00:00Z") }) + "\n"));
+        const frame2 = zlib.zstdCompressSync(Buffer.from([
+            JSON.stringify({ type: "user/message", time: Date.parse("2026-11-26T04:01:00Z"), data: { content: [{ type: "text", text: "决定采用多帧 ZSTD 解压修复 DSH Token 采集" }] } }),
+            JSON.stringify({ type: "assistant/message", time: Date.parse("2026-11-26T04:01:05Z"), data: { usage: { inputTokens: 12000, outputTokens: 350, totalTokens: 12350 } } }),
+        ].join("\n") + "\n"));
+        fs.writeFileSync(dshFile, Buffer.concat([frame1, frame2]));
+        const dshStat = fs.statSync(dshFile);
+        const dshParsed = parseDshFile({ path: dshFile, mtimeMs: dshStat.mtimeMs, size: dshStat.size }, ledgerCache);
+        assert.equal(dshParsed.workspace, "/tmp/dsh-proj");
+        assert.equal(dshParsed.dailyBuckets["2026-11-26"].tokens, 12350, "DSH multi-frame ZSTD must parse all frames and camelCase usage");
+        assert.ok(dshParsed.topics.some(t => t.text.includes("多帧 ZSTD")));
+    }
+
+    const codexFile = path.join(tmpHome, "rollout-2026-11-26.jsonl");
+    fs.writeFileSync(codexFile, [
+        JSON.stringify({ timestamp: "2026-11-26T02:00:00Z", type: "session_meta", payload: { id: "c1", cwd: "/tmp/codex-proj" } }),
+        JSON.stringify({ timestamp: "2026-11-26T02:01:00Z", type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "# AGENTS.md instructions\nignored" }] } }),
+        JSON.stringify({ timestamp: "2026-11-26T02:02:00Z", type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "关于灾备方案探讨：放弃主备中心服务共用同一数据库" }] } }),
+        JSON.stringify({ timestamp: "2026-11-26T02:03:00Z", type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 5000, cached_input_tokens: 4000, output_tokens: 200 } } } }),
+    ].join("\n") + "\n");
+    const codexStat = fs.statSync(codexFile);
+    const codexParsed = parseCodexFile({ path: codexFile, mtimeMs: codexStat.mtimeMs, size: codexStat.size }, ledgerCache);
+    assert.equal(codexParsed.dailyBuckets["2026-11-26"].tokens, 5200);
+    assert.ok(codexParsed.topics.some(t => t.text.includes("灾备方案探讨")), "Codex collector must extract response_item user messages");
+    assert.ok(!codexParsed.topics.some(t => t.text.includes("AGENTS.md")), "Codex collector must ignore AGENTS.md wrapper");
+
     console.log("ALL QLEX v3.0 COGNITIVE MEMORY & AGENT SKILL TESTS PASSED!", JSON.stringify({
         engineVersion: diag.engineVersion,
         activeItems: diag.cognitive.activeItems,

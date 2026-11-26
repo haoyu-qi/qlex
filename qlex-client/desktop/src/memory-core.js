@@ -276,6 +276,40 @@ function jaccardSimilarity(tokensA, tokensB) {
     return union > 0 ? inter / union : 0;
 }
 
+const NOISE_CRON_TITLE_RE = /^(?:每日工作日报|个人日报|个人周报|工作日报|邮件简报|周报汇总|月报汇总|定时任务|scheduled\s+task|daily\s+digest|daily\s+standup|morning\s+brief|evening\s+brief)/i;
+const NOISE_DATE_BADGE_RE = /(?:（\d{2}:\d{2}）|\(\d{2}:\d{2}\))?\s*[·•]\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}(?:\s+\d{2}:\d{2})?$/i;
+const NOISE_SYSTEM_RE = /^(?:<system-reminder>|<copilot-context>|group\s+chat\s+system:|context\s+handoff|provider\s+context\s+handoff|describe\s+contents\s+of\s+attached\s+image|attached\s+image|\[historical\s+|\[image:|#\s*agents\.md\s+instructions)/i;
+const NOISE_TRIVIAL_CMD_RE = /^(?:implement\s+the\s+plan\.?|continue\.?|ok\.?|yes\.?|done\.?|继续|好的|收到|确认|修复|打包推送|打包|推送|授权好了|核对下|核对一下|看看|试一下|重新生成|开始吧|可以|可以的|没问题|用飞书\s*cli\s*获取内容|梳理下项目[，,。]?\s*(?:并给出优化建议)?)$/i;
+const NOISE_SOCIAL_SHARE_RE = /复制打开抖音|长按复制此条消息|打开小红书|打开哔哩哔哩/i;
+const REUSABLE_KNOWLEDGE_RE = /(?:决定|决策|原则|规范|口径|偏好|习惯|风格|默认|不要|禁止|必须|应该|改为|改用|切换|采用|选用|方案|架构|设计|重构|根因|原因|教训|踩坑|修复.*(?:失败|异常|问题|bug|回退|漂移|校验)|解决|结论|约定|分[两三四\d]块|不是.{0,12}(?:而是|分)|统一用|保留|限制|要求|算力|内存|带宽|规则|机制|逻辑|模型|引擎|decided|decision|prefer|always|never|avoid|root\s+cause|architecture|convention|lesson|workaround|design|policy|rule|spec)/i;
+const TRANSIENT_REQUEST_RE = /^(?:帮我|给我|请帮我|查看下|看下|查一下|核对下|把.{1,16}(?:合并|归到|删掉|提交到)|将项目\s*\d+|输入\s+\w+.*为何|用\s*[\w-]+\s*(?:cli|寻找|获取))/i;
+
+function isNoiseMemoryText(text) {
+    const s = String(text || "").trim();
+    if (!s || s.length < 8) return true;
+    if (NOISE_CRON_TITLE_RE.test(s) || NOISE_DATE_BADGE_RE.test(s)) return true;
+    if (NOISE_SYSTEM_RE.test(s) || NOISE_SOCIAL_SHARE_RE.test(s)) return true;
+    if (NOISE_TRIVIAL_CMD_RE.test(s)) return true;
+    const withoutUrls = s.replace(/https?:\/\/\S+/gi, "").replace(/(?:^|\s)\/[\w.\-\/\u4e00-\u9fff]+/g, "").replace(/[^\p{L}\p{N}]+/gu, "");
+    if (withoutUrls.length < 8) return true;
+    return false;
+}
+
+/**
+ * Signal quality gate for automatic log-to-memory ingestion.
+ * Prevents raw chat fragments, cron titles, system wrappers, and one-off lookup commands
+ * from polluting long-term atomic memory while allowing substantive decisions/preferences/lessons.
+ */
+function isReusableMemoryCandidate(text) {
+    const s = String(text || "").trim();
+    if (isNoiseMemoryText(s)) return false;
+    if (s.length < 18) return false;
+    if (TRANSIENT_REQUEST_RE.test(s) && !REUSABLE_KNOWLEDGE_RE.test(s)) return false;
+    if (REUSABLE_KNOWLEDGE_RE.test(s)) return true;
+    // Allow longer substantive technical specifications (>= 48 chars) that are not pure questions
+    return s.length >= 48 && !/[？?]$/.test(s) && !TRANSIENT_REQUEST_RE.test(s);
+}
+
 /**
  * Hindsight cognitive bank classifier
  */
@@ -283,7 +317,7 @@ function classifyBank(text, category = "") {
     const s = `${category} ${text}`.toLowerCase();
     if (/mental_model|心智模型|画像|profile/.test(s)) return "mental_model";
     if (/observation|反思|总结|规律|洞察|pattern|insight/.test(s)) return "observation";
-    if (/preference|opinion|偏好|喜欢|不喜欢|习惯|风格|尽量|不要用|默认使用|prefer|dislike|always\s+use|avoid\s+using|favorite/.test(s)) return "opinion";
+    if (/preference|opinion|偏好|喜欢|不喜欢|习惯|风格|尽量|不要用|不要|默认使用|口径|分类|分[两三四\d]块|不是.{0,12}(?:而是|分)|应该按|统一用|prefer|dislike|always\s+use|avoid\s+using|favorite|convention/.test(s)) return "opinion";
     if (/experience|lesson|fix|bug|error|踩坑|修复|解决|排错|经验|教训|workaround|debug|resolved|incident/.test(s)) return "experience";
     return "world";
 }
@@ -2320,14 +2354,14 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             else resStore.resources.push(r);
         }
 
-        // Ingest new meaningful topics from AI histories into Mem0 + Cognee/Graphiti (incremental dedup via sha256)
+        // Ingest new substantive, reusable memories from AI histories into Mem0 + Cognee/Graphiti
+        // (Signal quality gate blocks cron titles, system wrappers, bare URLs, and short command fragments)
         const recentDates = [...topicsByDate.keys()].sort().slice(-14);
         let ingestedItems = 0;
         for (const date of recentDates) {
             const list = topicsByDate.get(date) || [];
-            for (const entry of list.slice(0, 8)) {
-                // Only promote substantive memories (>= 12 chars) into atomic cognitive store
-                if (!entry.text || entry.text.length < 12) continue;
+            for (const entry of list.slice(0, 10)) {
+                if (!entry.text || !isReusableMemoryCandidate(entry.text)) continue;
                 const hash = createHash("sha256").update(`${entry.source}|${entry.project}|${entry.text}`).digest("hex").slice(0, 16);
                 if (cache.ingestedHashes[hash]) continue;
                 cache.ingestedHashes[hash] = date;
@@ -2335,6 +2369,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                     title: sanitizeSnippet(entry.text, 64),
                     content: entry.text,
                     source: entry.source,
+                    originChannel: "import",
                     project: entry.project,
                     scope: entry.project ? "project" : "user",
                     timestamp: entry.ts || Date.now(),
@@ -2708,9 +2743,9 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
     }
 
     /**
-     * Auto-Forget Lifecycle Sweep (agentmemory-inspired: TTL expiry, contradiction detection, dormant working eviction)
+     * Auto-Forget Lifecycle Sweep (agentmemory-inspired: TTL expiry, noise hygiene, contradiction detection, dormant eviction)
      */
-    function autoForget({ dryRun = false, dormantDays = 45 } = {}) {
+    function autoForget({ dryRun = false, dormantDays = 45, cleanNoise = true } = {}) {
         const p = pathsOf();
         ensureDirs(p);
         const itemStore = loadItemStore(p);
@@ -2719,6 +2754,8 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
 
         const ttlExpired = [];
         const dormantEvicted = [];
+        const noiseEvicted = [];
+        const reclassified = [];
         const contradictions = [];
         const active = itemStore.items.filter(i => i.status === "active");
 
@@ -2740,7 +2777,47 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             }
         }
 
-        // 2. Dormant low-value working-tier eviction
+        // 2. Noise hygiene sweep (only targets auto-ingested raw chat log noise: cron titles, system wrappers, bare URLs, short commands)
+        if (cleanNoise) {
+            const LOG_SOURCES = new Set(["codex", "claude", "hermes", "antigravity", "dsh", "workbuddy", "zcode", "t3code"]);
+            for (const it of itemStore.items) {
+                if (it.status !== "active") continue;
+                if (it.bank === "observation" || it.bank === "mental_model") continue;
+                const isAutoIngested = it.originChannel === "import" ||
+                    (LOG_SOURCES.has(it.source) && Array.isArray(it.tags) && it.tags.some(t => /^\d{4}-\d{2}-\d{2}$/.test(String(t))));
+                if (!isAutoIngested) continue;
+                const text = String(it.l2 || it.l1 || it.title || "").trim();
+                const isNoise = isNoiseMemoryText(text) || !isReusableMemoryCandidate(text);
+                if (isNoise) {
+                    noiseEvicted.push({ id: it.id, uri: it.uri, title: it.title, source: it.source });
+                    if (!dryRun) {
+                        it.status = "deleted";
+                        it.validTo = now;
+                        it.updatedAt = now;
+                        it.deleteReason = "auto-forget noise filter";
+                        for (const edge of graphStore.edges) {
+                            if (!edge.validTo && Array.isArray(edge.evidence) && edge.evidence.length === 1 && edge.evidence[0] === it.id) {
+                                edge.validTo = now;
+                            }
+                        }
+                    }
+                    continue;
+                }
+                // Fix misclassified preference/classification rules previously routed to `experience`
+                if (it.bank === "experience" && classifyBank(text, "") === "opinion") {
+                    reclassified.push({ id: it.id, title: it.title, from: "experience", to: "opinion" });
+                    if (!dryRun) {
+                        it.bank = "opinion";
+                        it.memoryType = "preference";
+                        it.category = "preferences";
+                        it.tier = "semantic";
+                        it.updatedAt = now;
+                    }
+                }
+            }
+        }
+
+        // 3. Dormant low-value working-tier eviction
         const remainingActive = itemStore.items.filter(i => i.status === "active");
         for (const it of remainingActive) {
             const tier = it.tier || classifyTier(it.bank, it.category, it.scope, it.memoryType);
@@ -2756,7 +2833,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             }
         }
 
-        // 3. Contradiction detector across active non-reflection memories in same scope + project
+        // 4. Contradiction detector across active non-reflection memories in same scope + project
         const pool = itemStore.items
             .filter(i => i.status === "active" && i.bank !== "observation" && i.bank !== "mental_model")
             .slice(-250);
@@ -2781,7 +2858,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             if (contradictions.length >= 20) break;
         }
 
-        if (!dryRun && (ttlExpired.length || dormantEvicted.length)) {
+        if (!dryRun && (ttlExpired.length || dormantEvicted.length || noiseEvicted.length || reclassified.length)) {
             saveItemStore(itemStore, p);
             saveGraphStore(graphStore, p);
             materializeViews(itemStore, graphStore, p);
@@ -2791,9 +2868,11 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         return {
             dryRun,
             ttlExpired,
+            noiseEvicted,
+            reclassified,
             dormantEvicted,
             contradictions,
-            cleanedCount: dryRun ? 0 : (ttlExpired.length + dormantEvicted.length),
+            cleanedCount: dryRun ? 0 : (ttlExpired.length + dormantEvicted.length + noiseEvicted.length),
         };
     }
 
@@ -2867,8 +2946,16 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         const sweepPreview = autoForget({ dryRun: true });
         const cog = st.cognitive;
         const recommendations = [];
+        const noiseCount = (sweepPreview.noiseEvicted || []).length;
+        const reclassifiedCount = (sweepPreview.reclassified || []).length;
         if (sweepPreview.ttlExpired.length > 0) {
             recommendations.push(`发现 ${sweepPreview.ttlExpired.length} 条已超过 TTL 的记忆，建议执行 autoForget 清理。`);
+        }
+        if (noiseCount > 0) {
+            recommendations.push(`检测到 ${noiseCount} 条低信噪比自动采入碎片（定时任务标题/系统注入/短指令），建议执行 auto-forget 净化记忆库。`);
+        }
+        if (reclassifiedCount > 0) {
+            recommendations.push(`检测到 ${reclassifiedCount} 条偏好/口径规则被归入 experience，建议执行 auto-forget 自动纠偏为 opinion。`);
         }
         if (sweepPreview.contradictions.length > 0) {
             recommendations.push(`检测到 ${sweepPreview.contradictions.length} 组潜在冲突/高度重复记忆，建议核对或使用 factKey 触发演进替代。`);
@@ -2879,12 +2966,16 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         if (!recommendations.length) {
             recommendations.push("记忆库健康状况良好：RRF 混合检索、Ebbinghaus 衰减与双时态图谱均运行正常。");
         }
+        const noiseRatio = cog.activeItems > 0 ? noiseCount / cog.activeItems : 0;
+        const noisePenalty = Math.min(35, Math.round(noiseRatio * 40));
         return {
             engineVersion: ENGINE_VERSION,
             archiveDir: st.archiveDir,
-            healthScore: Math.max(40, 100 - sweepPreview.ttlExpired.length * 5 - Math.min(25, sweepPreview.contradictions.length * 5)),
+            healthScore: Math.max(25, 100 - sweepPreview.ttlExpired.length * 5 - Math.min(25, sweepPreview.contradictions.length * 5) - noisePenalty),
             cognitive: cog,
             ttlExpiredCount: sweepPreview.ttlExpired.length,
+            noiseCount,
+            reclassifiedCount,
             dormantWorkingCount: sweepPreview.dormantEvicted.length,
             contradictionsCount: sweepPreview.contradictions.length,
             contradictions: sweepPreview.contradictions.slice(0, 8),
@@ -2926,6 +3017,9 @@ module.exports = {
     computeRetention,
     scrubSecrets,
     sanitizeSnippet,
+    isNoiseMemoryText,
+    isReusableMemoryCandidate,
+    classifyBank,
     isoWeekKey,
     localDateKey,
     tokenize,

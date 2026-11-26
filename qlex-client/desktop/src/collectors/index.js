@@ -98,6 +98,25 @@ function decodeClaudeProjectSlug(slug) {
     return fs.existsSync(candidate) ? candidate : "";
 }
 
+const NOISE_CRON_TITLE_RE = /^(?:每日工作日报|个人日报|个人周报|工作日报|邮件简报|周报汇总|月报汇总|定时任务|scheduled\s+task|daily\s+digest|daily\s+standup|morning\s+brief|evening\s+brief)/i;
+const NOISE_DATE_BADGE_RE = /(?:（\d{2}:\d{2}）|\(\d{2}:\d{2}\))?\s*[·•]\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}(?:\s+\d{2}:\d{2})?$/i;
+const NOISE_SYSTEM_RE = /^(?:<system-reminder>|<copilot-context>|group\s+chat\s+system:|context\s+handoff|provider\s+context\s+handoff|describe\s+contents\s+of\s+attached\s+image|attached\s+image|\[historical\s+|\[image:|#\s*agents\.md\s+instructions)/i;
+const NOISE_TRIVIAL_CMD_RE = /^(?:implement\s+the\s+plan\.?|continue\.?|ok\.?|yes\.?|done\.?|继续|好的|收到|确认|修复|打包推送|打包|推送|授权好了|核对下|核对一下|看看|试一下|重新生成|开始吧|可以|可以的|没问题|好的谢谢|用飞书\s*cli\s*获取内容|梳理下项目[，,。]?\s*(?:并给出优化建议)?)$/i;
+const NOISE_SOCIAL_SHARE_RE = /复制打开抖音|长按复制此条消息|打开小红书|打开哔哩哔哩/i;
+
+function isNoiseTopicText(text, meta = {}) {
+    const s = String(text || "").trim();
+    if (!s || s.length < 6) return true;
+    if (meta.sessionId && /^cron_/i.test(String(meta.sessionId))) return true;
+    if (NOISE_CRON_TITLE_RE.test(s) || NOISE_DATE_BADGE_RE.test(s)) return true;
+    if (NOISE_SYSTEM_RE.test(s) || NOISE_SOCIAL_SHARE_RE.test(s)) return true;
+    if (NOISE_TRIVIAL_CMD_RE.test(s)) return true;
+    // Reject bare URLs / paths with almost no surrounding semantic text
+    const withoutUrls = s.replace(/https?:\/\/\S+/gi, "").replace(/(?:^|\s)\/[\w.\-\/\u4e00-\u9fff]+/g, "").replace(/[^\p{L}\p{N}]+/gu, "");
+    if (withoutUrls.length < 6) return true;
+    return false;
+}
+
 function extractRealUserText(raw) {
     if (typeof raw !== "string") return "";
     let s = raw;
@@ -109,21 +128,58 @@ function extractRealUserText(raw) {
         const upperMatch = s.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/);
         if (upperMatch) s = upperMatch[1];
     }
+    // If T3 context handoff wrapper is present, take only the trailing "User message:" block
+    const handoffIdx = s.lastIndexOf("\nUser message:\n");
+    if (handoffIdx >= 0 && /Context handoff/i.test(s.slice(0, handoffIdx))) {
+        s = s.slice(handoffIdx + "\nUser message:\n".length);
+    }
     s = s.replace(/<t3_code_instructions>[\s\S]*?<\/t3_code_instructions>/gi, "");
     s = s.replace(/<CONTEXT_SUMMARY>[\s\S]*?<\/CONTEXT_SUMMARY>/gi, "");
     s = s.replace(/<SYSTEM_MESSAGE>[\s\S]*?<\/SYSTEM_MESSAGE>/gi, "");
     s = s.replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/gi, "");
     s = s.replace(/<runtime_info>[\s\S]*?<\/runtime_info>/gi, "");
     s = s.replace(/<environment_context>[\s\S]*?<\/environment_context>/gi, "");
+    s = s.replace(/<workspace_folders>[\s\S]*?<\/workspace_folders>/gi, "");
+    s = s.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, "");
+    s = s.replace(/<copilot-context>[\s\S]*?<\/copilot-context>/gi, "");
+    s = s.replace(/\[Image:[^\]]*\]/gi, "");
     if (/^#\s*AGENTS\.md instructions/i.test(s.trim())) return "";
     return sanitizeTopic(s, 200);
 }
 
+const ZSTD_MAGIC = Buffer.from([0x28, 0xB5, 0x2F, 0xFD]);
+
 function decompressZstdSync(buf) {
-    if (typeof zlib.zstdDecompressSync === "function") {
+    if (typeof zlib.zstdDecompressSync !== "function" || !Buffer.isBuffer(buf) || !buf.length) {
+        return "";
+    }
+    // DSH appends each event batch as a concatenated ZSTD frame; Node's zstdDecompressSync stops after frame 1.
+    const offsets = [];
+    let idx = 0;
+    while ((idx = buf.indexOf(ZSTD_MAGIC, idx)) !== -1) {
+        offsets.push(idx);
+        idx += 4;
+    }
+    if (offsets.length <= 1) {
         return zlib.zstdDecompressSync(buf).toString("utf8");
     }
-    return "";
+    const chunks = [];
+    for (let i = 0; i < offsets.length; i++) {
+        const end = i + 1 < offsets.length ? offsets[i + 1] : buf.length;
+        try {
+            chunks.push(zlib.zstdDecompressSync(buf.subarray(offsets[i], end)).toString("utf8"));
+        } catch {
+            // Rare false-positive magic inside compressed payload: merge with next frame boundary
+            if (i + 1 < offsets.length) {
+                try {
+                    const nextEnd = i + 2 < offsets.length ? offsets[i + 2] : buf.length;
+                    chunks.push(zlib.zstdDecompressSync(buf.subarray(offsets[i], nextEnd)).toString("utf8"));
+                    i++;
+                } catch { /* skip corrupt frame */ }
+            }
+        }
+    }
+    return chunks.join("\n");
 }
 
 function createFileCache(cachePath) {
@@ -297,7 +353,7 @@ function allocateCumulativeSessionBuckets(cache, ledgerKey, totals, activeDate, 
  * 1. Codex Collector (~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-*.jsonl)
  */
 function parseCodexFile(fileInfo, cache) {
-    const sig = `${fileInfo.mtimeMs}:${fileInfo.size}`;
+    const sig = `codex2:${fileInfo.mtimeMs}:${fileInfo.size}`;
     const cached = cache.get(fileInfo.path, sig);
     if (cached) return cached;
 
@@ -305,8 +361,21 @@ function parseCodexFile(fileInfo, cache) {
     let workspace = "";
     let lastActive = fileInfo.mtimeMs;
     const dailyBuckets = {}; // date -> { input, output, cacheRead, cacheWrite, tokens }
-    const topics = [];
+    const topicsByDay = new Map();
     let prevTotal = null;
+
+    const pushCodexTopic = (ts, rawMsg) => {
+        if (typeof rawMsg !== "string" || !rawMsg) return;
+        const clean = extractRealUserText(rawMsg);
+        if (!clean || clean.length < 6 || /^\$[a-z0-9._-]+$/i.test(clean) || isNoiseTopicText(clean)) return;
+        const date = localDateKey(ts);
+        let list = topicsByDay.get(date);
+        if (!list) { list = []; topicsByDay.set(date, list); }
+        if (!list.some(x => x.text === clean)) {
+            list.push({ date, ts, source: "codex", project: workspace ? path.basename(workspace) : "", text: clean });
+            if (list.length > 8) list.shift();
+        }
+    };
 
     try {
         const text = fs.readFileSync(fileInfo.path, "utf8");
@@ -363,12 +432,25 @@ function parseCodexFile(fileInfo, cache) {
                 continue;
             }
 
-            if (topics.length < 12 && row.type === "event_msg" && row.payload?.type === "user_message" && typeof row.payload.message === "string") {
-                const clean = extractRealUserText(row.payload.message);
-                if (clean.length >= 6) topics.push({ date: localDateKey(ts), ts, source: "codex", project: workspace ? path.basename(workspace) : "", text: clean });
+            if (row.type === "event_msg" && row.payload?.type === "user_message" && typeof row.payload.message === "string") {
+                pushCodexTopic(ts, row.payload.message);
+            } else if (row.type === "response_item" && row.payload?.type === "message" && row.payload?.role === "user") {
+                const content = Array.isArray(row.payload.content)
+                    ? row.payload.content.map(c => (typeof c === "string" ? c : c?.text || "")).join(" ")
+                    : typeof row.payload.content === "string" ? row.payload.content : "";
+                pushCodexTopic(ts, content);
             }
         }
     } catch { /* unreadable */ }
+
+    const topics = [];
+    const projName = workspace ? path.basename(workspace) : "";
+    for (const d of [...topicsByDay.keys()].sort().slice(-14)) {
+        for (const t of topicsByDay.get(d)) {
+            if (!t.project && projName) t.project = projName;
+            topics.push(t);
+        }
+    }
 
     const parsed = { source: "codex", sessionId, workspace, lastActive, dailyBuckets, topics };
     cache.set(fileInfo.path, sig, parsed);
@@ -441,9 +523,12 @@ function parseClaudeFile(fileInfo, cache) {
 
 /**
  * 3. Antigravity Collector (T3 Code ACP transcripts + ~/.gemini/antigravity/brain)
+ * Reads real top-level token counters (`input_tokens`, `output_tokens`, `cache_read_tokens`),
+ * resolves workspace from transcript headers or T3 Code statev2.sqlite, and caps topics per day
+ * so long multi-day sessions always record today's substantive work.
  */
-function parseAntigravityTranscript(fileInfo, cache) {
-    const sig = `${fileInfo.mtimeMs}:${fileInfo.size}`;
+function parseAntigravityTranscript(fileInfo, cache, t3WorkspaceMap = null) {
+    const sig = `ag2:${fileInfo.mtimeMs}:${fileInfo.size}`;
     const cached = cache.get(fileInfo.path, sig);
     if (cached) return cached;
 
@@ -451,10 +536,10 @@ function parseAntigravityTranscript(fileInfo, cache) {
     const parts = fileInfo.path.split(path.sep);
     const brainIdx = parts.lastIndexOf("brain");
     const sessionId = brainIdx >= 0 && parts[brainIdx + 1] ? parts[brainIdx + 1] : path.basename(path.dirname(fileInfo.path));
-    let workspace = "";
+    let workspace = (t3WorkspaceMap && t3WorkspaceMap.get(sessionId)) || "";
     let lastActive = fileInfo.mtimeMs;
     const dailyBuckets = {};
-    const topics = [];
+    const topicsByDay = new Map();
 
     try {
         const text = fs.readFileSync(fileInfo.path, "utf8");
@@ -470,25 +555,29 @@ function parseAntigravityTranscript(fileInfo, cache) {
                 ? row.content
                 : typeof row.response === "string"
                     ? row.response
-                    : JSON.stringify(row.content || row.response || "");
+                    : "";
 
-            if (!workspace && contentStr.includes("Command Working Directory:")) {
-                const m = contentStr.match(/Command Working Directory:\s*([^\n<]+)/);
+            if (!workspace && contentStr) {
+                const m = contentStr.match(/(?:Command Working Directory|Your working directory):\s*([^\n<"]+)/);
                 if (m && path.isAbsolute(m[1].trim())) workspace = path.normalize(m[1].trim());
             }
 
-            // Explicit usage if present, else conservative token estimate (~3.5 chars/token for mixed zh/en)
+            // Explicit usage (nested or Antigravity top-level fields) before falling back to conservative estimate
             let input = 0, output = 0, cacheRead = 0, cacheWrite = 0;
             const u = row.usage || row.token_usage || row.metadata?.usage;
+            const hasTopLevel = row.input_tokens != null || row.output_tokens != null || row.cache_read_tokens != null || row.cache_write_tokens != null || row.cache_read_input_tokens != null;
             if (u && typeof u === "object") {
                 input = num(u.input_tokens || u.prompt_tokens);
                 output = num(u.output_tokens || u.completion_tokens);
-                cacheRead = num(u.cache_read_input_tokens || u.cached_tokens);
-                cacheWrite = num(u.cache_write_input_tokens);
-            } else if (contentStr.length > 0) {
-                const est = Math.max(1, Math.round(contentStr.length / 3.5));
-                if (row.type === "PLANNER_RESPONSE") output = est;
-                else input = est;
+                cacheRead = num(u.cache_read_input_tokens || u.cache_read_tokens || u.cached_tokens);
+                cacheWrite = num(u.cache_write_input_tokens || u.cache_write_tokens);
+            } else if (hasTopLevel) {
+                input = num(row.input_tokens || row.prompt_tokens);
+                output = num(row.output_tokens || row.completion_tokens);
+                cacheRead = num(row.cache_read_tokens || row.cache_read_input_tokens || row.cached_tokens);
+                cacheWrite = num(row.cache_write_tokens || row.cache_write_input_tokens);
+            } else if (row.type === "PLANNER_RESPONSE" && contentStr.length > 0) {
+                output = Math.max(1, Math.round(contentStr.length / 3.5));
             }
             const tokens = input + output + cacheRead + cacheWrite;
             if (tokens > 0) {
@@ -501,18 +590,56 @@ function parseAntigravityTranscript(fileInfo, cache) {
                 dailyBuckets[date] = b;
             }
 
-            if (topics.length < 15 && row.type === "USER_INPUT" && typeof row.content === "string") {
+            if (row.type === "USER_INPUT" && typeof row.content === "string") {
                 const clean = extractRealUserText(row.content);
-                if (clean.length >= 4) {
-                    topics.push({ date, ts, source: "antigravity", project: workspace ? path.basename(workspace) : "", text: clean });
+                if (clean.length >= 6 && !isNoiseTopicText(clean)) {
+                    let dayList = topicsByDay.get(date);
+                    if (!dayList) { dayList = []; topicsByDay.set(date, dayList); }
+                    if (!dayList.some(x => x.text === clean)) {
+                        dayList.push({ date, ts, source: "antigravity", project: workspace ? path.basename(workspace) : "", text: clean });
+                        if (dayList.length > 8) dayList.shift(); // Keep latest 8 substantive topics per day
+                    }
                 }
             }
         }
     } catch { /* ignore */ }
 
+    const topics = [];
+    const projName = workspace ? path.basename(workspace) : "";
+    for (const d of [...topicsByDay.keys()].sort().slice(-14)) {
+        for (const t of topicsByDay.get(d)) {
+            if (!t.project && projName) t.project = projName;
+            topics.push(t);
+        }
+    }
+
     const parsed = { source: "antigravity", sessionId, workspace, lastActive, dailyBuckets, topics };
     cache.set(fileInfo.path, sig, parsed);
     return parsed;
+}
+
+/**
+ * Resolve Antigravity native-thread UUID -> T3 Code project workspace_root via statev2.sqlite
+ */
+async function loadT3AntigravityWorkspaceMap(home, env, customPath) {
+    const map = new Map();
+    const dbCandidates = [
+        customPath && (customPath.endsWith(".sqlite") ? customPath : path.join(customPath, "statev2.sqlite")),
+        env.T3_HOME && path.join(env.T3_HOME, "userdata", "statev2.sqlite"),
+        path.join(home, ".t3", "userdata", "statev2.sqlite"),
+    ].filter(p => p && fs.existsSync(p));
+    for (const dbPath of dbCandidates) {
+        const sql = `SELECT ps.provider_thread_id, p.workspace_root AS cwd FROM orchestration_v2_projection_provider_threads ps JOIN orchestration_v2_projection_threads t ON t.thread_id = ps.thread_id LEFT JOIN projection_projects p ON p.project_id = t.project_id WHERE ps.provider = 'antigravity' AND p.workspace_root IS NOT NULL;`;
+        try {
+            const { stdout } = await execFileAsync("sqlite3", ["-readonly", "-json", dbPath, sql], { timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
+            for (const r of JSON.parse(stdout || "[]")) {
+                if (typeof r.provider_thread_id !== "string" || typeof r.cwd !== "string" || !path.isAbsolute(r.cwd)) continue;
+                const m = r.provider_thread_id.match(/native-thread:([0-9a-f-]{36})$/i);
+                if (m) map.set(m[1], path.normalize(r.cwd));
+            }
+        } catch { /* ignore if schema differs */ }
+    }
+    return map;
 }
 
 /**
@@ -555,6 +682,30 @@ async function collectHermesSessions(home, env, sinceMs, cache = null) {
                 }
             } catch { /* older schema without messages table is fine */ }
 
+            // Load substantive user messages for non-cron Hermes sessions so high-token chat days yield real work topics
+            const msgTopicsBySession = new Map();
+            try {
+                const userMsgSql = `SELECT m.session_id, m.timestamp, substr(m.content, 1, 600) AS content FROM messages m WHERE m.role = 'user' AND m.timestamp >= ${sinceSec} AND m.session_id NOT LIKE 'cron_%' AND length(COALESCE(m.content, '')) >= 12 ORDER BY m.timestamp DESC LIMIT 600;`;
+                const { stdout: umOut } = await execFileAsync("sqlite3", ["-readonly", "-json", dbPath, userMsgSql], { timeout: 8000, maxBuffer: 8 * 1024 * 1024 });
+                for (const um of JSON.parse(umOut || "[]")) {
+                    const sid = String(um.session_id || "");
+                    if (!sid || !um.content) continue;
+                    const clean = extractRealUserText(String(um.content));
+                    if (!clean || isNoiseTopicText(clean, { sessionId: sid })) continue;
+                    const rawTs = num(um.timestamp);
+                    const tsMs = rawTs > 1e12 ? rawTs : rawTs * 1000;
+                    if (!tsMs) continue;
+                    const d = localDateKey(tsMs);
+                    if (!msgTopicsBySession.has(sid)) msgTopicsBySession.set(sid, new Map());
+                    const byDay = msgTopicsBySession.get(sid);
+                    if (!byDay.has(d)) byDay.set(d, []);
+                    const list = byDay.get(d);
+                    if (list.length < 4 && !list.some(x => x.text === clean)) {
+                        list.push({ date: d, ts: tsMs, text: clean });
+                    }
+                }
+            } catch { /* ignore if schema differs */ }
+
             for (const r of rows) {
                 const activeSec = num(r.last_activity_at || r.ended_at || r.started_at);
                 const activeTs = activeSec > 1e12 ? activeSec : activeSec * 1000;
@@ -579,15 +730,28 @@ async function collectHermesSessions(home, env, sinceMs, cache = null) {
                     msgWeightsBySession.get(sid) || null
                 );
 
-                // Anchor topic to creation date so resuming the session on a later day never erases yesterday's topic
+                // Extract substantive non-cron topics: prefer real user messages per day, plus clean non-noise title anchored to creation date
                 const topics = [];
-                if (r.title) {
-                    const cleanTitle = sanitizeTopic(r.title, 180);
-                    if (cleanTitle) {
-                        const proj = workspace ? path.basename(workspace) : "";
-                        topics.push({ date: startDate, ts: startTs || activeTs, source: "hermes", project: proj, text: cleanTitle });
-                        if (activeDate !== startDate) {
-                            topics.push({ date: activeDate, ts: activeTs, source: "hermes", project: proj, text: cleanTitle });
+                const proj = workspace ? path.basename(workspace) : "";
+                const isCron = /^cron_/i.test(sid);
+                if (!isCron) {
+                    if (r.title) {
+                        const cleanTitle = sanitizeTopic(r.title, 180);
+                        if (cleanTitle && !isNoiseTopicText(cleanTitle, { sessionId: sid })) {
+                            topics.push({ date: startDate, ts: startTs || activeTs, source: "hermes", project: proj, text: cleanTitle });
+                            if (activeDate !== startDate) {
+                                topics.push({ date: activeDate, ts: activeTs, source: "hermes", project: proj, text: cleanTitle });
+                            }
+                        }
+                    }
+                    const sessionMsgs = msgTopicsBySession.get(sid);
+                    if (sessionMsgs) {
+                        for (const [, dayEntries] of sessionMsgs.entries()) {
+                            for (const m of dayEntries) {
+                                if (!topics.some(t => t.date === m.date && t.text === m.text)) {
+                                    topics.push({ date: m.date, ts: m.ts, source: "hermes", project: proj, text: m.text });
+                                }
+                            }
                         }
                     }
                 }
@@ -607,9 +771,10 @@ async function collectHermesSessions(home, env, sinceMs, cache = null) {
 
 /**
  * 5. DSH Collector (~/.dsh/sessions/** /session*.jsonl(.zstd))
+ * Supports concatenated multi-frame ZSTD logs and DSH v4 event schemas (`assistant/message` + `data.usage`, `user/message`).
  */
 function parseDshFile(fileInfo, cache) {
-    const sig = `${fileInfo.mtimeMs}:${fileInfo.size}`;
+    const sig = `dsh2:${fileInfo.mtimeMs}:${fileInfo.size}`;
     const cached = cache.get(fileInfo.path, sig);
     if (cached) return cached;
 
@@ -619,7 +784,7 @@ function parseDshFile(fileInfo, cache) {
     let workspace = decodeDshWorkspaceSlug(slugDir);
     let lastActive = fileInfo.mtimeMs;
     const dailyBuckets = {};
-    const topics = [];
+    const topicsByDay = new Map();
 
     try {
         const raw = fileInfo.path.endsWith(".zstd")
@@ -629,22 +794,23 @@ function parseDshFile(fileInfo, cache) {
             if (!line || line[0] !== "{") continue;
             let row;
             try { row = JSON.parse(line); } catch { continue; }
-            const rawTs = row.timestamp || row.createdAt || row.ts;
+            const rawTs = row.time || row.timestamp || row.createdAt || row.ts;
             const ts = typeof rawTs === "number" ? (rawTs < 1e12 ? rawTs * 1000 : rawTs) : (Date.parse(rawTs || "") || fileInfo.mtimeMs);
             if (ts > lastActive) lastActive = ts;
             if (!workspace && typeof row.cwd === "string" && path.isAbsolute(row.cwd)) workspace = path.normalize(row.cwd);
 
-            const u = row.usage || row.message?.usage || row.payload?.usage;
+            const u = row.data?.usage || row.usage || row.message?.usage || row.payload?.usage || row.data?.message?.usage;
             if (u && typeof u === "object") {
-                const input = num(u.input_tokens || u.prompt_tokens || u.input);
-                const output = num(u.output_tokens || u.completion_tokens || u.output);
-                const cacheRead = num(u.cache_read_input_tokens || u.prompt_cache_hit_tokens || u.cacheRead);
-                const cacheWrite = num(u.cache_creation_input_tokens || u.cacheWrite);
-                const tokens = input + output + cacheRead + cacheWrite;
+                const input = num(u.inputTokens || u.input_tokens || u.promptTokens || u.prompt_tokens || u.input);
+                const output = num(u.outputTokens || u.output_tokens || u.completionTokens || u.completion_tokens || u.output);
+                const cacheRead = num(u.cachedInputTokens || u.cacheReadInputTokens || u.cacheReadTokens || u.cache_read_input_tokens || u.prompt_cache_hit_tokens || u.cacheRead);
+                const cacheWrite = num(u.cacheCreationInputTokens || u.cacheWriteTokens || u.cache_creation_input_tokens || u.cacheWrite);
+                const rawSum = input + output + cacheRead + cacheWrite;
+                const tokens = rawSum > 0 ? rawSum : num(u.totalTokens || u.total_tokens || u.total);
                 if (tokens > 0) {
                     const date = localDateKey(ts);
                     const b = dailyBuckets[date] || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, tokens: 0 };
-                    b.input += input;
+                    b.input += input || (rawSum === 0 ? tokens : 0);
                     b.output += output;
                     b.cacheRead += cacheRead;
                     b.cacheWrite += cacheWrite;
@@ -652,13 +818,35 @@ function parseDshFile(fileInfo, cache) {
                     dailyBuckets[date] = b;
                 }
             }
-            if (topics.length < 10 && (row.role === "user" || row.type === "user")) {
-                const txt = typeof row.content === "string" ? row.content : typeof row.text === "string" ? row.text : "";
+            if (row.type === "user/message" || row.role === "user" || row.type === "user") {
+                const rawContent = row.data?.content ?? row.content ?? row.text;
+                const txt = typeof rawContent === "string"
+                    ? rawContent
+                    : Array.isArray(rawContent)
+                        ? rawContent.map(c => (typeof c === "string" ? c : c?.text || "")).join(" ")
+                        : "";
                 const clean = extractRealUserText(txt);
-                if (clean.length >= 6) topics.push({ date: localDateKey(ts), ts, source: "dsh", project: workspace ? path.basename(workspace) : "", text: clean });
+                if (clean.length >= 6 && !isNoiseTopicText(clean)) {
+                    const date = localDateKey(ts);
+                    let list = topicsByDay.get(date);
+                    if (!list) { list = []; topicsByDay.set(date, list); }
+                    if (!list.some(x => x.text === clean)) {
+                        list.push({ date, ts, source: "dsh", project: workspace ? path.basename(workspace) : "", text: clean });
+                        if (list.length > 8) list.shift();
+                    }
+                }
             }
         }
     } catch { /* ignore corrupted/zstd unsupported */ }
+
+    const topics = [];
+    const projName = workspace ? path.basename(workspace) : "";
+    for (const d of [...topicsByDay.keys()].sort().slice(-14)) {
+        for (const t of topicsByDay.get(d)) {
+            if (!t.project && projName) t.project = projName;
+            topics.push(t);
+        }
+    }
 
     const parsed = { source: "dsh", sessionId, workspace, lastActive, dailyBuckets, topics };
     cache.set(fileInfo.path, sig, parsed);
@@ -951,6 +1139,7 @@ async function collectAllNative({ home = homedir(), env = process.env, cachePath
     };
 
     // 3. Antigravity (T3 Code ACP + ~/.gemini/antigravity)
+    const t3WorkspaceMap = await loadT3AntigravityWorkspaceMap(home, env, customPaths.t3code);
     const agRoots = [
         customPaths.antigravity,
         path.join(home, ".t3", "userdata", "providers", "antigravity"),
@@ -960,7 +1149,7 @@ async function collectAllNative({ home = homedir(), env = process.env, cachePath
     for (const root of agRoots) {
         agFiles.push(...walkFiles(root, name => name === "transcript.jsonl", { maxDepth: 6, maxFiles: 250, minMtimeMs }));
     }
-    const agSessions = agFiles.map(f => parseAntigravityTranscript(f, cache));
+    const agSessions = agFiles.map(f => parseAntigravityTranscript(f, cache, t3WorkspaceMap));
     allSessions.push(...agSessions);
     diagnostics.antigravity = {
         source: "antigravity", label: SOURCE_LABELS.antigravity,
@@ -1097,6 +1286,11 @@ module.exports = {
     buildWindowReport,
     createFileCache,
     allocateCumulativeSessionBuckets,
+    parseCodexFile,
+    parseDshFile,
+    parseAntigravityTranscript,
+    loadT3AntigravityWorkspaceMap,
     extractRealUserText,
+    isNoiseTopicText,
     localDateKey,
 };

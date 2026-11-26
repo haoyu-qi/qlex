@@ -270,7 +270,7 @@ async function main() {
     if (cmd === "auto-forget") {
         const res = engine.autoForget({ dryRun: Boolean(flags["dry-run"] || flags.dryRun) });
         if (asJson) return console.log(JSON.stringify(res, null, 2));
-        console.log(\`Auto-Forget (\${res.dryRun ? "dry-run" : "applied"}): TTL过期=\${res.ttlExpired.length}, 休眠清理=\${res.dormantEvicted.length}, 潜在冲突=\${res.contradictions.length}\`);
+        console.log(\`Auto-Forget (\${res.dryRun ? "dry-run" : "applied"}): TTL过期=\${res.ttlExpired.length}, 噪声清理=\${(res.noiseEvicted || []).length}, 分类纠偏=\${(res.reclassified || []).length}, 休眠清理=\${res.dormantEvicted.length}, 潜在冲突=\${res.contradictions.length}\`);
         return;
     }
 
