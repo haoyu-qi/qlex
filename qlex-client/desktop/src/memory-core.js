@@ -278,46 +278,83 @@ function jaccardSimilarity(tokensA, tokensB) {
 
 const NOISE_CRON_TITLE_RE = /^(?:每日工作日报|个人日报|个人周报|工作日报|邮件简报|周报汇总|月报汇总|定时任务|scheduled\s+task|daily\s+digest|daily\s+standup|morning\s+brief|evening\s+brief)/i;
 const NOISE_DATE_BADGE_RE = /(?:（\d{2}:\d{2}）|\(\d{2}:\d{2}\))?\s*[·•]\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}(?:\s+\d{2}:\d{2})?$/i;
-const NOISE_SYSTEM_RE = /^(?:<system-reminder>|<copilot-context>|group\s+chat\s+system:|context\s+handoff|provider\s+context\s+handoff|describe\s+contents\s+of\s+attached\s+image|attached\s+image|\[historical\s+|\[image:|#\s*agents\.md\s+instructions)/i;
-const NOISE_TRIVIAL_CMD_RE = /^(?:implement\s+the\s+plan\.?|continue\.?|ok\.?|yes\.?|done\.?|继续|好的|收到|确认|修复|打包推送|打包|推送|授权好了|核对下|核对一下|看看|试一下|重新生成|开始吧|可以|可以的|没问题|用飞书\s*cli\s*获取内容|梳理下项目[，,。]?\s*(?:并给出优化建议)?)$/i;
+const NOISE_SYSTEM_RE = /^(?:<system-reminder>|<copilot-context>|<t3_code_instructions>|<context_summary>|<environment_context>|group\s+chat\s+system:|context\s+handoff|provider\s+context\s+handoff|current\s+runtime\s+context|describe\s+contents\s+of\s+attached\s+image|attached\s+image|\[historical\s+|\[image:|\[file:|\[attached\b|@file:|#\s*files\s+mentioned\s+by\s+the\s+user|#\s*agents\.md\s+instructions)/i;
+const NOISE_TRIVIAL_CMD_RE = /^(?:implement\s+the\s+plan\.?|continue\.?|ok\.?|yes\.?|done\.?|继续|好的|收到|确认|修复|打包推送|打包|推送|授权好了|核对下|核对一下|看看|试一下|重新生成|开始吧|可以|可以的|没问题|用飞书\s*cli\s*获取内容|梳理下项目[，,。]?\s*(?:并给出优化建议)?|feishu\s+whiteboard\s+designer)$/i;
 const NOISE_SOCIAL_SHARE_RE = /复制打开抖音|长按复制此条消息|打开小红书|打开哔哩哔哩/i;
-const REUSABLE_KNOWLEDGE_RE = /(?:决定|决策|原则|规范|口径|偏好|习惯|风格|默认|不要|禁止|必须|应该|改为|改用|切换|采用|选用|方案|架构|设计|重构|根因|原因|教训|踩坑|修复.*(?:失败|异常|问题|bug|回退|漂移|校验)|解决|结论|约定|分[两三四\d]块|不是.{0,12}(?:而是|分)|统一用|保留|限制|要求|算力|内存|带宽|规则|机制|逻辑|模型|引擎|decided|decision|prefer|always|never|avoid|root\s+cause|architecture|convention|lesson|workaround|design|policy|rule|spec)/i;
-const TRANSIENT_REQUEST_RE = /^(?:帮我|给我|请帮我|查看下|看下|查一下|核对下|把.{1,16}(?:合并|归到|删掉|提交到)|将项目\s*\d+|输入\s+\w+.*为何|用\s*[\w-]+\s*(?:cli|寻找|获取))/i;
+const NOISE_PREFIX_RE = /^(?:https?:\/\/\S+|\/[a-z0-9._-]+\s+|#\d+\s+|收件人[:：]|翻译下|html\s*用|基于这[两三几]张图|不是上面那个|这个风格\b|界面空间按钮可以参考|优化此网站|所有文档\s*都优化|压缩成|重新生成|我想写一篇公众号)/i;
+const REUSABLE_KNOWLEDGE_RE = /(?:决定采用|决策|原则|规范|口径|偏好|习惯|第一性原理|默认使用|不要默认|不要用|禁止|必须|改为|改用|切换到|根因|教训|踩坑|核心论证|一句话结论|结论[:：]|约定|分[两三四\d]块|不是.{0,12}(?:而是|分)|统一按|统一用|修复.*(?:失败|异常|回退|漂移|校验|倒流)|架构设计[:：]|decided|decision|prefer|always\s+use|never\s+use|avoid\s+using|root\s+cause|architecture|convention|lesson|workaround|policy|rule)/i;
+const TRANSIENT_REQUEST_RE = /^(?:帮我|给我|请帮我|查看下|看下|查一下|核对下|把.{1,16}(?:合并|归到|删掉|提交到)|将项目\s*\d+|将\s*\d+\s*需求|输入\s+\w+.*为何|用\s*[\w-]+\s*(?:cli|寻找|获取)|写一个|整理\s*20\d{2}|整理优化此需求|分解成|建一个历史执行|提交代码到|禅道产品\s*\d+|不改变现有项目的接口|你的界面是调用)/i;
+
+const INVALID_PROJECT_NAMES = new Set([
+    "documents", "desktop", "downloads", "home", "users", "user", "tmp", "temp", "var", "etc",
+    "new-chat", "new_chat", "untitled", "workspace", "default", "agent", "agents", "brain",
+    "logs", "sessions", "projects", "library", "applications", "qijingchun", "mac", "mini",
+    "2026 软件", "2026-软件", "ai 产品线群聊",
+]);
+
+function isValidProjectName(name) {
+    const s = String(name || "").trim();
+    if (!s) return false;
+    const lower = s.toLowerCase();
+    if (INVALID_PROJECT_NAMES.has(lower)) return false;
+    // Reject 1-2 char ASCII fragments like "gu" or pure year/date directory names
+    if (/^[a-z0-9._-]{1,2}$/i.test(s)) return false;
+    if (/^\d{4}(?:[-_\s]?(?:软件|工作|项目|\d{2}))?$/.test(s)) return false;
+    return true;
+}
 
 function isNoiseMemoryText(text) {
     const s = String(text || "").trim();
-    if (!s || s.length < 8) return true;
+    if (!s || s.length < 12) return true;
     if (NOISE_CRON_TITLE_RE.test(s) || NOISE_DATE_BADGE_RE.test(s)) return true;
     if (NOISE_SYSTEM_RE.test(s) || NOISE_SOCIAL_SHARE_RE.test(s)) return true;
-    if (NOISE_TRIVIAL_CMD_RE.test(s)) return true;
+    if (NOISE_TRIVIAL_CMD_RE.test(s) || NOISE_PREFIX_RE.test(s)) return true;
+    if (/\[File:|\[Attached\s+image|<t3_code_instructions>|<system-reminder>|<copilot-context>|@file:/i.test(s)) return true;
     const withoutUrls = s.replace(/https?:\/\/\S+/gi, "").replace(/(?:^|\s)\/[\w.\-\/\u4e00-\u9fff]+/g, "").replace(/[^\p{L}\p{N}]+/gu, "");
-    if (withoutUrls.length < 8) return true;
+    if (withoutUrls.length < 12) return true;
     return false;
 }
 
 /**
- * Signal quality gate for automatic log-to-memory ingestion.
- * Prevents raw chat fragments, cron titles, system wrappers, and one-off lookup commands
- * from polluting long-term atomic memory while allowing substantive decisions/preferences/lessons.
+ * Strict signal quality gate for automatic log-to-memory ingestion.
+ * Prevents empty-shell 1-line prompts (l2 <= title), cron titles, system wrappers,
+ * URL/attachment commands, and one-off operational prompts from polluting long-term memory.
  */
 function isReusableMemoryCandidate(text) {
     const s = String(text || "").trim();
     if (isNoiseMemoryText(s)) return false;
-    if (s.length < 18) return false;
-    if (TRANSIENT_REQUEST_RE.test(s) && !REUSABLE_KNOWLEDGE_RE.test(s)) return false;
-    if (REUSABLE_KNOWLEDGE_RE.test(s)) return true;
-    // Allow longer substantive technical specifications (>= 48 chars) that are not pure questions
-    return s.length >= 48 && !/[？?]$/.test(s) && !TRANSIENT_REQUEST_RE.test(s);
+    if (TRANSIENT_REQUEST_RE.test(s)) return false;
+    // Must carry substantive content (at least 40 chars — never a short shell prompt)
+    if (s.length < 40) return false;
+    // Must NOT be a pure question
+    if (/[？?]$/.test(s)) return false;
+    // Must express a concrete decision, preference/rule, conclusion, or technical rationale
+    return REUSABLE_KNOWLEDGE_RE.test(s);
+}
+
+function isEmptyShellItem(item) {
+    if (!item) return true;
+    const title = String(item.title || "").trim();
+    const l2 = String(item.l2 || item.l1 || "").trim();
+    if (l2.length < 40) return true;
+    // Single-line shell where body adds nothing beyond the title
+    if (l2 === title && l2.length < 70) return true;
+    return false;
 }
 
 /**
  * Hindsight cognitive bank classifier
  */
-function classifyBank(text, category = "") {
-    const s = `${category} ${text}`.toLowerCase();
-    if (/mental_model|心智模型|画像|profile/.test(s)) return "mental_model";
-    if (/observation|反思|总结|规律|洞察|pattern|insight/.test(s)) return "observation";
-    if (/preference|opinion|偏好|喜欢|不喜欢|习惯|风格|尽量|不要用|不要|默认使用|口径|分类|分[两三四\d]块|不是.{0,12}(?:而是|分)|应该按|统一用|prefer|dislike|always\s+use|avoid\s+using|favorite|convention/.test(s)) return "opinion";
+function classifyBank(text, category = "", { allowReflection = true } = {}) {
+    // Strip URLs, file tags, and XML wrappers before matching keywords so links/attachments never misclassify
+    const cleanText = String(text || "")
+        .replace(/https?:\/\/\S+/gi, " ")
+        .replace(/\[(?:File|Image|Attached)[^\]]*\]/gi, " ")
+        .replace(/<[^>]+>/g, " ");
+    const s = `${category} ${cleanText}`.toLowerCase();
+    if (allowReflection && /mental_model|心智模型|画像|profile/.test(s)) return "mental_model";
+    if (allowReflection && (category === "observations" || /\bobservation\b|反思洞察|演进观察/.test(s))) return "observation";
+    if (/preference|opinion|偏好|喜欢|不喜欢|习惯|尽量|不要用|不要默认|默认使用|口径|分类|分[两三四\d]块|不是.{0,12}(?:而是|分)|应该按|统一按|统一用|第一性原理|prefer|dislike|always\s+use|avoid\s+using|favorite|convention/.test(s)) return "opinion";
     if (/experience|lesson|fix|bug|error|踩坑|修复|解决|排错|经验|教训|workaround|debug|resolved|incident/.test(s)) return "experience";
     return "world";
 }
@@ -1146,15 +1183,18 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         const rawText = scrubSecrets(String(input.content || input.text || input.l2 || input.title || "")).trim();
         if (!rawText) throw new Error("retain 需要提供非空的记忆内容 (content)。");
 
-        const bank = VALID_BANKS.has(input.bank) ? input.bank : classifyBank(rawText, input.category || "");
-        const scope = VALID_SCOPES.has(input.scope) ? input.scope : (input.project ? "project" : "user");
-        const project = input.project ? sanitizeSnippet(input.project, 64) : "";
-        const agent = input.agent ? sanitizeSnippet(input.agent, 48) : "";
-        const agentId = input.agentId ? sanitizeSnippet(input.agentId, 64) : agent;
         const source = input.source ? sanitizeSnippet(input.source, 32) : "agent";
         const originChannel = VALID_ORIGIN_CHANNELS.has(input.originChannel)
             ? input.originChannel
             : (source === "user" ? "user" : source === "system" ? "shared" : source === "import" ? "import" : "agent");
+        const bank = VALID_BANKS.has(input.bank)
+            ? input.bank
+            : classifyBank(rawText, input.category || "", { allowReflection: originChannel !== "import" });
+        const rawProject = input.project ? sanitizeSnippet(input.project, 64) : "";
+        const project = (originChannel === "import" && !isValidProjectName(rawProject)) ? "" : rawProject;
+        const scope = VALID_SCOPES.has(input.scope) ? input.scope : (project ? "project" : "user");
+        const agent = input.agent ? sanitizeSnippet(input.agent, 48) : "";
+        const agentId = input.agentId ? sanitizeSnippet(input.agentId, 64) : agent;
         const memoryType = typeof input.memoryType === "string" && input.memoryType.trim()
             ? sanitizeSnippet(input.memoryType, 32).toLowerCase()
             : (bank === "opinion" ? "preference" : bank === "experience" ? "lesson" : bank === "observation" || bank === "mental_model" ? "insight" : "fact");
@@ -1185,12 +1225,14 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         const itemStore = opts._itemStore || loadItemStore(p);
         const graphStore = opts._graphStore || loadGraphStore(p);
 
-        // Mem0 Conflict Resolution + agentmemory near-duplicate advisory hints (`similarTo`)
-        const candidates = itemStore.items.filter(it =>
-            it.status === "active" &&
-            it.scope === scope &&
-            (it.project || "") === project
-        );
+        // Mem0 Conflict Resolution + cross-scope dedup + agentmemory near-duplicate advisory hints (`similarTo`)
+        const candidates = itemStore.items.filter(it => {
+            if (it.status !== "active") return false;
+            if (it.scope === scope && (it.project || "") === project) return true;
+            // Also detect duplicates when one copy has empty project and the other is project-scoped (non-reflections)
+            if (bank !== "mental_model" && bank !== "observation" && it.bank === bank && (!it.project || !project)) return true;
+            return false;
+        });
 
         let matched = null;
         let matchReason = "";
@@ -1203,7 +1245,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             if (matched) matchReason = "explicit_id";
         }
         if (!matched && factKey) {
-            matched = candidates.find(it => it.factKey && it.factKey === factKey) || null;
+            matched = itemStore.items.find(it => it.status === "active" && it.factKey && it.factKey === factKey) || null;
             if (matched) matchReason = "fact_key";
         }
         for (const cand of candidates) {
@@ -1238,15 +1280,17 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         let supersededId = null;
 
         const isSystemReflection = bank === "observation" || bank === "mental_model";
+        const isDifferentBody = matched && matched.l2.trim().toLowerCase() !== layers.l2.trim().toLowerCase();
         const isExactDuplicate = matched && (
-            matched.l2.trim().toLowerCase() === layers.l2.trim().toLowerCase() ||
+            !isDifferentBody ||
             (matchReason === "near_duplicate" && !detectSupersedeSignal(rawText) && !input.supersede)
         );
 
-        const isSupersede = matched && !isSystemReflection && (
+        const isSupersede = matched && !isSystemReflection && isDifferentBody && (
             Boolean(input.supersede) ||
-            (matchReason === "fact_key" && matched.l2.trim().toLowerCase() !== layers.l2.trim().toLowerCase()) ||
-            (detectSupersedeSignal(rawText) && matched.l2.trim().toLowerCase() !== layers.l2.trim().toLowerCase())
+            matchReason === "fact_key" ||
+            detectSupersedeSignal(rawText) ||
+            (matchReason === "similar" && bestSim >= 0.72 && Math.abs(layers.l2.length - matched.l2.length) >= 15)
         );
 
         if (isExactDuplicate) {
@@ -1268,6 +1312,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             matched.status = "superseded";
             matched.validTo = now;
             matched.supersededBy = newId;
+            matched.version = (matched.version || 1) + 1;
             matched.updatedAt = now;
             supersededId = matched.id;
 
@@ -1326,7 +1371,9 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             matched.title = layers.title;
             matched.l0 = layers.l0;
             matched.l1 = layers.l1;
-            matched.l2 = layers.l2.length >= matched.l2.length ? layers.l2 : `${matched.l2}\n\n[补充 ${fmtIsoShort(now)}]\n${layers.l2}`.slice(0, 12000);
+            matched.l2 = isSystemReflection || layers.l2.length >= matched.l2.length
+                ? layers.l2
+                : `${matched.l2}\n\n[补充 ${fmtIsoShort(now)}]\n${layers.l2}`.slice(0, 12000);
             matched.tier = tier;
             matched.memoryType = matched.memoryType || memoryType;
             matched.originChannel = matched.originChannel || originChannel;
@@ -1953,15 +2000,25 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             }, { _itemStore: itemStore, _graphStore: graphStore, _deferPersist: true }));
         }
 
-        // 2. Synthesize Per-Project Mental Models
+        // 2. Synthesize Per-Project Mental Models (strictly gated: valid real projects only, never directory garbage like gu/new-chat/Documents/qijingchun)
+        const managedProjectNames = new Set(
+            (typeof getProjects === "function" ? (getProjects() || []) : [])
+                .map(pr => String(pr?.name || "").trim().toLowerCase())
+                .filter(Boolean)
+        );
         const byProject = new Map();
         for (const it of active) {
-            if (!it.project) continue;
+            if (!it.project || !isValidProjectName(it.project)) continue;
+            if (isEmptyShellItem(it)) continue;
             if (!byProject.has(it.project)) byProject.set(it.project, []);
             byProject.get(it.project).push(it);
         }
         for (const [proj, list] of byProject.entries()) {
-            if (list.length < 2 && !targetProject) continue;
+            const isManaged = managedProjectNames.has(proj.toLowerCase());
+            const minItems = targetProject ? 1 : (isManaged ? 2 : 3);
+            if (list.length < minItems) continue;
+            // For unmanaged projects, require at least 1 explicitly curated (non-import) memory
+            if (!targetProject && !isManaged && !list.some(i => i.originChannel !== "import")) continue;
             const decisions = list.filter(i => i.category === "decisions" || i.bank === "world").slice(0, 6);
             const exps = list.filter(i => i.bank === "experience").slice(0, 6);
             const projEntId = `project:${slugify(proj)}`;
@@ -2354,24 +2411,28 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             else resStore.resources.push(r);
         }
 
-        // Ingest new substantive, reusable memories from AI histories into Mem0 + Cognee/Graphiti
-        // (Signal quality gate blocks cron titles, system wrappers, bare URLs, and short command fragments)
+        // Ingest ONLY genuinely substantive, reusable knowledge from AI histories into atomic cognitive store
+        // (Daily/weekly/monthly markdown still keeps full topic timeline; atomic store rejects empty 1-line shells!)
         const recentDates = [...topicsByDate.keys()].sort().slice(-14);
         let ingestedItems = 0;
         for (const date of recentDates) {
             const list = topicsByDate.get(date) || [];
             for (const entry of list.slice(0, 10)) {
                 if (!entry.text || !isReusableMemoryCandidate(entry.text)) continue;
-                const hash = createHash("sha256").update(`${entry.source}|${entry.project}|${entry.text}`).digest("hex").slice(0, 16);
+                const cleanTitle = sanitizeSnippet(entry.text, 56);
+                // Enforce body-richer-than-title threshold: reject 1-line empty shells!
+                if (entry.text.length < 65 || entry.text.trim() === cleanTitle.trim()) continue;
+                const safeProj = isValidProjectName(entry.project) ? entry.project : "";
+                const hash = createHash("sha256").update(`${entry.source}|${safeProj}|${entry.text}`).digest("hex").slice(0, 16);
                 if (cache.ingestedHashes[hash]) continue;
                 cache.ingestedHashes[hash] = date;
                 retain({
-                    title: sanitizeSnippet(entry.text, 64),
+                    title: cleanTitle,
                     content: entry.text,
                     source: entry.source,
                     originChannel: "import",
-                    project: entry.project,
-                    scope: entry.project ? "project" : "user",
+                    project: safeProj,
+                    scope: safeProj ? "project" : "user",
                     timestamp: entry.ts || Date.now(),
                     tags: [entry.source, date].filter(Boolean),
                 }, { _itemStore: itemStore, _graphStore: graphStore, _deferPersist: true });
@@ -2743,7 +2804,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
     }
 
     /**
-     * Auto-Forget Lifecycle Sweep (agentmemory-inspired: TTL expiry, noise hygiene, contradiction detection, dormant eviction)
+     * Auto-Forget Lifecycle Sweep (agentmemory-inspired: TTL expiry, shell/noise/bogus-model hygiene, duplicate supersede, dormant eviction)
      */
     function autoForget({ dryRun = false, dormantDays = 45, cleanNoise = true } = {}) {
         const p = pathsOf();
@@ -2755,64 +2816,140 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         const ttlExpired = [];
         const dormantEvicted = [];
         const noiseEvicted = [];
+        const bogusModelsEvicted = [];
+        const duplicatesSuperseded = [];
         const reclassified = [];
         const contradictions = [];
         const active = itemStore.items.filter(i => i.status === "active");
+
+        const retireItem = (it, status, reason, supersededBy = null) => {
+            if (dryRun) return;
+            it.status = status;
+            it.validTo = now;
+            it.updatedAt = now;
+            it.version = (it.version || 1) + 1;
+            if (supersededBy) it.supersededBy = supersededBy;
+            it.deleteReason = reason;
+            for (const edge of graphStore.edges) {
+                if (!edge.validTo && Array.isArray(edge.evidence) && edge.evidence.length === 1 && edge.evidence[0] === it.id) {
+                    edge.validTo = now;
+                }
+            }
+        };
 
         // 1. TTL expiry sweep
         for (const it of active) {
             if (it.forgetAfter && it.forgetAfter <= now) {
                 ttlExpired.push({ id: it.id, uri: it.uri, title: it.title, forgetAfter: it.forgetAfter });
-                if (!dryRun) {
-                    it.status = "deleted";
-                    it.validTo = now;
-                    it.updatedAt = now;
-                    it.deleteReason = "auto-forget TTL expired";
-                    for (const edge of graphStore.edges) {
-                        if (!edge.validTo && Array.isArray(edge.evidence) && edge.evidence.length === 1 && edge.evidence[0] === it.id) {
-                            edge.validTo = now;
-                        }
-                    }
-                }
+                retireItem(it, "deleted", "auto-forget TTL expired");
             }
         }
 
-        // 2. Noise hygiene sweep (only targets auto-ingested raw chat log noise: cron titles, system wrappers, bare URLs, short commands)
+        // 2. Shell, noise & bogus auto-reflection hygiene sweep
         if (cleanNoise) {
             const LOG_SOURCES = new Set(["codex", "claude", "hermes", "antigravity", "dsh", "workbuddy", "zcode", "t3code"]);
+            const seenSysReflectionKeys = new Set();
+
+            // 2a. Clean collector-sourced raw chat shells, URL/file/wrapper noise, and bogus collector observations
             for (const it of itemStore.items) {
                 if (it.status !== "active") continue;
-                if (it.bank === "observation" || it.bank === "mental_model") continue;
+                const isLogSource = LOG_SOURCES.has(it.source);
                 const isAutoIngested = it.originChannel === "import" ||
-                    (LOG_SOURCES.has(it.source) && Array.isArray(it.tags) && it.tags.some(t => /^\d{4}-\d{2}-\d{2}$/.test(String(t))));
+                    (isLogSource && (
+                        (Array.isArray(it.tags) && it.tags.some(t => /^\d{4}-\d{2}-\d{2}$/.test(String(t)))) ||
+                        !it.originChannel || it.originChannel === "agent"
+                    ));
+
+                if (it.bank === "observation" && it.source !== "system") {
+                    // Raw chat prompts misclassified as `observation` (e.g. `@file:...`, `[File:...]`, `整理...PPT`)
+                    noiseEvicted.push({ id: it.id, uri: it.uri, title: it.title, source: it.source, reason: "collector_observation" });
+                    retireItem(it, "deleted", "auto-forget non-system observation noise");
+                    continue;
+                }
+                if (it.bank === "observation" || it.bank === "mental_model") continue;
                 if (!isAutoIngested) continue;
+
                 const text = String(it.l2 || it.l1 || it.title || "").trim();
-                const isNoise = isNoiseMemoryText(text) || !isReusableMemoryCandidate(text);
-                if (isNoise) {
-                    noiseEvicted.push({ id: it.id, uri: it.uri, title: it.title, source: it.source });
-                    if (!dryRun) {
-                        it.status = "deleted";
-                        it.validTo = now;
-                        it.updatedAt = now;
-                        it.deleteReason = "auto-forget noise filter";
-                        for (const edge of graphStore.edges) {
-                            if (!edge.validTo && Array.isArray(edge.evidence) && edge.evidence.length === 1 && edge.evidence[0] === it.id) {
-                                edge.validTo = now;
-                            }
-                        }
-                    }
+                const isShellOrNoise = isNoiseMemoryText(text) || !isReusableMemoryCandidate(text) || isEmptyShellItem(it);
+                if (isShellOrNoise) {
+                    noiseEvicted.push({ id: it.id, uri: it.uri, title: it.title, source: it.source, reason: isEmptyShellItem(it) ? "empty_shell" : "noise" });
+                    retireItem(it, "deleted", "auto-forget shell/noise filter");
                     continue;
                 }
                 // Fix misclassified preference/classification rules previously routed to `experience`
-                if (it.bank === "experience" && classifyBank(text, "") === "opinion") {
+                if (it.bank === "experience" && classifyBank(text, "", { allowReflection: false }) === "opinion") {
                     reclassified.push({ id: it.id, title: it.title, from: "experience", to: "opinion" });
                     if (!dryRun) {
                         it.bank = "opinion";
                         it.memoryType = "preference";
                         it.category = "preferences";
                         it.tier = "semantic";
+                        it.version = (it.version || 1) + 1;
                         it.updatedAt = now;
                     }
+                }
+            }
+
+            // 2b. Deduplicate remaining active non-reflection near-duplicates across scopes (mark older duplicate as superseded!)
+            const evictedIds = new Set([...ttlExpired, ...noiseEvicted].map(x => x.id));
+            const liveNonRefl = itemStore.items
+                .filter(i => i.status === "active" && !evictedIds.has(i.id) && i.bank !== "observation" && i.bank !== "mental_model");
+            const dedupTokMap = new Map(liveNonRefl.map(m => [m.id, tokenize(`${m.title} ${m.l1}`)]));
+            const supersededInPass = new Set();
+            for (let i = 0; i < liveNonRefl.length; i++) {
+                const a = liveNonRefl[i];
+                if (supersededInPass.has(a.id)) continue;
+                for (let j = i + 1; j < liveNonRefl.length; j++) {
+                    const b = liveNonRefl[j];
+                    if (supersededInPass.has(b.id)) continue;
+                    const sameText = a.l2.trim().toLowerCase() === b.l2.trim().toLowerCase();
+                    const sim = sameText ? 1 : jaccardSimilarity(dedupTokMap.get(a.id), dedupTokMap.get(b.id));
+                    if (sim >= 0.85) {
+                        // Keep richer / newer item as winner, supersede older copy
+                        const aScore = (a.l2.length || 0) + (a.project ? 20 : 0) + (a.originChannel !== "import" ? 50 : 0);
+                        const bScore = (b.l2.length || 0) + (b.project ? 20 : 0) + (b.originChannel !== "import" ? 50 : 0);
+                        const winner = bScore > aScore || (bScore === aScore && (b.updatedAt || 0) >= (a.updatedAt || 0)) ? b : a;
+                        const loser = winner === b ? a : b;
+                        supersededInPass.add(loser.id);
+                        duplicatesSuperseded.push({ id: loser.id, title: loser.title, supersededBy: winner.id, similarity: Number(sim.toFixed(2)) });
+                        retireItem(loser, "superseded", "auto-forget duplicate superseded", winner.id);
+                        if (loser === a) break;
+                    }
+                }
+            }
+
+            // 2c. Retire bogus auto-generated mental_models (invalid directory names like gu/new-chat/Documents/qijingchun or insufficient surviving evidence) and duplicate observations
+            const survivingIds = new Set(itemStore.items
+                .filter(i => i.status === "active" && !evictedIds.has(i.id) && !supersededInPass.has(i.id) && i.bank !== "mental_model" && i.bank !== "observation")
+                .map(i => i.id));
+            const survivingByProject = new Map();
+            for (const it of itemStore.items) {
+                if (!survivingIds.has(it.id) || !it.project) continue;
+                survivingByProject.set(it.project, (survivingByProject.get(it.project) || 0) + 1);
+            }
+            for (const it of [...itemStore.items].reverse()) {
+                if (it.status !== "active" || evictedIds.has(it.id)) continue;
+                if (it.bank === "mental_model" && it.source === "system") {
+                    if (it.project && (!isValidProjectName(it.project) || (survivingByProject.get(it.project) || 0) < 2)) {
+                        bogusModelsEvicted.push({ id: it.id, title: it.title, project: it.project });
+                        retireItem(it, "deleted", "auto-forget invalid/empty project mental_model");
+                        continue;
+                    }
+                    const k = `mm:${it.factKey || it.title}`;
+                    if (seenSysReflectionKeys.has(k)) {
+                        bogusModelsEvicted.push({ id: it.id, title: it.title, project: it.project, reason: "duplicate_model" });
+                        retireItem(it, "deleted", "auto-forget duplicate mental_model");
+                        continue;
+                    }
+                    seenSysReflectionKeys.add(k);
+                } else if (it.bank === "observation" && it.source === "system") {
+                    const k = `obs:${it.title}`;
+                    if (seenSysReflectionKeys.has(k)) {
+                        bogusModelsEvicted.push({ id: it.id, title: it.title, reason: "duplicate_observation" });
+                        retireItem(it, "deleted", "auto-forget duplicate observation");
+                        continue;
+                    }
+                    seenSysReflectionKeys.add(k);
                 }
             }
         }
@@ -2824,18 +2961,14 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             const ret = computeRetention(it, now);
             if (tier === "working" && ret.temperature === "dormant" && ret.ageDays >= dormantDays) {
                 dormantEvicted.push({ id: it.id, uri: it.uri, title: it.title, retentionScore: ret.retentionScore, ageDays: ret.ageDays });
-                if (!dryRun) {
-                    it.status = "superseded";
-                    it.validTo = now;
-                    it.updatedAt = now;
-                    it.deleteReason = "auto-forget dormant working memory";
-                }
+                retireItem(it, "superseded", "auto-forget dormant working memory");
             }
         }
 
-        // 4. Contradiction detector across active non-reflection memories in same scope + project
+        // 4. Contradiction detector across surviving active non-reflection memories
+        const previewRemoved = new Set([...ttlExpired, ...noiseEvicted, ...bogusModelsEvicted, ...duplicatesSuperseded, ...dormantEvicted].map(x => x.id));
         const pool = itemStore.items
-            .filter(i => i.status === "active" && i.bank !== "observation" && i.bank !== "mental_model")
+            .filter(i => i.status === "active" && !previewRemoved.has(i.id) && i.bank !== "observation" && i.bank !== "mental_model")
             .slice(-250);
         const tokCache = new Map(pool.map(m => [m.id, tokenize(`${m.title} ${m.l1}`)]));
         for (let i = 0; i < pool.length; i++) {
@@ -2858,7 +2991,8 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             if (contradictions.length >= 20) break;
         }
 
-        if (!dryRun && (ttlExpired.length || dormantEvicted.length || noiseEvicted.length || reclassified.length)) {
+        const totalMutated = ttlExpired.length + dormantEvicted.length + noiseEvicted.length + bogusModelsEvicted.length + duplicatesSuperseded.length + reclassified.length;
+        if (!dryRun && totalMutated > 0) {
             saveItemStore(itemStore, p);
             saveGraphStore(graphStore, p);
             materializeViews(itemStore, graphStore, p);
@@ -2869,10 +3003,12 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             dryRun,
             ttlExpired,
             noiseEvicted,
+            bogusModelsEvicted,
+            duplicatesSuperseded,
             reclassified,
             dormantEvicted,
             contradictions,
-            cleanedCount: dryRun ? 0 : (ttlExpired.length + dormantEvicted.length + noiseEvicted.length),
+            cleanedCount: dryRun ? 0 : (ttlExpired.length + dormantEvicted.length + noiseEvicted.length + bogusModelsEvicted.length + duplicatesSuperseded.length),
         };
     }
 
@@ -2947,12 +3083,21 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         const cog = st.cognitive;
         const recommendations = [];
         const noiseCount = (sweepPreview.noiseEvicted || []).length;
+        const bogusModelsCount = (sweepPreview.bogusModelsEvicted || []).length;
+        const duplicatesCount = (sweepPreview.duplicatesSuperseded || []).length;
         const reclassifiedCount = (sweepPreview.reclassified || []).length;
+        const totalQualityIssues = noiseCount + bogusModelsCount + duplicatesCount;
         if (sweepPreview.ttlExpired.length > 0) {
             recommendations.push(`发现 ${sweepPreview.ttlExpired.length} 条已超过 TTL 的记忆，建议执行 autoForget 清理。`);
         }
         if (noiseCount > 0) {
-            recommendations.push(`检测到 ${noiseCount} 条低信噪比自动采入碎片（定时任务标题/系统注入/短指令），建议执行 auto-forget 净化记忆库。`);
+            recommendations.push(`检测到 ${noiseCount} 条空壳/噪声碎片（单行标题、系统注入、纯链接或短指令），建议执行 auto-forget 净化记忆库。`);
+        }
+        if (bogusModelsCount > 0) {
+            recommendations.push(`检测到 ${bogusModelsCount} 条无效目录心智模型或重复观察，建议执行 auto-forget 清理。`);
+        }
+        if (duplicatesCount > 0) {
+            recommendations.push(`检测到 ${duplicatesCount} 条跨作用域重复条目，执行 auto-forget 将自动触发 supersede 归并。`);
         }
         if (reclassifiedCount > 0) {
             recommendations.push(`检测到 ${reclassifiedCount} 条偏好/口径规则被归入 experience，建议执行 auto-forget 自动纠偏为 opinion。`);
@@ -2964,17 +3109,19 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             recommendations.push("尚未生成反思洞察与心智模型，建议执行 reflect 提炼跨会话规律。");
         }
         if (!recommendations.length) {
-            recommendations.push("记忆库健康状况良好：RRF 混合检索、Ebbinghaus 衰减与双时态图谱均运行正常。");
+            recommendations.push("记忆库健康状况良好：内容信噪比达标，RRF 混合检索、Ebbinghaus 衰减与双时态图谱均运行正常。");
         }
-        const noiseRatio = cog.activeItems > 0 ? noiseCount / cog.activeItems : 0;
-        const noisePenalty = Math.min(35, Math.round(noiseRatio * 40));
+        const qualityIssueRatio = cog.activeItems > 0 ? totalQualityIssues / cog.activeItems : 0;
+        const qualityPenalty = Math.min(55, Math.round(qualityIssueRatio * 65));
         return {
             engineVersion: ENGINE_VERSION,
             archiveDir: st.archiveDir,
-            healthScore: Math.max(25, 100 - sweepPreview.ttlExpired.length * 5 - Math.min(25, sweepPreview.contradictions.length * 5) - noisePenalty),
+            healthScore: Math.max(15, 100 - sweepPreview.ttlExpired.length * 5 - Math.min(20, sweepPreview.contradictions.length * 5) - qualityPenalty),
             cognitive: cog,
             ttlExpiredCount: sweepPreview.ttlExpired.length,
             noiseCount,
+            bogusModelsCount,
+            duplicatesCount,
             reclassifiedCount,
             dormantWorkingCount: sweepPreview.dormantEvicted.length,
             contradictionsCount: sweepPreview.contradictions.length,
@@ -3019,6 +3166,8 @@ module.exports = {
     sanitizeSnippet,
     isNoiseMemoryText,
     isReusableMemoryCandidate,
+    isValidProjectName,
+    isEmptyShellItem,
     classifyBank,
     isoWeekKey,
     localDateKey,

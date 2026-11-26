@@ -438,11 +438,19 @@ try {
     assert.equal(isNoiseTopicText("Implement the plan."), true);
     assert.equal(isNoiseTopicText("<system-reminder> Attribution for git commits"), true);
     assert.equal(isNoiseMemoryText("https://github.com/haoyu-qi/qlex"), true);
+    assert.equal(isNoiseMemoryText("<t3_code_instructions> ## T3 Code interaction mode: Default"), true);
+    assert.equal(isNoiseMemoryText("[File: 2027重点产品规划.pdf] 压缩成四张ppt 图片，图片风格参考附件"), true);
     assert.equal(isReusableMemoryCandidate("将项目 274 的任务合并到 460"), false, "One-off operational command must not auto-ingest as long-term memory");
-    assert.equal(isReusableMemoryCandidate("不是 分两块 新增功能 问题修复，对外发布口径统一按这两类拆分"), true);
+    assert.equal(isReusableMemoryCandidate("不是 分两块 新增功能 问题修复，对外发布口径统一按这两类拆分，后续版本变更日志严格遵循此分类规则"), true);
     assert.equal(classifyBank("不是 分两块 新增功能 问题修复"), "opinion", "Classification/preference correction must map to opinion, not experience");
+    const { isValidProjectName } = require(path.join(root, "desktop/src/memory-core.js"));
+    assert.equal(isValidProjectName("gu"), false);
+    assert.equal(isValidProjectName("new-chat"), false);
+    assert.equal(isValidProjectName("Documents"), false);
+    assert.equal(isValidProjectName("qijingchun"), false);
+    assert.equal(isValidProjectName("workcontext"), true);
 
-    // autoForget noise hygiene sweep on legacy polluted auto-ingested items
+    // autoForget shell + noise + bogus mental_model hygiene sweep
     const hygieneHome = path.join(tmpHome, "hygiene-home");
     const hygieneEngine = createCognitiveMemoryEngine({
         home: hygieneHome,
@@ -450,12 +458,23 @@ try {
     });
     hygieneEngine.retain({ title: "个人日报 · Nov 18 18:56", content: "个人日报 · Nov 18 18:56", source: "hermes", originChannel: "import", tags: ["hermes", "2026-11-18"] });
     hygieneEngine.retain({ title: "Implement the plan.", content: "Implement the plan.", source: "codex", originChannel: "import", tags: ["codex", "2026-11-20"] });
-    hygieneEngine.retain({ title: "不是 分两块 新增功能 问题修复", content: "不是 分两块 新增功能 问题修复，统一按两类整理", bank: "experience", source: "antigravity", originChannel: "import", tags: ["antigravity", "2026-11-22"] });
+    hygieneEngine.retain({ title: "<t3_code_instructions> Default", content: "<t3_code_instructions> ## T3 Code interaction mode: Default Prefer making reasonable assumptions", source: "antigravity", originChannel: "import", tags: ["antigravity", "2026-11-25"] });
+    hygieneEngine.retain({ title: "gu 项目心智模型", content: "基于 2 条项目记录自动合成", bank: "mental_model", project: "gu", source: "system" });
+    hygieneEngine.retain({
+        title: "版本发布口径规则",
+        content: "不是 分两块 新增功能 问题修复，对外发布口径统一按这两类拆分，后续所有版本变更日志严格遵循此分类原则不得混写。",
+        bank: "experience",
+        source: "antigravity",
+        originChannel: "import",
+        tags: ["antigravity", "2026-11-22"],
+    });
     const hygieneRes = hygieneEngine.autoForget({ dryRun: false });
-    assert.equal(hygieneRes.noiseEvicted.length, 2, "autoForget must evict legacy auto-ingested cron & fragment noise");
+    assert.equal(hygieneRes.noiseEvicted.length, 3, "autoForget must evict legacy cron, fragment, and T3 instruction noise");
+    assert.equal(hygieneRes.bogusModelsEvicted.length, 1, "autoForget must evict bogus directory mental_model (gu)");
     assert.equal(hygieneRes.reclassified.length, 1, "autoForget must reclassify misrouted preference item from experience to opinion");
     const afterDiag = hygieneEngine.diagnose();
     assert.equal(afterDiag.noiseCount, 0);
+    assert.equal(afterDiag.bogusModelsCount, 0);
 
     // ---- 10. Regression: DSH multi-frame ZSTD + camelCase usage & Codex response_item user messages ----
     const zlib = require("node:zlib");

@@ -100,9 +100,25 @@ function decodeClaudeProjectSlug(slug) {
 
 const NOISE_CRON_TITLE_RE = /^(?:每日工作日报|个人日报|个人周报|工作日报|邮件简报|周报汇总|月报汇总|定时任务|scheduled\s+task|daily\s+digest|daily\s+standup|morning\s+brief|evening\s+brief)/i;
 const NOISE_DATE_BADGE_RE = /(?:（\d{2}:\d{2}）|\(\d{2}:\d{2}\))?\s*[·•]\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}(?:\s+\d{2}:\d{2})?$/i;
-const NOISE_SYSTEM_RE = /^(?:<system-reminder>|<copilot-context>|group\s+chat\s+system:|context\s+handoff|provider\s+context\s+handoff|describe\s+contents\s+of\s+attached\s+image|attached\s+image|\[historical\s+|\[image:|#\s*agents\.md\s+instructions)/i;
-const NOISE_TRIVIAL_CMD_RE = /^(?:implement\s+the\s+plan\.?|continue\.?|ok\.?|yes\.?|done\.?|继续|好的|收到|确认|修复|打包推送|打包|推送|授权好了|核对下|核对一下|看看|试一下|重新生成|开始吧|可以|可以的|没问题|好的谢谢|用飞书\s*cli\s*获取内容|梳理下项目[，,。]?\s*(?:并给出优化建议)?)$/i;
+const NOISE_SYSTEM_RE = /^(?:<system-reminder>|<copilot-context>|<t3_code_instructions>|<context_summary>|<environment_context>|group\s+chat\s+system:|context\s+handoff|provider\s+context\s+handoff|current\s+runtime\s+context|describe\s+contents\s+of\s+attached\s+image|attached\s+image|\[historical\s+|\[image:|\[file:|\[attached\b|@file:|#\s*files\s+mentioned\s+by\s+the\s+user|#\s*agents\.md\s+instructions)/i;
+const NOISE_TRIVIAL_CMD_RE = /^(?:implement\s+the\s+plan\.?|continue\.?|ok\.?|yes\.?|done\.?|继续|好的|收到|确认|修复|打包推送|打包|推送|授权好了|核对下|核对一下|看看|试一下|重新生成|开始吧|可以|可以的|没问题|好的谢谢|用飞书\s*cli\s*获取内容|梳理下项目[，,。]?\s*(?:并给出优化建议)?|feishu\s+whiteboard\s+designer)$/i;
 const NOISE_SOCIAL_SHARE_RE = /复制打开抖音|长按复制此条消息|打开小红书|打开哔哩哔哩/i;
+const INVALID_PROJECT_NAMES = new Set([
+    "documents", "desktop", "downloads", "home", "users", "user", "tmp", "temp", "var", "etc",
+    "new-chat", "new_chat", "untitled", "workspace", "default", "agent", "agents", "brain",
+    "logs", "sessions", "projects", "library", "applications", "qijingchun", "mac", "mini",
+]);
+
+function normalizeProjectName(raw) {
+    const name = String(raw || "").trim();
+    if (!name) return "";
+    const lower = name.toLowerCase();
+    if (INVALID_PROJECT_NAMES.has(lower)) return "";
+    // Reject 1-2 char ASCII fragments (e.g. "gu" from slug decode) or bare numbers/dates
+    if (/^[a-z0-9._-]{1,2}$/i.test(name)) return "";
+    if (/^\d{4}(?:[-_]\d{2}){0,2}$/.test(name)) return "";
+    return name;
+}
 
 function isNoiseTopicText(text, meta = {}) {
     const s = String(text || "").trim();
@@ -134,7 +150,9 @@ function extractRealUserText(raw) {
         s = s.slice(handoffIdx + "\nUser message:\n".length);
     }
     s = s.replace(/<t3_code_instructions>[\s\S]*?<\/t3_code_instructions>/gi, "");
+    s = s.replace(/<t3_code_instructions>[\s\S]*$/gi, ""); // Also strip truncated unclosed wrapper!
     s = s.replace(/<CONTEXT_SUMMARY>[\s\S]*?<\/CONTEXT_SUMMARY>/gi, "");
+    s = s.replace(/<CONTEXT_SUMMARY>[\s\S]*$/gi, "");
     s = s.replace(/<SYSTEM_MESSAGE>[\s\S]*?<\/SYSTEM_MESSAGE>/gi, "");
     s = s.replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/gi, "");
     s = s.replace(/<runtime_info>[\s\S]*?<\/runtime_info>/gi, "");
@@ -143,6 +161,9 @@ function extractRealUserText(raw) {
     s = s.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, "");
     s = s.replace(/<copilot-context>[\s\S]*?<\/copilot-context>/gi, "");
     s = s.replace(/\[Image:[^\]]*\]/gi, "");
+    s = s.replace(/\[File:[^\]]*\]/gi, "");
+    s = s.replace(/\[Attached\s+image[^\]]*\]/gi, "");
+    s = s.replace(/#\s*Files\s+mentioned\s+by\s+the\s+user:[\s\S]*$/gi, "");
     if (/^#\s*AGENTS\.md instructions/i.test(s.trim())) return "";
     return sanitizeTopic(s, 200);
 }
