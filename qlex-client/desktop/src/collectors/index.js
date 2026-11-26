@@ -101,7 +101,7 @@ function decodeClaudeProjectSlug(slug) {
 const NOISE_CRON_TITLE_RE = /^(?:每日工作日报|个人日报|个人周报|工作日报|邮件简报|周报汇总|月报汇总|定时任务|scheduled\s+task|daily\s+digest|daily\s+standup|morning\s+brief|evening\s+brief)/i;
 const NOISE_DATE_BADGE_RE = /(?:（\d{2}:\d{2}）|\(\d{2}:\d{2}\))?\s*[·•]\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}(?:\s+\d{2}:\d{2})?$/i;
 const NOISE_SYSTEM_RE = /^(?:<system-reminder>|<copilot-context>|<t3_code_instructions>|<context_summary>|<environment_context>|group\s+chat\s+system:|context\s+handoff|provider\s+context\s+handoff|current\s+runtime\s+context|describe\s+contents\s+of\s+attached\s+image|attached\s+image|\[historical\s+|\[image:|\[file:|\[attached\b|@file:|#\s*files\s+mentioned\s+by\s+the\s+user|#\s*agents\.md\s+instructions)/i;
-const NOISE_TRIVIAL_CMD_RE = /^(?:implement\s+the\s+plan\.?|continue\.?|ok\.?|yes\.?|done\.?|继续|好的|收到|确认|修复|打包推送|打包|推送|授权好了|核对下|核对一下|看看|试一下|重新生成|开始吧|可以|可以的|没问题|好的谢谢|用飞书\s*cli\s*获取内容|梳理下项目[，,。]?\s*(?:并给出优化建议)?|feishu\s+whiteboard\s+designer)$/i;
+const NOISE_TRIVIAL_CMD_RE = /^(?:implement\s+the\s+plan\.?|continue\.?|ok\.?|yes\.?|done\.?|继续|好的|好的[，,。]?\s*好了告知我|收到|确认|修复|打包推送|打包|推送|授权好了|核对下|核对一下|看看|试一下|重新生成|开始吧|可以|可以的|没问题|好的谢谢|用飞书\s*cli\s*获取内容|梳理下项目[，,。]?\s*(?:并给出优化建议)?|feishu\s+whiteboard\s+designer)$/i;
 const NOISE_SOCIAL_SHARE_RE = /复制打开抖音|长按复制此条消息|打开小红书|打开哔哩哔哩/i;
 const INVALID_PROJECT_NAMES = new Set([
     "documents", "desktop", "downloads", "home", "users", "user", "tmp", "temp", "var", "etc",
@@ -160,6 +160,7 @@ function extractRealUserText(raw) {
     s = s.replace(/<workspace_folders>[\s\S]*?<\/workspace_folders>/gi, "");
     s = s.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, "");
     s = s.replace(/<copilot-context>[\s\S]*?<\/copilot-context>/gi, "");
+    s = s.replace(/<external_codex_[^>]*>[\s\S]*?<\/external_codex_[^>]*>/gi, "");
     s = s.replace(/\[Image:[^\]]*\]/gi, "");
     s = s.replace(/\[File:[^\]]*\]/gi, "");
     s = s.replace(/\[Attached\s+image[^\]]*\]/gi, "");
@@ -169,6 +170,98 @@ function extractRealUserText(raw) {
 }
 
 const ZSTD_MAGIC = Buffer.from([0x28, 0xB5, 0x2F, 0xFD]);
+
+function cleanAssistantOutput(raw, maxLen = 420) {
+    if (typeof raw !== "string") return "";
+    let s = raw
+        .replace(SECRET_PATTERN, "[REDACTED]")
+        .replace(/```[\s\S]*?```/g, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+        .replace(/\[([^\]]+)\]\((?:file:\/\/|https?:\/\/)[^)]+\)/g, "$1")
+        .replace(/\r/g, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .replace(/[ \t]{2,}/g, " ")
+        .replace(/^[`\s]+|[`\s]+$/g, "")
+        .trim();
+    const meaningful = s.replace(/[^\p{L}\p{N}]+/gu, "");
+    if (meaningful.length < 24) return "";
+    if (s.length > maxLen) s = s.slice(0, maxLen).trim() + "…";
+    return s;
+}
+
+function collectFileRefs(str, fileSet) {
+    if (typeof str !== "string" || !str || fileSet.size >= 10) return;
+    const matches = str.match(/[A-Za-z0-9\u4e00-\u9fff._-]{2,64}\.(?:js|mjs|cjs|ts|tsx|py|md|json|pptx|docx|xlsx|pdf|css|html|sh|go|rs|yaml|yml|sql|drawio|png|jpg|mp4)\b/g);
+    if (!matches) return;
+    for (const rawM of matches) {
+        if (fileSet.size >= 10) break;
+        const m = rawM.replace(/^["'`\\]+|["'`\\]+$/g, "");
+        const lower = m.toLowerCase();
+        if (!m || lower === "transcript.jsonl" || lower === "package-lock.json" || lower.endsWith(".tmp")) continue;
+        fileSet.add(m);
+    }
+}
+
+function buildSessionEpisode({
+    source,
+    sessionId,
+    workspace = "",
+    lastActive = 0,
+    startedAt = 0,
+    titleHint = "",
+    problems = [],
+    toolsUsed = [],
+    filesTouched = [],
+    outputs = [],
+    turns = 0,
+    dailyBuckets = {},
+}) {
+    if (!sessionId || /^cron_/i.test(String(sessionId))) return null;
+    const cleanProblems = [];
+    for (const p of problems || []) {
+        const s = sanitizeTopic(String(p || ""), 180);
+        if (!s || s.length < 6 || isNoiseTopicText(s, { sessionId })) continue;
+        if (!cleanProblems.some(x => x === s)) cleanProblems.push(s);
+        if (cleanProblems.length >= 4) break;
+    }
+    const cleanOutputs = [];
+    for (const o of outputs || []) {
+        const s = cleanAssistantOutput(String(o || ""), 420);
+        if (!s || s.length < 30 || NOISE_SYSTEM_RE.test(s)) continue;
+        if (!cleanOutputs.some(x => x === s)) cleanOutputs.push(s);
+    }
+    const finalOutputs = cleanOutputs.slice(-2);
+
+    const hintClean = sanitizeTopic(String(titleHint || ""), 80);
+    const validHint = hintClean && hintClean !== "New thread" && !isNoiseTopicText(hintClean, { sessionId }) ? hintClean : "";
+    const title = validHint || sanitizeTopic(cleanProblems[0] || "", 68) || sanitizeTopic(finalOutputs[0] || "", 68);
+    if (!title || isNoiseTopicText(title, { sessionId })) return null;
+    // Require genuine work substance: at least 1 output OR (1 problem + tool actions)
+    if (!finalOutputs.length && !(cleanProblems.length && (toolsUsed?.length || filesTouched?.length))) return null;
+
+    const tokens = Object.values(dailyBuckets || {}).reduce((sum, b) => sum + num(b?.tokens), 0);
+    const project = normalizeProjectName(workspace ? path.basename(workspace) : "");
+    const activeMs = lastActive || startedAt || Date.now();
+    const startMs = startedAt || activeMs;
+
+    return {
+        source,
+        sessionId: String(sessionId),
+        date: localDateKey(activeMs),
+        startedDate: localDateKey(startMs),
+        lastActive: activeMs,
+        project,
+        workspace: workspace || "",
+        title,
+        problems: cleanProblems,
+        toolsUsed: [...new Set((toolsUsed || []).filter(Boolean))].slice(0, 8),
+        filesTouched: [...new Set((filesTouched || []).filter(Boolean))].slice(0, 8),
+        outputs: finalOutputs,
+        turns: Math.max(turns || 0, finalOutputs.length),
+        tokens,
+    };
+}
 
 function decompressZstdSync(buf) {
     if (typeof zlib.zstdDecompressSync !== "function" || !Buffer.isBuffer(buf) || !buf.length) {
@@ -374,26 +467,34 @@ function allocateCumulativeSessionBuckets(cache, ledgerKey, totals, activeDate, 
  * 1. Codex Collector (~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-*.jsonl)
  */
 function parseCodexFile(fileInfo, cache) {
-    const sig = `codex2:${fileInfo.mtimeMs}:${fileInfo.size}`;
+    const sig = `codex4:${fileInfo.mtimeMs}:${fileInfo.size}`;
     const cached = cache.get(fileInfo.path, sig);
     if (cached) return cached;
 
     let sessionId = path.basename(fileInfo.path, ".jsonl");
     let workspace = "";
     let lastActive = fileInfo.mtimeMs;
+    let firstTs = 0;
     const dailyBuckets = {}; // date -> { input, output, cacheRead, cacheWrite, tokens }
     const topicsByDay = new Map();
+    const problems = [];
+    const outputs = [];
+    const toolsUsed = new Set();
+    const filesTouched = new Set();
+    let turns = 0;
     let prevTotal = null;
 
     const pushCodexTopic = (ts, rawMsg) => {
         if (typeof rawMsg !== "string" || !rawMsg) return;
         const clean = extractRealUserText(rawMsg);
         if (!clean || clean.length < 6 || /^\$[a-z0-9._-]+$/i.test(clean) || isNoiseTopicText(clean)) return;
+        if (problems.length < 4 && !problems.includes(clean)) problems.push(clean);
+        collectFileRefs(rawMsg, filesTouched);
         const date = localDateKey(ts);
         let list = topicsByDay.get(date);
         if (!list) { list = []; topicsByDay.set(date, list); }
         if (!list.some(x => x.text === clean)) {
-            list.push({ date, ts, source: "codex", project: workspace ? path.basename(workspace) : "", text: clean });
+            list.push({ date, ts, source: "codex", project: normalizeProjectName(workspace ? path.basename(workspace) : ""), text: clean });
             if (list.length > 8) list.shift();
         }
     };
@@ -405,6 +506,7 @@ function parseCodexFile(fileInfo, cache) {
             let row;
             try { row = JSON.parse(line); } catch { continue; }
             const ts = Date.parse(row.timestamp) || fileInfo.mtimeMs;
+            if (!firstTs || ts < firstTs) firstTs = ts;
             if (ts > lastActive) lastActive = ts;
 
             if (row.type === "session_meta" && row.payload) {
@@ -460,12 +562,25 @@ function parseCodexFile(fileInfo, cache) {
                     ? row.payload.content.map(c => (typeof c === "string" ? c : c?.text || "")).join(" ")
                     : typeof row.payload.content === "string" ? row.payload.content : "";
                 pushCodexTopic(ts, content);
+            } else if (row.type === "response_item" && row.payload?.type === "message" && row.payload?.role === "assistant") {
+                turns++;
+                const content = Array.isArray(row.payload.content)
+                    ? row.payload.content.map(c => (typeof c === "string" ? c : c?.text || "")).join("\n")
+                    : typeof row.payload.content === "string" ? row.payload.content : "";
+                if (content.trim().length >= 30) {
+                    outputs.push(content);
+                    collectFileRefs(content, filesTouched);
+                }
+            } else if (row.type === "response_item" && (row.payload?.type === "custom_tool_call" || row.payload?.type === "function_call")) {
+                if (row.payload.name) toolsUsed.add(String(row.payload.name));
+                if (typeof row.payload.input === "string") collectFileRefs(row.payload.input, filesTouched);
+                if (typeof row.payload.arguments === "string") collectFileRefs(row.payload.arguments, filesTouched);
             }
         }
     } catch { /* unreadable */ }
 
     const topics = [];
-    const projName = workspace ? path.basename(workspace) : "";
+    const projName = normalizeProjectName(workspace ? path.basename(workspace) : "");
     for (const d of [...topicsByDay.keys()].sort().slice(-14)) {
         for (const t of topicsByDay.get(d)) {
             if (!t.project && projName) t.project = projName;
@@ -473,7 +588,21 @@ function parseCodexFile(fileInfo, cache) {
         }
     }
 
-    const parsed = { source: "codex", sessionId, workspace, lastActive, dailyBuckets, topics };
+    const episode = buildSessionEpisode({
+        source: "codex",
+        sessionId,
+        workspace,
+        lastActive,
+        startedAt: firstTs || lastActive,
+        problems,
+        toolsUsed: [...toolsUsed],
+        filesTouched: [...filesTouched],
+        outputs,
+        turns,
+        dailyBuckets,
+    });
+
+    const parsed = { source: "codex", sessionId, workspace, lastActive, dailyBuckets, topics, episode };
     cache.set(fileInfo.path, sig, parsed);
     return parsed;
 }
@@ -482,7 +611,7 @@ function parseCodexFile(fileInfo, cache) {
  * 2. Claude Code Collector (~/.claude/projects/<slug>/*.jsonl)
  */
 function parseClaudeFile(fileInfo, cache) {
-    const sig = `${fileInfo.mtimeMs}:${fileInfo.size}`;
+    const sig = `claude3:${fileInfo.mtimeMs}:${fileInfo.size}`;
     const cached = cache.get(fileInfo.path, sig);
     if (cached) return cached;
 
@@ -490,8 +619,14 @@ function parseClaudeFile(fileInfo, cache) {
     const slugDir = path.basename(path.dirname(fileInfo.path));
     let workspace = decodeClaudeProjectSlug(slugDir);
     let lastActive = fileInfo.mtimeMs;
+    let firstTs = 0;
     const dailyBuckets = {};
     const topics = [];
+    const problems = [];
+    const outputs = [];
+    const toolsUsed = new Set();
+    const filesTouched = new Set();
+    let turns = 0;
     const seenMsgUsage = new Set();
 
     try {
@@ -501,6 +636,7 @@ function parseClaudeFile(fileInfo, cache) {
             let row;
             try { row = JSON.parse(line); } catch { continue; }
             const ts = Date.parse(row.timestamp) || fileInfo.mtimeMs;
+            if (!firstTs || ts < firstTs) firstTs = ts;
             if (ts > lastActive) lastActive = ts;
             if (row.sessionId) sessionId = String(row.sessionId);
             if (!workspace && typeof row.cwd === "string" && path.isAbsolute(row.cwd)) workspace = path.normalize(row.cwd);
@@ -525,19 +661,63 @@ function parseClaudeFile(fileInfo, cache) {
                     b.tokens += tokens;
                     dailyBuckets[date] = b;
                 }
-            } else if (topics.length < 12 && (row.type === "user" || msg?.role === "user")) {
+            }
+            if (row.type === "assistant" || msg?.role === "assistant") {
+                turns++;
+                if (Array.isArray(msg?.content)) {
+                    const textParts = [];
+                    for (const c of msg.content) {
+                        if (c?.type === "tool_use" && c.name) {
+                            toolsUsed.add(String(c.name));
+                            if (c.input && typeof c.input === "object") {
+                                if (typeof c.input.file_path === "string") filesTouched.add(path.basename(c.input.file_path));
+                                if (typeof c.input.path === "string") filesTouched.add(path.basename(c.input.path));
+                            }
+                        } else if (c?.type === "text" && typeof c.text === "string") {
+                            textParts.push(c.text);
+                        }
+                    }
+                    const joined = textParts.join("\n").trim();
+                    if (joined.length >= 30) {
+                        outputs.push(joined);
+                        collectFileRefs(joined, filesTouched);
+                    }
+                } else if (typeof msg?.content === "string" && msg.content.trim().length >= 30) {
+                    outputs.push(msg.content.trim());
+                    collectFileRefs(msg.content, filesTouched);
+                }
+            } else if (row.type === "user" || msg?.role === "user") {
                 const content = typeof msg?.content === "string"
                     ? msg.content
                     : Array.isArray(msg?.content)
                         ? msg.content.map(c => (typeof c === "string" ? c : c?.text || "")).join(" ")
                         : "";
                 const clean = extractRealUserText(content);
-                if (clean.length >= 6) topics.push({ date: localDateKey(ts), ts, source: "claude", project: workspace ? path.basename(workspace) : "", text: clean });
+                if (clean.length >= 6 && !isNoiseTopicText(clean)) {
+                    if (problems.length < 4 && !problems.includes(clean)) problems.push(clean);
+                    if (topics.length < 12) {
+                        topics.push({ date: localDateKey(ts), ts, source: "claude", project: normalizeProjectName(workspace ? path.basename(workspace) : ""), text: clean });
+                    }
+                }
             }
         }
     } catch { /* ignore */ }
 
-    const parsed = { source: "claude", sessionId, workspace, lastActive, dailyBuckets, topics };
+    const episode = buildSessionEpisode({
+        source: "claude",
+        sessionId,
+        workspace,
+        lastActive,
+        startedAt: firstTs || lastActive,
+        problems,
+        toolsUsed: [...toolsUsed],
+        filesTouched: [...filesTouched],
+        outputs,
+        turns,
+        dailyBuckets,
+    });
+
+    const parsed = { source: "claude", sessionId, workspace, lastActive, dailyBuckets, topics, episode };
     cache.set(fileInfo.path, sig, parsed);
     return parsed;
 }
@@ -545,11 +725,11 @@ function parseClaudeFile(fileInfo, cache) {
 /**
  * 3. Antigravity Collector (T3 Code ACP transcripts + ~/.gemini/antigravity/brain)
  * Reads real top-level token counters (`input_tokens`, `output_tokens`, `cache_read_tokens`),
- * resolves workspace from transcript headers or T3 Code statev2.sqlite, and caps topics per day
- * so long multi-day sessions always record today's substantive work.
+ * resolves workspace & thread title from T3 Code statev2.sqlite, and builds a structured session episode
+ * capturing project theme, problems, process (tools & files), and final outputs/conclusions.
  */
-function parseAntigravityTranscript(fileInfo, cache, t3WorkspaceMap = null) {
-    const sig = `ag2:${fileInfo.mtimeMs}:${fileInfo.size}`;
+function parseAntigravityTranscript(fileInfo, cache, t3MetaMap = null) {
+    const sig = `ag4:${fileInfo.mtimeMs}:${fileInfo.size}`;
     const cached = cache.get(fileInfo.path, sig);
     if (cached) return cached;
 
@@ -557,10 +737,18 @@ function parseAntigravityTranscript(fileInfo, cache, t3WorkspaceMap = null) {
     const parts = fileInfo.path.split(path.sep);
     const brainIdx = parts.lastIndexOf("brain");
     const sessionId = brainIdx >= 0 && parts[brainIdx + 1] ? parts[brainIdx + 1] : path.basename(path.dirname(fileInfo.path));
-    let workspace = (t3WorkspaceMap && t3WorkspaceMap.get(sessionId)) || "";
+    const t3Meta = t3MetaMap ? t3MetaMap.get(sessionId) : null;
+    let workspace = (typeof t3Meta === "string" ? t3Meta : t3Meta?.cwd) || "";
+    const titleHint = typeof t3Meta === "object" && t3Meta?.title ? t3Meta.title : "";
     let lastActive = fileInfo.mtimeMs;
+    let firstTs = 0;
     const dailyBuckets = {};
     const topicsByDay = new Map();
+    const problems = [];
+    const outputs = [];
+    const toolsUsed = new Set();
+    const filesTouched = new Set();
+    let turns = 0;
 
     try {
         const text = fs.readFileSync(fileInfo.path, "utf8");
@@ -569,6 +757,7 @@ function parseAntigravityTranscript(fileInfo, cache, t3WorkspaceMap = null) {
             let row;
             try { row = JSON.parse(line); } catch { continue; }
             const ts = Date.parse(row.created_at || row.timestamp || "") || fileInfo.mtimeMs;
+            if (!firstTs || ts < firstTs) firstTs = ts;
             if (ts > lastActive) lastActive = ts;
             const date = localDateKey(ts);
 
@@ -611,14 +800,32 @@ function parseAntigravityTranscript(fileInfo, cache, t3WorkspaceMap = null) {
                 dailyBuckets[date] = b;
             }
 
+            if (row.type === "PLANNER_RESPONSE") {
+                turns++;
+                if (Array.isArray(row.tool_calls)) {
+                    for (const tc of row.tool_calls) {
+                        if (tc?.name) toolsUsed.add(String(tc.name));
+                        if (tc?.args) {
+                            if (typeof tc.args.Path === "string") filesTouched.add(path.basename(tc.args.Path));
+                            if (typeof tc.args.CommandLine === "string") collectFileRefs(tc.args.CommandLine, filesTouched);
+                        }
+                    }
+                }
+                if (contentStr.trim().length >= 35) {
+                    outputs.push(contentStr);
+                    collectFileRefs(contentStr, filesTouched);
+                }
+            }
+
             if (row.type === "USER_INPUT" && typeof row.content === "string") {
                 const clean = extractRealUserText(row.content);
                 if (clean.length >= 6 && !isNoiseTopicText(clean)) {
+                    if (problems.length < 4 && !problems.includes(clean)) problems.push(clean);
                     let dayList = topicsByDay.get(date);
                     if (!dayList) { dayList = []; topicsByDay.set(date, dayList); }
                     if (!dayList.some(x => x.text === clean)) {
-                        dayList.push({ date, ts, source: "antigravity", project: workspace ? path.basename(workspace) : "", text: clean });
-                        if (dayList.length > 8) dayList.shift(); // Keep latest 8 substantive topics per day
+                        dayList.push({ date, ts, source: "antigravity", project: normalizeProjectName(workspace ? path.basename(workspace) : ""), text: clean });
+                        if (dayList.length > 8) dayList.shift();
                     }
                 }
             }
@@ -626,7 +833,7 @@ function parseAntigravityTranscript(fileInfo, cache, t3WorkspaceMap = null) {
     } catch { /* ignore */ }
 
     const topics = [];
-    const projName = workspace ? path.basename(workspace) : "";
+    const projName = normalizeProjectName(workspace ? path.basename(workspace) : "");
     for (const d of [...topicsByDay.keys()].sort().slice(-14)) {
         for (const t of topicsByDay.get(d)) {
             if (!t.project && projName) t.project = projName;
@@ -634,13 +841,28 @@ function parseAntigravityTranscript(fileInfo, cache, t3WorkspaceMap = null) {
         }
     }
 
-    const parsed = { source: "antigravity", sessionId, workspace, lastActive, dailyBuckets, topics };
+    const episode = buildSessionEpisode({
+        source: "antigravity",
+        sessionId,
+        workspace,
+        lastActive,
+        startedAt: firstTs || lastActive,
+        titleHint,
+        problems,
+        toolsUsed: [...toolsUsed],
+        filesTouched: [...filesTouched],
+        outputs,
+        turns,
+        dailyBuckets,
+    });
+
+    const parsed = { source: "antigravity", sessionId, workspace, lastActive, dailyBuckets, topics, episode };
     cache.set(fileInfo.path, sig, parsed);
     return parsed;
 }
 
 /**
- * Resolve Antigravity native-thread UUID -> T3 Code project workspace_root via statev2.sqlite
+ * Resolve Antigravity native-thread UUID -> T3 Code { cwd, title } via statev2.sqlite
  */
 async function loadT3AntigravityWorkspaceMap(home, env, customPath) {
     const map = new Map();
@@ -650,13 +872,17 @@ async function loadT3AntigravityWorkspaceMap(home, env, customPath) {
         path.join(home, ".t3", "userdata", "statev2.sqlite"),
     ].filter(p => p && fs.existsSync(p));
     for (const dbPath of dbCandidates) {
-        const sql = `SELECT ps.provider_thread_id, p.workspace_root AS cwd FROM orchestration_v2_projection_provider_threads ps JOIN orchestration_v2_projection_threads t ON t.thread_id = ps.thread_id LEFT JOIN projection_projects p ON p.project_id = t.project_id WHERE ps.provider = 'antigravity' AND p.workspace_root IS NOT NULL;`;
+        const sql = `SELECT ps.provider_thread_id, t.title, p.workspace_root AS cwd FROM orchestration_v2_projection_provider_threads ps JOIN orchestration_v2_projection_threads t ON t.thread_id = ps.thread_id LEFT JOIN projection_projects p ON p.project_id = t.project_id WHERE ps.provider = 'antigravity';`;
         try {
             const { stdout } = await execFileAsync("sqlite3", ["-readonly", "-json", dbPath, sql], { timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
             for (const r of JSON.parse(stdout || "[]")) {
-                if (typeof r.provider_thread_id !== "string" || typeof r.cwd !== "string" || !path.isAbsolute(r.cwd)) continue;
+                if (typeof r.provider_thread_id !== "string") continue;
                 const m = r.provider_thread_id.match(/native-thread:([0-9a-f-]{36})$/i);
-                if (m) map.set(m[1], path.normalize(r.cwd));
+                if (m) {
+                    const cwd = typeof r.cwd === "string" && path.isAbsolute(r.cwd) ? path.normalize(r.cwd) : "";
+                    const title = typeof r.title === "string" ? r.title.trim() : "";
+                    map.set(m[1], { cwd, title });
+                }
             }
         } catch { /* ignore if schema differs */ }
     }
@@ -703,26 +929,46 @@ async function collectHermesSessions(home, env, sinceMs, cache = null) {
                 }
             } catch { /* older schema without messages table is fine */ }
 
-            // Load substantive user messages for non-cron Hermes sessions so high-token chat days yield real work topics
+            // Load substantive user messages, tool actions, and final assistant outputs for non-cron Hermes sessions
             const msgTopicsBySession = new Map();
+            const epDetailsBySession = new Map();
             try {
-                const userMsgSql = `SELECT m.session_id, m.timestamp, substr(m.content, 1, 600) AS content FROM messages m WHERE m.role = 'user' AND m.timestamp >= ${sinceSec} AND m.session_id NOT LIKE 'cron_%' AND length(COALESCE(m.content, '')) >= 12 ORDER BY m.timestamp DESC LIMIT 600;`;
-                const { stdout: umOut } = await execFileAsync("sqlite3", ["-readonly", "-json", dbPath, userMsgSql], { timeout: 8000, maxBuffer: 8 * 1024 * 1024 });
+                const detailSql = `SELECT m.session_id, m.role, m.tool_name, m.timestamp, substr(COALESCE(m.content, ''), 1, 700) AS content FROM messages m WHERE m.timestamp >= ${sinceSec} AND m.session_id NOT LIKE 'cron_%' AND (m.role IN ('user', 'assistant') OR m.tool_name IS NOT NULL) ORDER BY m.id ASC LIMIT 4000;`;
+                const { stdout: umOut } = await execFileAsync("sqlite3", ["-readonly", "-json", dbPath, detailSql], { timeout: 8000, maxBuffer: 12 * 1024 * 1024 });
                 for (const um of JSON.parse(umOut || "[]")) {
                     const sid = String(um.session_id || "");
-                    if (!sid || !um.content) continue;
-                    const clean = extractRealUserText(String(um.content));
-                    if (!clean || isNoiseTopicText(clean, { sessionId: sid })) continue;
-                    const rawTs = num(um.timestamp);
-                    const tsMs = rawTs > 1e12 ? rawTs : rawTs * 1000;
-                    if (!tsMs) continue;
-                    const d = localDateKey(tsMs);
-                    if (!msgTopicsBySession.has(sid)) msgTopicsBySession.set(sid, new Map());
-                    const byDay = msgTopicsBySession.get(sid);
-                    if (!byDay.has(d)) byDay.set(d, []);
-                    const list = byDay.get(d);
-                    if (list.length < 4 && !list.some(x => x.text === clean)) {
-                        list.push({ date: d, ts: tsMs, text: clean });
+                    if (!sid) continue;
+                    let det = epDetailsBySession.get(sid);
+                    if (!det) {
+                        det = { problems: [], outputs: [], tools: new Set(), files: new Set(), turns: 0 };
+                        epDetailsBySession.set(sid, det);
+                    }
+                    if (um.tool_name) det.tools.add(String(um.tool_name));
+                    const rawContent = String(um.content || "");
+                    if (um.role === "user" && rawContent.length >= 8) {
+                        const clean = extractRealUserText(rawContent);
+                        if (clean && !isNoiseTopicText(clean, { sessionId: sid })) {
+                            if (det.problems.length < 4 && !det.problems.includes(clean)) det.problems.push(clean);
+                            collectFileRefs(rawContent, det.files);
+                            const rawTs = num(um.timestamp);
+                            const tsMs = rawTs > 1e12 ? rawTs : rawTs * 1000;
+                            if (tsMs) {
+                                const d = localDateKey(tsMs);
+                                if (!msgTopicsBySession.has(sid)) msgTopicsBySession.set(sid, new Map());
+                                const byDay = msgTopicsBySession.get(sid);
+                                if (!byDay.has(d)) byDay.set(d, []);
+                                const list = byDay.get(d);
+                                if (list.length < 4 && !list.some(x => x.text === clean)) {
+                                    list.push({ date: d, ts: tsMs, text: clean });
+                                }
+                            }
+                        }
+                    } else if (um.role === "assistant") {
+                        det.turns++;
+                        if (rawContent.trim().length >= 35) {
+                            det.outputs.push(rawContent);
+                            collectFileRefs(rawContent, det.files);
+                        }
                     }
                 }
             } catch { /* ignore if schema differs */ }
@@ -751,18 +997,17 @@ async function collectHermesSessions(home, env, sinceMs, cache = null) {
                     msgWeightsBySession.get(sid) || null
                 );
 
-                // Extract substantive non-cron topics: prefer real user messages per day, plus clean non-noise title anchored to creation date
+                // Extract substantive non-cron topics & structured session episode
                 const topics = [];
-                const proj = workspace ? path.basename(workspace) : "";
+                const proj = normalizeProjectName(workspace ? path.basename(workspace) : "");
                 const isCron = /^cron_/i.test(sid);
+                let episode = null;
                 if (!isCron) {
-                    if (r.title) {
-                        const cleanTitle = sanitizeTopic(r.title, 180);
-                        if (cleanTitle && !isNoiseTopicText(cleanTitle, { sessionId: sid })) {
-                            topics.push({ date: startDate, ts: startTs || activeTs, source: "hermes", project: proj, text: cleanTitle });
-                            if (activeDate !== startDate) {
-                                topics.push({ date: activeDate, ts: activeTs, source: "hermes", project: proj, text: cleanTitle });
-                            }
+                    const cleanTitle = r.title ? sanitizeTopic(r.title, 180) : "";
+                    if (cleanTitle && !isNoiseTopicText(cleanTitle, { sessionId: sid })) {
+                        topics.push({ date: startDate, ts: startTs || activeTs, source: "hermes", project: proj, text: cleanTitle });
+                        if (activeDate !== startDate) {
+                            topics.push({ date: activeDate, ts: activeTs, source: "hermes", project: proj, text: cleanTitle });
                         }
                     }
                     const sessionMsgs = msgTopicsBySession.get(sid);
@@ -775,6 +1020,23 @@ async function collectHermesSessions(home, env, sinceMs, cache = null) {
                             }
                         }
                     }
+                    const det = epDetailsBySession.get(sid);
+                    if (det) {
+                        episode = buildSessionEpisode({
+                            source: "hermes",
+                            sessionId: sid,
+                            workspace,
+                            lastActive: activeTs,
+                            startedAt: startTs || activeTs,
+                            titleHint: cleanTitle,
+                            problems: det.problems,
+                            toolsUsed: [...det.tools],
+                            filesTouched: [...det.files],
+                            outputs: det.outputs,
+                            turns: det.turns,
+                            dailyBuckets,
+                        });
+                    }
                 }
                 sessions.push({
                     source: "hermes",
@@ -783,6 +1045,7 @@ async function collectHermesSessions(home, env, sinceMs, cache = null) {
                     lastActive: activeTs,
                     dailyBuckets,
                     topics,
+                    episode,
                 });
             }
         } catch { /* sqlite3 unavailable or locked */ }
@@ -792,10 +1055,11 @@ async function collectHermesSessions(home, env, sinceMs, cache = null) {
 
 /**
  * 5. DSH Collector (~/.dsh/sessions/** /session*.jsonl(.zstd))
- * Supports concatenated multi-frame ZSTD logs and DSH v4 event schemas (`assistant/message` + `data.usage`, `user/message`).
+ * Supports concatenated multi-frame ZSTD logs, DSH v4 event schemas (`assistant/message` + `data.usage`, `user/message`),
+ * and structured session-episode extraction (`session/title`, problems, tools, workspace changes, final outputs).
  */
 function parseDshFile(fileInfo, cache) {
-    const sig = `dsh2:${fileInfo.mtimeMs}:${fileInfo.size}`;
+    const sig = `dsh3:${fileInfo.mtimeMs}:${fileInfo.size}`;
     const cached = cache.get(fileInfo.path, sig);
     if (cached) return cached;
 
@@ -804,8 +1068,15 @@ function parseDshFile(fileInfo, cache) {
     const sessionId = path.basename(sessDir);
     let workspace = decodeDshWorkspaceSlug(slugDir);
     let lastActive = fileInfo.mtimeMs;
+    let firstTs = 0;
+    let titleHint = "";
     const dailyBuckets = {};
     const topicsByDay = new Map();
+    const problems = [];
+    const outputs = [];
+    const toolsUsed = new Set();
+    const filesTouched = new Set();
+    let turns = 0;
 
     try {
         const raw = fileInfo.path.endsWith(".zstd")
@@ -817,8 +1088,12 @@ function parseDshFile(fileInfo, cache) {
             try { row = JSON.parse(line); } catch { continue; }
             const rawTs = row.time || row.timestamp || row.createdAt || row.ts;
             const ts = typeof rawTs === "number" ? (rawTs < 1e12 ? rawTs * 1000 : rawTs) : (Date.parse(rawTs || "") || fileInfo.mtimeMs);
+            if (!firstTs || ts < firstTs) firstTs = ts;
             if (ts > lastActive) lastActive = ts;
             if (!workspace && typeof row.cwd === "string" && path.isAbsolute(row.cwd)) workspace = path.normalize(row.cwd);
+            if (row.type === "session/title" && typeof row.data?.title === "string" && row.data.title.trim()) {
+                titleHint = row.data.title.trim();
+            }
 
             const u = row.data?.usage || row.usage || row.message?.usage || row.payload?.usage || row.data?.message?.usage;
             if (u && typeof u === "object") {
@@ -839,6 +1114,25 @@ function parseDshFile(fileInfo, cache) {
                     dailyBuckets[date] = b;
                 }
             }
+            if (row.type === "assistant/message" && Array.isArray(row.data?.message?.content)) {
+                turns++;
+                const textParts = [];
+                for (const c of row.data.message.content) {
+                    if (c?.type === "tool-call" && c.name) {
+                        toolsUsed.add(String(c.name));
+                        if (typeof c.arguments === "string") collectFileRefs(c.arguments, filesTouched);
+                    } else if (c?.type === "text" && typeof c.text === "string") {
+                        textParts.push(c.text);
+                    }
+                }
+                const joined = textParts.join("\n").trim();
+                if (joined.length >= 30) {
+                    outputs.push(joined);
+                    collectFileRefs(joined, filesTouched);
+                }
+            } else if (row.type === "workspace/changes" && row.data) {
+                collectFileRefs(JSON.stringify(row.data), filesTouched);
+            }
             if (row.type === "user/message" || row.role === "user" || row.type === "user") {
                 const rawContent = row.data?.content ?? row.content ?? row.text;
                 const txt = typeof rawContent === "string"
@@ -848,11 +1142,13 @@ function parseDshFile(fileInfo, cache) {
                         : "";
                 const clean = extractRealUserText(txt);
                 if (clean.length >= 6 && !isNoiseTopicText(clean)) {
+                    if (problems.length < 4 && !problems.includes(clean)) problems.push(clean);
+                    collectFileRefs(txt, filesTouched);
                     const date = localDateKey(ts);
                     let list = topicsByDay.get(date);
                     if (!list) { list = []; topicsByDay.set(date, list); }
                     if (!list.some(x => x.text === clean)) {
-                        list.push({ date, ts, source: "dsh", project: workspace ? path.basename(workspace) : "", text: clean });
+                        list.push({ date, ts, source: "dsh", project: normalizeProjectName(workspace ? path.basename(workspace) : ""), text: clean });
                         if (list.length > 8) list.shift();
                     }
                 }
@@ -861,7 +1157,7 @@ function parseDshFile(fileInfo, cache) {
     } catch { /* ignore corrupted/zstd unsupported */ }
 
     const topics = [];
-    const projName = workspace ? path.basename(workspace) : "";
+    const projName = normalizeProjectName(workspace ? path.basename(workspace) : "");
     for (const d of [...topicsByDay.keys()].sort().slice(-14)) {
         for (const t of topicsByDay.get(d)) {
             if (!t.project && projName) t.project = projName;
@@ -869,7 +1165,22 @@ function parseDshFile(fileInfo, cache) {
         }
     }
 
-    const parsed = { source: "dsh", sessionId, workspace, lastActive, dailyBuckets, topics };
+    const episode = buildSessionEpisode({
+        source: "dsh",
+        sessionId,
+        workspace,
+        lastActive,
+        startedAt: firstTs || lastActive,
+        titleHint,
+        problems,
+        toolsUsed: [...toolsUsed],
+        filesTouched: [...filesTouched],
+        outputs,
+        turns,
+        dailyBuckets,
+    });
+
+    const parsed = { source: "dsh", sessionId, workspace, lastActive, dailyBuckets, topics, episode };
     cache.set(fileInfo.path, sig, parsed);
     return parsed;
 }
@@ -1266,7 +1577,9 @@ async function collectAllNative({ home = homedir(), env = process.env, cachePath
     const weekStart = localDateKey(now - 6 * 86400_000);
     const topicsByDate = new Map();
     const allDailyTokens = {};
+    const episodes = [];
     for (const sess of allSessions) {
+        if (sess.episode) episodes.push(sess.episode);
         for (const [d, b] of Object.entries(sess.dailyBuckets || {})) {
             if (b?.tokens > 0) allDailyTokens[d] = (allDailyTokens[d] || 0) + b.tokens;
         }
@@ -1276,8 +1589,9 @@ async function collectAllNative({ home = homedir(), env = process.env, cachePath
             if (list.length < 30 && !list.some(x => x.text === t.text)) list.push(t);
         }
     }
+    episodes.sort((a, b) => (b.lastActive || 0) - (a.lastActive || 0));
 
-    // Persist compact unified 8-tool summary (including Hermes/WorkBuddy/T3 Code) for standalone CLI fallback
+    // Persist compact unified 8-tool summary (including structured session episodes) for standalone CLI fallback
     const recentTopicObj = {};
     for (const d of [...topicsByDate.keys()].sort().slice(-30)) {
         recentTopicObj[d] = topicsByDate.get(d).slice(0, 25);
@@ -1286,11 +1600,13 @@ async function collectAllNative({ home = homedir(), env = process.env, cachePath
         updatedAt: now,
         dailyTokens: allDailyTokens,
         topicsByDate: recentTopicObj,
+        episodes: episodes.slice(0, 120),
     });
     cache.flush();
 
     return {
         sessions: allSessions,
+        episodes,
         today: buildWindowReport(allSessions, todayKey),
         week: buildWindowReport(allSessions, weekStart),
         windowReport: (windowDays) => buildWindowReport(allSessions, localDateKey(now - (windowDays - 1) * 86400_000)),

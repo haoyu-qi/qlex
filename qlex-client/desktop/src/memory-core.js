@@ -26,7 +26,7 @@ const VALID_LEVELS = new Set(["L0", "L1", "L2"]);
 const VALID_TIERS = new Set(["working", "episodic", "semantic", "procedural"]);
 const VALID_LAYERS = new Set(["all", "memory", "observation", "lesson"]);
 const VALID_FORMATS = new Set(["compact", "narrative", "full"]);
-const VALID_ORIGIN_CHANNELS = new Set(["user", "agent", "tool", "import", "shared"]);
+const VALID_ORIGIN_CHANNELS = new Set(["user", "agent", "tool", "import", "shared", "episode"]);
 const SINGLE_VALUED_PREDICATES = new Set([
     "uses_framework",
     "uses_theme",
@@ -658,6 +658,81 @@ function extractHistoryTopicsByDate(home, cacheState) {
     return { byDate, hits, misses, resources };
 }
 
+function formatSessionEpisodeMemory(ep) {
+    const srcLabel = SOURCE_NAMES[ep.source] || ep.source || "AI";
+    const proj = isValidProjectName(ep.project) ? ep.project : "";
+    const rawTitle = sanitizeSnippet(ep.title || ep.problems?.[0] || "工作会话", 64);
+    const title = proj && !rawTitle.toLowerCase().includes(proj.toLowerCase())
+        ? sanitizeSnippet(`[${proj}] ${rawTitle}`, 76)
+        : rawTitle;
+
+    const problems = Array.isArray(ep.problems) ? ep.problems.filter(Boolean).slice(0, 4) : [];
+    const toolsUsed = Array.isArray(ep.toolsUsed) ? ep.toolsUsed.filter(Boolean).slice(0, 8) : [];
+    const filesTouched = Array.isArray(ep.filesTouched) ? ep.filesTouched.filter(Boolean).slice(0, 8) : [];
+    const outputs = Array.isArray(ep.outputs) ? ep.outputs.filter(Boolean).slice(-2) : [];
+
+    const dateSpan = ep.startedDate && ep.startedDate !== ep.date ? `${ep.startedDate} ~ ${ep.date}` : (ep.date || localDateKey(ep.lastActive || Date.now()));
+    const tokStr = ep.tokens > 0 ? ` · ${fmtNum(ep.tokens)} Token` : "";
+    const turnStr = ep.turns > 0 ? `${ep.turns} 轮` : "";
+    const metaLine = [
+        `**工具**：${srcLabel}`,
+        proj ? `**项目**：${proj}` : null,
+        `**日期**：${dateSpan}`,
+        turnStr ? `**深度**：${turnStr}${tokStr}` : (tokStr ? `**消耗**：${fmtNum(ep.tokens)} Token` : null),
+    ].filter(Boolean).join(" · ");
+
+    const sections = [
+        "### 项目与主题",
+        `- ${metaLine}`,
+        `- **主题**：${rawTitle}`,
+        "",
+    ];
+    if (problems.length) {
+        sections.push("### 问题与目标");
+        for (const pr of problems) sections.push(`- ${pr}`);
+        sections.push("");
+    }
+    if (toolsUsed.length || filesTouched.length) {
+        sections.push("### 执行过程与涉及产物");
+        if (toolsUsed.length) sections.push(`- **调用工具**：${toolsUsed.join("、")}`);
+        if (filesTouched.length) sections.push(`- **涉及文件/产物**：${filesTouched.join("、")}`);
+        sections.push("");
+    }
+    if (outputs.length) {
+        sections.push("### 最终产出与结论");
+        for (const out of outputs) sections.push(`- ${out}`);
+        sections.push("");
+    }
+
+    const l2 = sections.join("\n").trim();
+    const outBrief = outputs.length ? sanitizeSnippet(outputs[outputs.length - 1], 88) : "";
+    const probBrief = problems.length ? sanitizeSnippet(problems[0], 72) : "";
+    const l0 = sanitizeSnippet(
+        `[${srcLabel}${proj ? ` · ${proj}` : ""}] ${rawTitle}${outBrief ? `｜产出：${outBrief}` : probBrief ? `｜问题：${probBrief}` : ""}`,
+        160
+    );
+    const l1 = [
+        `[${srcLabel}${proj ? ` · ${proj}` : ""}] ${rawTitle}（${dateSpan}）`,
+        probBrief ? `问题：${probBrief}` : "",
+        filesTouched.length ? `产物：${filesTouched.slice(0, 5).join("、")}` : "",
+        outBrief ? `结论：${outBrief}` : "",
+    ].filter(Boolean).join("\n");
+
+    const bankHint = classifyBank(`${rawTitle} ${problems.join(" ")} ${outputs.join(" ")}`, "", { allowReflection: false });
+    return {
+        title,
+        l0,
+        l1,
+        l2,
+        project: proj,
+        scope: proj ? "project" : "user",
+        bank: bankHint,
+        factKey: `session:${ep.source}:${ep.sessionId}`,
+        timestamp: ep.lastActive || Date.now(),
+        tags: [ep.source, "episode", ep.date].filter(Boolean),
+    };
+}
+
 function renderDailyMarkdown(record) {
     const lines = [
         `# 每日记忆归档 · ${record.date}`,
@@ -686,6 +761,24 @@ function renderDailyMarkdown(record) {
             lines.push(`- **${p.name}** — ${fmtNum(p.tokens)} Token · \`${p.directory}\``);
         }
         lines.push("");
+    }
+
+    if (Array.isArray(record.episodes) && record.episodes.length) {
+        lines.push("## 项目主题、过程与产出", "");
+        for (const ep of record.episodes.slice(0, 12)) {
+            const tag = [SOURCE_NAMES[ep.source] || ep.source, ep.project].filter(Boolean).join(" · ");
+            lines.push(`### [${tag}] ${ep.title}`);
+            if (ep.problems?.length) lines.push(`- **问题**：${ep.problems.slice(0, 2).join("；")}`);
+            if (ep.filesTouched?.length || ep.toolsUsed?.length) {
+                const proc = [
+                    ep.toolsUsed?.length ? `工具(${ep.toolsUsed.slice(0, 5).join(", ")})` : "",
+                    ep.filesTouched?.length ? `文件(${ep.filesTouched.slice(0, 5).join(", ")})` : "",
+                ].filter(Boolean).join(" · ");
+                lines.push(`- **过程**：${proc}`);
+            }
+            if (ep.outputs?.length) lines.push(`- **产出**：${sanitizeSnippet(ep.outputs[ep.outputs.length - 1], 220)}`);
+            lines.push("");
+        }
     }
 
     if (record.topics.length) {
@@ -787,7 +880,7 @@ function rollupRecords(kind, key, days) {
 /**
  * Create a Cognitive Memory Engine bound to a root directory (works in Electron & standalone CLI)
  */
-function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnapshot, getTopicsByDate, home = homedir() } = {}) {
+function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnapshot, getTopicsByDate, getSessionEpisodes, home = homedir() } = {}) {
     const resolveRoot = () => (typeof getArchiveDir === "function" ? getArchiveDir() : resolveDefaultMemoryDir(home));
 
     function pathsOf(root = resolveRoot()) {
@@ -2317,6 +2410,11 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
 
         const { byDate: topicsByDate, hits, misses, resources } = extractHistoryTopicsByDate(home, cache);
         const fallbackDailyTokens = new Map();
+        const sessionEpisodes = [];
+        if (typeof getSessionEpisodes === "function") {
+            const liveEps = getSessionEpisodes();
+            if (Array.isArray(liveEps)) sessionEpisodes.push(...liveEps.filter(Boolean));
+        }
         // Merge unified multi-agent topics from native collectors (desktop callback or CLI fallback reading desktop collector-cache.json)
         if (typeof getTopicsByDate === "function") {
             const extraTopics = getTopicsByDate();
@@ -2331,7 +2429,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                 }
             }
         } else {
-            // CLI fallback: read QLEX desktop's collector-cache.json (including nativeSummary for Hermes/WorkBuddy/T3 Code!)
+            // CLI fallback: read QLEX desktop's collector-cache.json (including nativeSummary & structured session episodes!)
             const cacheCandidates = [
                 path.join(home, "Library", "Application Support", "QLEX", "collector-cache.json"),
                 path.join(home, "AppData", "Roaming", "QLEX", "collector-cache.json"),
@@ -2343,6 +2441,10 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                 let foundAny = false;
                 if (colCache.nativeSummary && typeof colCache.nativeSummary === "object") {
                     const ns = colCache.nativeSummary;
+                    if (Array.isArray(ns.episodes) && !sessionEpisodes.length) {
+                        sessionEpisodes.push(...ns.episodes.filter(Boolean));
+                        foundAny = true;
+                    }
                     if (ns.dailyTokens && typeof ns.dailyTokens === "object") {
                         for (const [date, tok] of Object.entries(ns.dailyTokens)) {
                             if (/^\d{4}-\d{2}-\d{2}$/.test(date) && Number(tok) > 0) {
@@ -2371,6 +2473,10 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                     for (const rec of Object.values(colCache.files)) {
                         const val = rec?.value;
                         if (!val) continue;
+                        if (val.episode && !colCache.nativeSummary?.episodes) {
+                            sessionEpisodes.push(val.episode);
+                            foundAny = true;
+                        }
                         if (val.dailyBuckets && typeof val.dailyBuckets === "object" && !colCache.nativeSummary) {
                             for (const [date, b] of Object.entries(val.dailyBuckets)) {
                                 if (/^\d{4}-\d{2}-\d{2}$/.test(date) && Number(b?.tokens) > 0) {
@@ -2411,32 +2517,74 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             else resStore.resources.push(r);
         }
 
-        // Ingest ONLY genuinely substantive, reusable knowledge from AI histories into atomic cognitive store
-        // (Daily/weekly/monthly markdown still keeps full topic timeline; atomic store rejects empty 1-line shells!)
-        const recentDates = [...topicsByDate.keys()].sort().slice(-14);
+        // Core Ingestion Path 1: Structured Per-Session Project Episodes (项目主题 / 问题 / 过程 / 产出)
+        // Keyed by `factKey: session:<source>:<sessionId>` so ongoing sessions evolve via SUPERSEDE without duplicate bloat!
+        cache.episodeHashes ||= {};
+        const episodesByDate = new Map();
         let ingestedItems = 0;
-        for (const date of recentDates) {
-            const list = topicsByDate.get(date) || [];
-            for (const entry of list.slice(0, 10)) {
-                if (!entry.text || !isReusableMemoryCandidate(entry.text)) continue;
-                const cleanTitle = sanitizeSnippet(entry.text, 56);
-                // Enforce body-richer-than-title threshold: reject 1-line empty shells!
-                if (entry.text.length < 65 || entry.text.trim() === cleanTitle.trim()) continue;
-                const safeProj = isValidProjectName(entry.project) ? entry.project : "";
-                const hash = createHash("sha256").update(`${entry.source}|${safeProj}|${entry.text}`).digest("hex").slice(0, 16);
-                if (cache.ingestedHashes[hash]) continue;
-                cache.ingestedHashes[hash] = date;
-                retain({
-                    title: cleanTitle,
-                    content: entry.text,
-                    source: entry.source,
-                    originChannel: "import",
-                    project: safeProj,
-                    scope: safeProj ? "project" : "user",
-                    timestamp: entry.ts || Date.now(),
-                    tags: [entry.source, date].filter(Boolean),
-                }, { _itemStore: itemStore, _graphStore: graphStore, _deferPersist: true });
-                ingestedItems++;
+        const seenEpKey = new Set();
+        for (const ep of sessionEpisodes) {
+            if (!ep || !ep.sessionId || !ep.source) continue;
+            const epKey = `${ep.source}:${ep.sessionId}`;
+            if (seenEpKey.has(epKey)) continue;
+            seenEpKey.add(epKey);
+            const epDate = ep.date || localDateKey(ep.lastActive || Date.now());
+            if (/^\d{4}-\d{2}-\d{2}$/.test(epDate)) {
+                if (!episodesByDate.has(epDate)) episodesByDate.set(epDate, []);
+                episodesByDate.get(epDate).push(ep);
+            }
+            const formatted = formatSessionEpisodeMemory(ep);
+            const sigHash = createHash("sha256")
+                .update(`${epKey}|${formatted.title}|${formatted.l2}`)
+                .digest("hex")
+                .slice(0, 16);
+            if (cache.episodeHashes[epKey] === sigHash) continue;
+            cache.episodeHashes[epKey] = sigHash;
+            retain({
+                title: formatted.title,
+                content: formatted.l2,
+                l0: formatted.l0,
+                l1: formatted.l1,
+                l2: formatted.l2,
+                bank: formatted.bank,
+                tier: "episodic",
+                memoryType: "episode",
+                originChannel: "episode",
+                source: ep.source,
+                project: formatted.project,
+                scope: formatted.scope,
+                factKey: formatted.factKey,
+                timestamp: formatted.timestamp,
+                tags: formatted.tags,
+            }, { _itemStore: itemStore, _graphStore: graphStore, _deferPersist: true });
+            ingestedItems++;
+        }
+
+        // Core Ingestion Path 2 (Fallback when no structured episodes): strictly gated substantive standalone notes
+        const recentDates = [...topicsByDate.keys()].sort().slice(-14);
+        if (!sessionEpisodes.length) {
+            for (const date of recentDates) {
+                const list = topicsByDate.get(date) || [];
+                for (const entry of list.slice(0, 10)) {
+                    if (!entry.text || !isReusableMemoryCandidate(entry.text)) continue;
+                    const cleanTitle = sanitizeSnippet(entry.text, 56);
+                    if (entry.text.length < 65 || entry.text.trim() === cleanTitle.trim()) continue;
+                    const safeProj = isValidProjectName(entry.project) ? entry.project : "";
+                    const hash = createHash("sha256").update(`${entry.source}|${safeProj}|${entry.text}`).digest("hex").slice(0, 16);
+                    if (cache.ingestedHashes[hash]) continue;
+                    cache.ingestedHashes[hash] = date;
+                    retain({
+                        title: cleanTitle,
+                        content: entry.text,
+                        source: entry.source,
+                        originChannel: "import",
+                        project: safeProj,
+                        scope: safeProj ? "project" : "user",
+                        timestamp: entry.ts || Date.now(),
+                        tags: [entry.source, date].filter(Boolean),
+                    }, { _itemStore: itemStore, _graphStore: graphStore, _deferPersist: true });
+                    ingestedItems++;
+                }
             }
         }
 
@@ -2542,7 +2690,17 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                 projects = managedProjects.slice(0, 10).map(pr => ({ name: pr.name, directory: pr.directory, tokens: 0 }));
             }
 
-            if (!isToday && tokens === 0 && !topics.length && !projects.length) continue;
+            // Union-merge daily session episodes by source:sessionId (keep freshest version of each session)
+            const epMap = new Map();
+            for (const ep of existing?.episodes || []) {
+                if (ep?.sessionId) epMap.set(`${ep.source}:${ep.sessionId}`, ep);
+            }
+            for (const ep of episodesByDate.get(date) || []) {
+                if (ep?.sessionId) epMap.set(`${ep.source}:${ep.sessionId}`, ep);
+            }
+            const dayEpisodes = [...epMap.values()].sort((a, b) => (b.lastActive || 0) - (a.lastActive || 0)).slice(0, 16);
+
+            if (!isToday && tokens === 0 && !topics.length && !projects.length && !dayEpisodes.length) continue;
 
             const settledAt = (isToday && opts.settle)
                 ? Date.now()
@@ -2556,6 +2714,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                 totalSessions,
                 tools,
                 projects,
+                episodes: dayEpisodes,
                 topics: topics.slice(0, 25),
                 updatedAt: Date.now(),
                 ...(settledAt ? { settledAt } : {}),
@@ -2867,6 +3026,8 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                     continue;
                 }
                 if (it.bank === "observation" || it.bank === "mental_model") continue;
+                // Structured session episodes (主题/问题/过程/产出) are curated project memories, never empty-shell chat noise
+                if (it.originChannel === "episode" || it.memoryType === "episode") continue;
                 if (!isAutoIngested) continue;
 
                 const text = String(it.l2 || it.l1 || it.title || "").trim();

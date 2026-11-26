@@ -1182,6 +1182,7 @@ else {
             getProjects: () => store.snapshot().projects,
             getUsageSnapshot: () => usage.snapshot(),
             getTopicsByDate: () => usage.getTopicsByDate(),
+            getSessionEpisodes: () => usage.getSessionEpisodes(),
         });
         tailscale = createTailscaleManager({
             dataDir: userDataDir,

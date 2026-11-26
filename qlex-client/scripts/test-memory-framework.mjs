@@ -509,6 +509,48 @@ try {
     assert.ok(codexParsed.topics.some(t => t.text.includes("灾备方案探讨")), "Codex collector must extract response_item user messages");
     assert.ok(!codexParsed.topics.some(t => t.text.includes("AGENTS.md")), "Codex collector must ignore AGENTS.md wrapper");
 
+    // ---- 11. Regression: Structured Session-Episode Archiving (项目主题 / 问题 / 过程 / 产出 + SUPERSEDE evolution) ----
+    const epHome = path.join(tmpHome, "ep-home");
+    let mockEpisodes = [
+        {
+            source: "antigravity",
+            sessionId: "sess-huazhi-01",
+            date: "2026-11-26",
+            startedDate: "2026-11-26",
+            lastActive: Date.now() - 60_000,
+            project: "华智ai 产品线 2.0",
+            workspace: "/tmp/华智ai 产品线 2.0",
+            title: "华智AI 2.0 产品立项与飞书白板架构图设计",
+            problems: ["优化华智AI 2.0 四份立项文档并嵌入飞书白板架构图"],
+            toolsUsed: ["write_file", "lark-doc", "lark-whiteboard"],
+            filesTouched: ["立项方案.md", "需求说明书.md"],
+            outputs: ["已完成 4 份本地文档与飞书知识库 4 篇子文档同步，并嵌入原生飞书白板架构图。"],
+            turns: 24,
+            tokens: 10821326,
+        },
+    ];
+    const epEngine = createCognitiveMemoryEngine({
+        home: epHome,
+        getArchiveDir: () => path.join(epHome, "QLEX-Memory"),
+        getSessionEpisodes: () => mockEpisodes,
+    });
+    const epRun1 = epEngine.compressSync();
+    assert.ok(epRun1.ingestedItems >= 1, "Structured session episode must be archived into cognitive memory");
+    const epRecall1 = epEngine.recall("华智AI 2.0 立项文档 飞书白板", { level: "L2", limit: 5 });
+    assert.ok(epRecall1.results.some(r => r.l2.includes("### 问题与目标") && r.l2.includes("### 执行过程与涉及产物") && r.l2.includes("### 最终产出与结论")), "Archived session episode must contain structured 问题/过程/产出 sections");
+
+    // Evolve the same session with a new milestone -> must SUPERSEDE cleanly via factKey (no duplicate bloat!)
+    mockEpisodes = [{
+        ...mockEpisodes[0],
+        lastActive: Date.now(),
+        turns: 30,
+        outputs: ["已完成 4 份文档排期去专业缩写优化（M1-M4 改为第一至四阶段），全部通过终审校验。"],
+    }];
+    const epRun2 = epEngine.compressSync();
+    const epDiag = epEngine.diagnose();
+    assert.ok(epDiag.cognitive.supersededItems >= 1, "Evolving the same session episode must trigger SUPERSEDE rather than creating duplicates");
+    assert.equal(epDiag.noiseCount, 0, "Structured session episodes must never be flagged as noise");
+
     console.log("ALL QLEX v3.0 COGNITIVE MEMORY & AGENT SKILL TESTS PASSED!", JSON.stringify({
         engineVersion: diag.engineVersion,
         activeItems: diag.cognitive.activeItems,

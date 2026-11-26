@@ -243,6 +243,7 @@ function createUsageCollector({ home = homedir(), env = process.env, run = exec,
         refresh,
         history,
         getTopicsByDate: () => lastNative?.topicsByDate || new Map(),
+        getSessionEpisodes: () => lastNative?.episodes || [],
         snapshot: () => state,
     };
 }
