@@ -388,7 +388,7 @@ function buildActivityHeatmapHtml() {
         } else if (containsFirstOfMonth && containsFirstOfMonth.date.getMonth() !== lastMonth) {
             const nm = containsFirstOfMonth.date.getMonth();
             // Avoid crowding if previous label is less than 2 columns away
-            if (!monthLabels.length || c - monthLabels[monthLabels.length - 1].col >= 3) {
+            if (!monthLabels.length || c - monthLabels[monthLabels.length - 1].col >= 2) {
                 monthLabels.push({ col: c, label: `${nm + 1}月` });
             }
             lastMonth = nm;
@@ -471,6 +471,37 @@ function renderQStage() {
 
     const issueCount = (sk.conflicts || 0) + anomalies.length;
     const activityHeatmap = buildActivityHeatmapHtml();
+
+    const cons = mem.consolidation || {};
+    const llmCfg = state.centerMemoryLlm || {};
+    const covTagCls = mem.phase === "consolidating" ? "blue"
+        : (net.mode === "center" && (cons.pendingCount || 0) > 0) ? "warn"
+            : ((cons.revision || 0) > 0 || (cons.syncedCenterRevision || 0) > 0) ? "ok" : "";
+    const covTagText = mem.phase === "consolidating" ? "整理中"
+        : net.mode === "center"
+            ? ((cons.pendingCount || 0) > 0 ? `待整理 ${cons.pendingCount}` : `权威 #${cons.revision || 0}`)
+            : net.mode === "endpoint"
+                ? (cons.syncedCenterRevision ? `中心 #${cons.syncedCenterRevision}` : "等待中心")
+                : `部署 ${ms.installedCount}/${ms.totalCount}`;
+    const covMainText = net.mode === "center"
+        ? (llmCfg.configured ? `中心 LLM · ${llmCfg.nextTriggerLabel || "定时整理"}` : `中心规则引擎 · 权威 #${cons.revision || 0}`)
+        : net.mode === "endpoint"
+            ? (cons.syncedCenterRevision ? `已同步中心权威 #${cons.syncedCenterRevision}` : "实时监听中心记忆更新")
+            : `本地 4 层记忆 · ${cog.entities || 0} 实体`;
+    const covSubText = `qlex-memory ${ms.installedCount}/${ms.totalCount} 工具就绪 · ${net.mode === "endpoint"
+        ? (net.syncMeta?.lastMemorySync?.time ? `最近同步 ${fmtShortTime(net.syncMeta.lastMemorySync.time)}` : "自动双向同步")
+        : `${cog.entities || 0} 实体 / ${cog.activeEdges || 0} 关系边`}`;
+    const agentPct = ms.totalCount ? Math.round(((ms.installedCount || 0) / ms.totalCount) * 100) : 100;
+    const skillsAlignedPct = sk.conflicts > 0 ? Math.max(20, 100 - sk.conflicts * 15) : sk.missingLinks > 0 ? 80 : 100;
+    const netPct = ts.online ? 100 : net.online ? 85 : 50;
+    const covRing = (pct, label, tone = "") => {
+        const C = 87.96;
+        const offset = (C * (1 - Math.max(0, Math.min(100, pct)) / 100)).toFixed(1);
+        return `<div class="hub-cov-ring" title="${esc(label)} ${pct}%">
+          <svg viewBox="0 0 36 36"><circle class="track" cx="18" cy="18" r="14"/><circle class="fill ${tone}" cx="18" cy="18" r="14" stroke-dasharray="${C}" stroke-dashoffset="${offset}"/></svg>
+          <span>${esc(label)}</span>
+        </div>`;
+    };
 
     patchHtml(overviewStage, `
       <div class="hub-left-main">
@@ -642,6 +673,24 @@ function renderQStage() {
                 <span class="hub-feed-time">${esc(f.time)}</span>
               </div>
             `).join("")}
+          </div>
+        </div>
+
+        <div class="hub-right-card hub-coverage-card" data-rail="memory" title="点击进入记忆引擎与全端共享整理">
+          <div class="card-head">
+            <span class="card-title">全端共享记忆</span>
+            <span class="tag ${covTagCls}">${esc(covTagText)}</span>
+          </div>
+          <div class="hub-cov-body">
+            <div class="hub-cov-info">
+              <div class="hub-cov-main">${esc(covMainText)}</div>
+              <div class="hub-cov-sub">${esc(covSubText)}</div>
+            </div>
+            <div class="hub-cov-rings">
+              ${covRing(agentPct, "技能", agentPct < 100 ? "warn" : "")}
+              ${covRing(skillsAlignedPct, "对齐", skillsAlignedPct < 80 ? "warn" : "")}
+              ${covRing(netPct, "穿透", ts.online ? "blue" : "warn")}
+            </div>
           </div>
         </div>
       </aside>
