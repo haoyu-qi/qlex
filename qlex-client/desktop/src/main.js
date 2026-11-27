@@ -87,6 +87,13 @@ function isLightPreset(appearance) {
     return appearance?.themePreset === "porcelain";
 }
 
+function themeWindowBackground(appearance) {
+    const preset = appearance?.themePreset || "default";
+    if (preset === "porcelain") return "#f6f7f9";
+    if (preset === "obsidian") return "#0b0c0e";
+    return "#1e232c";
+}
+
 function nativeMaterialOptions(appearance = store?.snapshot().appearance, dashboard = false) {
     const a = appearance || state_1.DEFAULT_APPEARANCE;
     return {
@@ -103,14 +110,18 @@ function nativeMaterialOptions(appearance = store?.snapshot().appearance, dashbo
 }
 
 function applyAllNativeMaterials(appearance = store?.snapshot().appearance) {
+    const winBg = process.platform === "win32" ? themeWindowBackground(appearance) : null;
     if (window && !window.isDestroyed()) {
+        if (winBg) window.setBackgroundColor(winBg);
         syncNativeMaterialVisibility(window, nativeMaterialOptions(appearance, false));
         window.setAlwaysOnTop(Boolean(appearance?.alwaysOnTop), appearance?.alwaysOnTop ? "floating" : "normal");
     }
     if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+        if (winBg) dashboardWindow.setBackgroundColor(winBg);
         syncNativeMaterialVisibility(dashboardWindow, nativeMaterialOptions(appearance, true));
     }
     if (menubarWindow && !menubarWindow.isDestroyed()) {
+        if (winBg) menubarWindow.setBackgroundColor(winBg);
         syncNativeMaterialVisibility(menubarWindow, nativeMaterialOptions(appearance, false));
     }
     edgeDock?.syncMaterial();
@@ -295,6 +306,7 @@ function showWindow() {
     }
     const bounds = restoredBounds();
     const appearance = store.snapshot().appearance;
+    const isWin = process.platform === "win32";
     const created = new electron_1.BrowserWindow({
         width: bounds.width,
         height: bounds.height,
@@ -303,9 +315,9 @@ function showWindow() {
         title: "QLEX",
         icon: logo,
         frame: false,
-        transparent: true,
+        transparent: !isWin,
         resizable: true,
-        backgroundColor: "#00000000",
+        ...(isWin ? { thickFrame: true, autoHideMenuBar: true, backgroundColor: themeWindowBackground(appearance) } : { backgroundColor: "#00000000" }),
         ...(process.platform === "darwin" ? { vibrancy: "hud", visualEffectState: "active" } : {}),
         show: false,
         webPreferences: {
@@ -365,6 +377,8 @@ function openDashboardWindow(tab = "activity") {
         }
         return dashboardWindow;
     }
+    const isWin = process.platform === "win32";
+    const appearance = store.snapshot().appearance;
     const created = new electron_1.BrowserWindow({
         width: 940,
         height: 640,
@@ -373,8 +387,8 @@ function openDashboardWindow(tab = "activity") {
         title: "QLEX · 用量看板",
         icon: logo,
         frame: false,
-        transparent: true,
-        backgroundColor: "#00000000",
+        transparent: !isWin,
+        ...(isWin ? { thickFrame: true, autoHideMenuBar: true, backgroundColor: themeWindowBackground(appearance) } : { backgroundColor: "#00000000" }),
         ...(process.platform === "darwin" ? { vibrancy: "hud", visualEffectState: "active" } : {}),
         show: false,
         webPreferences: {
@@ -407,29 +421,48 @@ let lastMenubarHeight = MENUBAR_POPOVER.height;
 function positionMenubarPopover(win, targetHeight = lastMenubarHeight) {
     if (!win || win.isDestroyed() || !tray) return;
     const tb = tray.getBounds();
-    const display = electron_1.screen.getDisplayNearestPoint({ x: tb.x, y: tb.y });
+    const hasTrayBounds = tb && (tb.width > 0 || tb.height > 0);
+    const display = hasTrayBounds
+        ? electron_1.screen.getDisplayNearestPoint({ x: tb.x, y: tb.y })
+        : electron_1.screen.getPrimaryDisplay();
     const area = display?.workArea || electron_1.screen.getPrimaryDisplay().workArea;
     const width = MENUBAR_POPOVER.width;
     const desired = Number.isFinite(targetHeight) && targetHeight > 300 ? Math.ceil(targetHeight) : MENUBAR_POPOVER.height;
     const height = Math.min(Math.max(460, desired), Math.max(460, area.height - 20));
     lastMenubarHeight = height;
-    const rawX = Math.round(tb.x + tb.width / 2 - width / 2);
-    const x = Math.max(area.x + 8, Math.min(area.x + area.width - width - 8, rawX));
-    const y = process.platform === "darwin"
-        ? Math.round(tb.y + tb.height + 6)
-        : Math.max(area.y + 8, Math.round(tb.y - height - 6));
+
+    let x;
+    let y;
+    if (process.platform === "darwin") {
+        const rawX = Math.round(tb.x + tb.width / 2 - width / 2);
+        x = Math.max(area.x + 8, Math.min(area.x + area.width - width - 8, rawX));
+        y = Math.round(tb.y + tb.height + 6);
+    } else if (!hasTrayBounds) {
+        // Windows tray overflow chevron (^) or unavailable bounds -> anchor cleanly to bottom-right of workArea
+        x = Math.max(area.x + 8, area.x + area.width - width - 12);
+        y = Math.max(area.y + 8, area.y + area.height - height - 12);
+    } else {
+        const rawX = Math.round(tb.x + tb.width / 2 - width / 2);
+        x = Math.max(area.x + 8, Math.min(area.x + area.width - width - 12, rawX));
+        // Detect top taskbar vs bottom taskbar on Windows
+        const trayAtTop = tb.y < area.y + Math.min(80, area.height / 3);
+        const rawY = trayAtTop ? Math.round(tb.y + tb.height + 8) : Math.round(tb.y - height - 8);
+        y = Math.max(area.y + 8, Math.min(area.y + area.height - height - 8, rawY));
+    }
     win.setBounds({ x, y, width, height }, false);
 }
 
 function createMenubarPopover() {
     if (menubarWindow && !menubarWindow.isDestroyed()) return menubarWindow;
+    const isWin = process.platform === "win32";
+    const appearance = store.snapshot().appearance;
     const created = new electron_1.BrowserWindow({
         width: MENUBAR_POPOVER.width,
         height: MENUBAR_POPOVER.height,
         title: "QLEX 菜单栏状态面板",
         icon: logo,
         frame: false,
-        transparent: true,
+        transparent: !isWin,
         resizable: false,
         movable: false,
         minimizable: false,
@@ -437,7 +470,7 @@ function createMenubarPopover() {
         fullscreenable: false,
         skipTaskbar: true,
         alwaysOnTop: true,
-        backgroundColor: "#00000000",
+        ...(isWin ? { hasShadow: true, roundedCorners: true, autoHideMenuBar: true, backgroundColor: themeWindowBackground(appearance) } : { backgroundColor: "#00000000" }),
         ...(process.platform === "darwin" ? { vibrancy: "hud", visualEffectState: "active" } : {}),
         show: false,
         webPreferences: {
@@ -532,6 +565,12 @@ function createTray() {
     });
     tray.on("click", () => {
         toggleMenubarPopover(false);
+    });
+    tray.on("double-click", () => {
+        if (menubarWindow && !menubarWindow.isDestroyed() && menubarWindow.isVisible()) {
+            menubarWindow.hide();
+        }
+        showWindow();
     });
     tray.on("right-click", () => {
         if (menubarWindow && !menubarWindow.isDestroyed() && menubarWindow.isVisible()) {
@@ -1446,7 +1485,8 @@ else {
             const ts = tailscale.snapshot();
             return [ts.self?.dnsName, ts.self?.ip].filter(Boolean);
         }, memoryArchive, () => {
-            if ((window && !window.isDestroyed()) || (menubarWindow && !menubarWindow.isDestroyed() && menubarWindow.isVisible())) {
+            updateTray();
+            if ((window && !window.isDestroyed()) || (dashboardWindow && !dashboardWindow.isDestroyed()) || (menubarWindow && !menubarWindow.isDestroyed())) {
                 broadcastState(undefined, { force: true });
             }
         });
@@ -1469,26 +1509,50 @@ else {
                 electron_1.screen.on(event, edgeDock.reposition);
             tailscale.startLanDiscovery();
             void tailscale.refreshAndDiscover().catch(console.warn);
-            void usage.refresh().then(() => {
+            void usage.refresh().then(async () => {
                 if (store.snapshot().memoryAutoCompress !== false) {
-                    return memoryArchive.compressNow().then(() => broadcastState());
+                    await memoryArchive.compressNow();
                 }
+                if (pairing.view().mode === "endpoint" && pairing.view().endpoint?.status === "connected") {
+                    await pairing.syncMemory({ reason: "startup-compress" }).catch(console.warn);
+                }
+                broadcastState();
             }).catch(console.warn);
             setInterval(() => void usage.refresh().catch(console.warn), 300_000).unref();
             setInterval(() => void tailscale.refreshAndDiscover().catch(console.warn), 45_000).unref();
             setInterval(() => {
                 if (pairing.view().mode === "endpoint" && pairing.view().endpoint?.status === "connected") {
-                    void pairing.syncMemory().catch(console.warn);
+                    void pairing.syncMemory({ reason: "periodic" }).catch(console.warn);
                     void pairing.syncProjects().catch(console.warn);
                 }
                 if (store.snapshot().skillSyncEnabled) void skills.refresh(pairing, store.snapshot().localSkillNamespaces);
             }, 60_000).unref();
-            // Auto daily/weekly/monthly memory compression every 30 minutes (unchanged)
+            // Auto daily/weekly/monthly memory compression every 30 minutes (and push/pull with Center on Endpoint)
             setInterval(() => {
                 if (store.snapshot().memoryAutoCompress !== false) {
-                    void memoryArchive.compressNow().then(() => broadcastState()).catch(console.warn);
+                    void memoryArchive.compressNow().then(async () => {
+                        if (pairing.view().mode === "endpoint" && pairing.view().endpoint?.status === "connected") {
+                            await pairing.syncMemory({ reason: "post-compress" }).catch(console.warn);
+                        }
+                        broadcastState();
+                    }).catch(console.warn);
                 }
             }, 1_800_000).unref();
+            // System wake-from-sleep: immediately check Center revision & auto-sync memory/projects
+            electron_1.powerMonitor?.on?.("resume", () => {
+                setTimeout(() => {
+                    if (changingRole) return;
+                    void pairing.refresh().then(async () => {
+                        if (pairing.view().mode === "endpoint" && pairing.view().endpoint?.status === "connected") {
+                            await Promise.all([
+                                pairing.syncMemory({ reason: "wake-resume" }).catch(console.warn),
+                                pairing.syncProjects().catch(console.warn),
+                            ]);
+                        }
+                        broadcastState();
+                    }).catch(console.warn);
+                }, 3_000).unref();
+            });
             // Fixed daily settlement archive (default 21:00 local time, once per day — resilient across sleep/wake)
             let dailySettleRunning = false;
             const checkDailyMemorySettle = () => {
@@ -1509,10 +1573,10 @@ else {
                 void (async () => {
                     try {
                         await usage.refresh().catch(console.warn);
-                        if (pairing.view().mode === "endpoint" && pairing.view().endpoint?.status === "connected") {
-                            await pairing.syncMemory().catch(console.warn);
-                        }
                         await memoryArchive.compressNow({ settle: true });
+                        if (pairing.view().mode === "endpoint" && pairing.view().endpoint?.status === "connected") {
+                            await pairing.syncMemory({ reason: "daily-settle" }).catch(console.warn);
+                        }
                         store.markDailySettled(todayKey);
                         broadcastState(undefined, { force: true });
                     } catch (err) {

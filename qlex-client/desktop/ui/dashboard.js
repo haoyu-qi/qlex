@@ -108,7 +108,7 @@ function renderSvgBarChart(container, series) {
 
 function render() {
     if (!state) return;
-    window.QlexTheme.applyAppearance(state.appearance);
+    window.QlexTheme.applyAppearance(state.appearance, document.documentElement, document.body, state.platform);
     if (state.nativeMaterial) window.QlexTheme.applyNativeMaterial(state.nativeMaterial);
     document.body.classList.toggle("flat", Boolean(state.appearance?.dashboardFlat));
     flatToggle.classList.toggle("active", Boolean(state.appearance?.dashboardFlat));

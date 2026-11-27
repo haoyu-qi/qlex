@@ -146,10 +146,10 @@ function ringSvg(pct, label, tone = "") {
 
 function render() {
     if (!state) return;
-    const appFp = JSON.stringify(state.appearance || {});
+    const appFp = JSON.stringify({ a: state.appearance || {}, p: state.platform || "" });
     if (appFp !== lastAppearanceFp) {
         lastAppearanceFp = appFp;
-        window.QlexTheme?.applyAppearance(state.appearance);
+        window.QlexTheme?.applyAppearance(state.appearance, document.documentElement, document.body, state.platform);
     }
     const matFp = JSON.stringify(state.nativeMaterial || {});
     if (state.nativeMaterial && matFp !== lastMaterialFp) {
@@ -364,8 +364,8 @@ function render() {
                     : `压缩 ${mem.compressionRatio ?? 0}%`;
     const memSubText = net.mode === "center"
         ? `${llmCfg.configured ? `LLM · ${llmCfg.nextTriggerLabel || "定时"}` : `规则 · ${llmCfg.nextTriggerLabel || "定时"}`} · 日${counts.daily}/周${counts.weekly}/月${counts.monthly}`
-        : net.mode === "endpoint" && cons.syncedCenterRevision
-            ? `全端共享中心版 #${cons.syncedCenterRevision} · ${cog.entities || 0} 实体 · ${cog.activeEdges || 0} 边`
+        : net.mode === "endpoint"
+            ? `自动同步中心${cons.syncedCenterRevision ? ` #${cons.syncedCenterRevision}` : ""} · ${net.syncMeta?.lastMemorySync?.time ? fmtShortTime(net.syncMeta.lastMemorySync.time) : "待同步"} · ${cog.entities || 0} 实体`
             : `${cog.entities || 0} 实体 · ${cog.activeEdges || 0} 边 · 日${counts.daily}/周${counts.weekly}/月${counts.monthly}`;
 
     // 4. 项目同步卡片

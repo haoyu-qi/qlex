@@ -50,8 +50,8 @@
   --spring-elastic: cubic-bezier(0.22, 1.38, 0.36, 1);
   --spring-smooth: cubic-bezier(0.22, 1, 0.36, 1);
 
-  --ui-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Qlex Noto Sans SC", sans-serif;
-  --mono-font: ui-monospace, SFMono-Regular, Menlo, Consolas, "PingFang SC", sans-serif;
+  --ui-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Qlex Noto Sans SC", sans-serif;
+  --mono-font: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, "PingFang SC", "Microsoft YaHei UI", monospace;
 }
 
 body.light-theme {
@@ -127,6 +127,39 @@ body.native-reduced-transparency .shell {
 }
 html.native-high-contrast .shell { border: 1px solid var(--line-strong); }
 
+/* ---- Windows Native Crisp Chrome & ClearType Rendering ---- */
+html.platform-win32,
+html.platform-win32 body {
+  border-radius: 0;
+  background: rgb(var(--glass-rgb));
+}
+html.platform-win32 .shell {
+  border-radius: 0;
+  clip-path: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background:
+    radial-gradient(ellipse 68% 58% at 54% 38%, rgba(var(--blue-rgb), 0.14), transparent 72%),
+    radial-gradient(ellipse 52% 44% at 22% 84%, rgba(var(--accent-rgb), 0.09), transparent 70%),
+    rgb(var(--glass-rgb));
+  border: 1px solid rgba(var(--line-rgb), 0.16);
+}
+html.platform-win32 body.light-theme .shell {
+  background:
+    radial-gradient(ellipse 64% 52% at 54% 38%, rgba(37, 99, 235, 0.08), transparent 72%),
+    rgb(var(--glass-rgb));
+}
+html.platform-win32 ::-webkit-scrollbar { width: 6px; height: 6px; }
+html.platform-win32 ::-webkit-scrollbar-track { background: transparent; }
+html.platform-win32 ::-webkit-scrollbar-thumb {
+  background: rgba(var(--line-rgb), 0.22);
+  border-radius: 999px;
+}
+html.platform-win32 ::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--line-rgb), 0.36);
+}
+
 /* ---- Top Draggable Titlebar ---- */
 .topbar {
   -webkit-app-region: drag;
@@ -157,14 +190,26 @@ html.native-high-contrast .shell { border: 1px solid var(--line-strong); }
   padding-right: 6px;
 }
 .tl-dot {
-  width: 12px;
-  height: 12px;
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
   padding: 0;
   border-radius: 50%;
-  border: 1px solid rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(0, 0, 0, 0.24);
   cursor: pointer;
-  transition: transform 160ms var(--spring-snappy), filter 140ms ease, box-shadow 160ms ease;
+  color: rgba(0, 0, 0, 0);
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  transition: transform 160ms var(--spring-snappy), filter 140ms ease, box-shadow 160ms ease, color 120ms ease;
 }
+.tl-dot.close::after { content: "×"; transform: translateY(-0.5px); }
+.tl-dot.min::after { content: "−"; transform: translateY(-0.5px); }
+.tl-dot.pin::after { content: "•"; }
+.traffic-lights:hover .tl-dot,
+html.platform-win32 .tl-dot { color: rgba(15, 20, 28, 0.72); }
 .tl-dot.close { background: #ff5f57; }
 .tl-dot.min { background: #febc2e; }
 .tl-dot.pin { background: #28c840; }
@@ -1106,6 +1151,14 @@ body.light-theme .hub-quick-btn.primary { background: var(--pill-solid); color: 
   transition: border-color 150ms ease;
 }
 .glass-input:focus, .glass-select:focus, .glass-textarea:focus { border-color: rgba(var(--overlay-rgb), 0.48); }
+.glass-select option, .glass-select optgroup {
+  background-color: #1c222b;
+  color: #eef5fb;
+}
+body.light-theme .glass-select option, body.light-theme .glass-select optgroup {
+  background-color: #ffffff;
+  color: #1c1f26;
+}
 .glass-textarea { resize: vertical; min-height: 70px; font-family: var(--mono-font); font-size: 11px; }
 
 /* ---- Lists, Rows, Subtitles ---- */

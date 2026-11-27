@@ -22,6 +22,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 
 const { LocalStore } = require(path.join(root, "desktop/src/state.js"));
+const { DevicePairing } = require(path.join(root, "desktop/src/pairing.js"));
+const { createMemoryArchiver } = require(path.join(root, "desktop/src/memory-archive.js"));
 const { createCognitiveMemoryEngine } = require(path.join(root, "desktop/src/memory-core.js"));
 const {
     normalizeTimeSlots,
@@ -331,12 +333,47 @@ try {
     assert.equal(fallbackRes.revision, 2);
     assert.ok(fallbackRes.error.includes("500"));
 
+    // ---- 6. Endpoint Auto-Sync on Center Revision Heartbeat (live HTTPS when node-forge available) ----
+    let liveAutoSyncTested = false;
+    let hasForge = false;
+    try { require.resolve("node-forge"); hasForge = true; } catch { /* optional */ }
+    if (hasForge) {
+        const cStore = new LocalStore(path.join(tmpDir, "auto-c-state.json"));
+        const eStore = new LocalStore(path.join(tmpDir, "auto-e-state.json"));
+        const cArch = createMemoryArchiver({ getArchiveDir: () => path.join(tmpDir, "auto-c-mem"), home: tmpDir });
+        const eArch = createMemoryArchiver({ getArchiveDir: () => path.join(tmpDir, "auto-e-mem"), home: tmpDir });
+        const epEvents = [];
+        const cPair = new DevicePairing(cStore, 0, null, () => ["127.0.0.1"], cArch);
+        const ePair = new DevicePairing(eStore, 0, null, () => ["127.0.0.1"], eArch, (ev) => epEvents.push(ev));
+        await cPair.start();
+        try {
+            const invite = cPair.createInvite("127.0.0.1");
+            await ePair.join(invite);
+            cPair.decide(eStore.snapshot().deviceId, true);
+            // Center adds a new memory & consolidates (bumps revision -> 1)
+            cArch.retain({ title: "中心自动推送测试记忆", content: "中心完成整理后接入点心跳应自动拉取该条权威记忆。", bank: "world", project: "qlex" });
+            await cArch.consolidateNow({ llmConfig: { enabled: false }, triggerReason: "slot_12:30", force: true, deviceName: "Center" });
+            assert.equal(cArch.getConsolidationStatus().revision, 1);
+
+            // Endpoint runs heartbeat refresh() (10s timer) — MUST auto-detect connected + rev 1 and auto-sync!
+            await ePair.refresh();
+            if (ePair.memorySyncing) await ePair.memorySyncing;
+            assert.equal(eArch.getConsolidationStatus().syncedCenterRevision, 1, "Endpoint heartbeat must auto-sync Center revision #1");
+            assert.ok(eArch.recall("中心自动推送测试记忆", { level: "L0" }).results.length >= 1, "Endpoint must automatically pull Center memory");
+            assert.ok(epEvents.includes("memory"), "Endpoint onChange('memory') must fire on auto-sync");
+            liveAutoSyncTested = true;
+        } finally {
+            cPair.stop();
+        }
+    }
+
     console.log("ALL QLEX CENTER LLM MEMORY CONSOLIDATION & MULTI-ENDPOINT CONVERGENCE TESTS PASSED!", JSON.stringify({
         convergedActiveCount: centerIds.length,
         llmRevision: consRes.revision,
         fallbackRevision: fallbackRes.revision,
         epASyncedRevision: epAEng.getConsolidationStatus().syncedCenterRevision,
         epBSyncedRevision: epBEng.getConsolidationStatus().syncedCenterRevision,
+        liveAutoSyncTested,
         llmCalls,
     }));
 } finally {

@@ -195,7 +195,13 @@ function callCenter(endpoint, route, id, payload) {
                 if (typeof data.name !== "string" || data.name.length > 100 ||
                     !["pending", "connected", "rejected"].includes(String(data.status)))
                     throw new Error();
-                resolve({ name: data.name, status: data.status });
+                resolve({
+                    name: data.name,
+                    status: data.status,
+                    memoryRevision: Number.isFinite(Number(data.memoryRevision)) ? Number(data.memoryRevision) : 0,
+                    memoryUpdatedAt: Number.isFinite(Number(data.memoryUpdatedAt)) ? Number(data.memoryUpdatedAt) : 0,
+                    memoryActiveCount: Number.isFinite(Number(data.memoryActiveCount)) ? Number(data.memoryActiveCount) : 0,
+                });
             }).catch(() => reject(new Error("中心返回的配对状态无效。")));
         });
         const timeoutMs = route === "project-files" ? 60_000 : route === "memory" ? 12_000 : route === "projects" ? 15_000 : 4500;
@@ -216,6 +222,7 @@ class DevicePairing {
     endpointOnline = false;
     peerSeenAt = new Map();
     refreshing;
+    memorySyncing = null;
     starting = false;
     startError;
     lastMemorySync = null;
@@ -371,10 +378,14 @@ class DevicePairing {
         if (!result)
             throw new Error("邀请已被使用、已过期或被中心拒绝，请生成新邀请。");
         this.store.setPairing({
-            mode: "endpoint", center: config.center, endpoint: { ...endpoint, invite: { ...invite, token: "" }, ...result },
+            mode: "endpoint", center: config.center, endpoint: { ...endpoint, invite: { ...invite, token: "" }, name: result.name, status: result.status },
         });
         this.startError = undefined;
         this.endpointOnline = true;
+        if (result.status === "connected") {
+            void this.syncMemory({ reason: "join" }).catch(() => {});
+            void this.syncProjects().catch(() => {});
+        }
     }
     refresh() {
         this.refreshing ??= this.refreshEndpoint().finally(() => { this.refreshing = undefined; });
@@ -385,6 +396,8 @@ class DevicePairing {
         const endpoint = config.endpoint;
         if (config.mode !== "endpoint" || !endpoint || endpoint.status === "rejected")
             return;
+        const wasOnline = this.endpointOnline;
+        const prevStatus = endpoint.status;
         let result;
         let reached = false;
         try {
@@ -398,12 +411,47 @@ class DevicePairing {
         this.endpointOnline = reached && Boolean(result);
         if (!reached)
             return;
-        const next = result ?? { name: endpoint.name, status: "rejected" };
+        const next = result ?? { name: endpoint.name, status: "rejected", memoryRevision: 0, memoryUpdatedAt: 0, memoryActiveCount: 0 };
         if (next.status !== endpoint.status || next.name !== endpoint.name) {
-            this.store.setPairing({ ...current, endpoint: { ...endpoint, ...next } });
+            this.store.setPairing({ ...current, endpoint: { ...endpoint, name: next.name, status: next.status } });
+            this.onChange?.("pairing");
         }
-        if (next.status === "rejected")
+        if (next.status === "rejected") {
             this.endpointOnline = false;
+            return;
+        }
+
+        // Automatic Center -> Endpoint memory sync triggers on heartbeat:
+        //  1) Newly approved (pending -> connected)
+        //  2) Reconnected after offline / sleep / Center restart
+        //  3) Center published a newer consolidation revision or timestamp
+        //  4) Initial pull when Center already has memories and this Endpoint hasn't synced yet
+        if (next.status === "connected" && this.endpointOnline && this.memoryArchive) {
+            const becameConnected = prevStatus !== "connected";
+            const reconnected = !wasOnline;
+            const localCons = this.memoryArchive.getConsolidationStatus?.() || {};
+            const localSyncedRev = Number(localCons.syncedCenterRevision || 0);
+            const localSyncedAt = Number(localCons.syncedCenterAt || 0);
+            const localActive = Number(this.memoryArchive.snapshot?.()?.cognitive?.activeItems || 0);
+
+            const hasNewRevision = next.memoryRevision > 0 && next.memoryRevision > localSyncedRev;
+            const hasNewConsolidationTime = next.memoryUpdatedAt > 0 && next.memoryUpdatedAt > localSyncedAt;
+            const needsInitialPull = !this.lastMemorySync && next.memoryActiveCount > 0 && localActive === 0;
+
+            let triggerReason = "";
+            if (becameConnected) triggerReason = "approved";
+            else if (hasNewRevision) triggerReason = `center-rev-${next.memoryRevision}`;
+            else if (hasNewConsolidationTime) triggerReason = "center-updated";
+            else if (reconnected) triggerReason = "reconnected";
+            else if (needsInitialPull) triggerReason = "initial-pull";
+
+            if (triggerReason) {
+                void this.syncMemory({ reason: triggerReason }).catch(err => console.warn("QLEX auto memory sync warning:", err?.message || err));
+            }
+            if (becameConnected || reconnected) {
+                void this.syncProjects().catch(err => console.warn("QLEX auto project sync warning:", err?.message || err));
+            }
+        }
     }
     requestSkills(selection) {
         const { mode, endpoint } = this.config;
@@ -411,27 +459,36 @@ class DevicePairing {
         if (!local.skillSyncEnabled || mode !== "endpoint" || endpoint?.status !== "connected") return;
         return callCenter(endpoint, "skills", local.deviceId, selection);
     }
-    async syncMemory() {
+    async syncMemory(opts = {}) {
+        if (this.memorySyncing) return this.memorySyncing;
         const { mode, endpoint } = this.config;
         const local = this.store.snapshot();
         if (mode !== "endpoint" || endpoint?.status !== "connected" || !this.memoryArchive) return null;
-        const localBundle = this.memoryArchive.exportSyncBundle({ deviceId: local.deviceId, deviceName: deviceName(), canonical: false });
-        const response = await callCenter(endpoint, "memory", local.deviceId, localBundle);
-        if (!response?.bundle) return null;
-        const peerLabel = endpoint.name || endpoint.invite.host;
-        const mergedLocal = this.memoryArchive.mergeSyncBundle(response.bundle, { isCenter: false, peerName: peerLabel });
-        this.lastMemorySync = {
-            time: Date.now(),
-            peer: peerLabel,
-            centerRevision: Number(response.bundle?.consolidation?.revision || 0),
-            centerConsolidatedAt: Number(response.bundle?.consolidation?.lastConsolidatedAt || 0),
-            pulledAdded: mergedLocal.itemsAdded,
-            pulledUpdated: mergedLocal.itemsUpdated,
-            tombstonesApplied: mergedLocal.tombstonesApplied || 0,
-            pushedAdded: response.merged?.itemsAdded || 0,
-            pushedUpdated: response.merged?.itemsUpdated || 0,
-        };
-        return this.lastMemorySync;
+        this.memorySyncing = (async () => {
+            const localBundle = this.memoryArchive.exportSyncBundle({ deviceId: local.deviceId, deviceName: deviceName(), canonical: false });
+            const response = await callCenter(endpoint, "memory", local.deviceId, localBundle);
+            if (!response?.bundle) return null;
+            const peerLabel = endpoint.name || endpoint.invite.host;
+            const mergedLocal = this.memoryArchive.mergeSyncBundle(response.bundle, { isCenter: false, peerName: peerLabel });
+            this.endpointOnline = true;
+            this.lastMemorySync = {
+                time: Date.now(),
+                peer: peerLabel,
+                trigger: opts?.reason || "auto",
+                centerRevision: Number(response.bundle?.consolidation?.revision || 0),
+                centerConsolidatedAt: Number(response.bundle?.consolidation?.lastConsolidatedAt || 0),
+                pulledAdded: mergedLocal.itemsAdded,
+                pulledUpdated: mergedLocal.itemsUpdated,
+                tombstonesApplied: mergedLocal.tombstonesApplied || 0,
+                pushedAdded: response.merged?.itemsAdded || 0,
+                pushedUpdated: response.merged?.itemsUpdated || 0,
+            };
+            this.onChange?.("memory");
+            return this.lastMemorySync;
+        })().finally(() => {
+            this.memorySyncing = null;
+        });
+        return this.memorySyncing;
     }
     async syncProjects() {
         const { mode, endpoint } = this.config;
@@ -767,7 +824,15 @@ class DevicePairing {
                 } else if (!join && existing.status === "connected") {
                     this.peerSeenAt.set(id, Date.now());
                 }
-                reply(res, 200, { name: deviceName(), status: existing.status });
+                const cons = this.memoryArchive?.getConsolidationStatus?.() || {};
+                const memSnap = this.memoryArchive?.snapshot?.() || {};
+                reply(res, 200, {
+                    name: deviceName(),
+                    status: existing.status,
+                    memoryRevision: Number(cons.revision || 0),
+                    memoryUpdatedAt: Number(cons.lastConsolidatedAt || 0),
+                    memoryActiveCount: Number(memSnap.cognitive?.activeItems || 0),
+                });
                 return;
             }
             const invite = this.activeInvite;

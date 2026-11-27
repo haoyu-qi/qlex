@@ -13,7 +13,7 @@
   --success: #b7ead4;
   --orange: #f4a073;
   --red: #f47788;
-  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, "PingFang SC", sans-serif;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, "PingFang SC", "Microsoft YaHei UI", sans-serif;
   color: var(--text);
 }
 

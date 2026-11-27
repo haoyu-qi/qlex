@@ -38,6 +38,20 @@ html.native-liquid-glass .dash-shell {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
+html.platform-win32,
+html.platform-win32 body {
+  border-radius: 0;
+  background: rgb(var(--glass-rgb));
+}
+html.platform-win32 .dash-shell {
+  border-radius: 0;
+  clip-path: none;
+  background: rgb(var(--glass-rgb));
+  border: 1px solid rgba(var(--line-rgb), 0.16);
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
 
 /* Header & Brand Emblem */
 .dash-header {

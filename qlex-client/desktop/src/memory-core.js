@@ -3086,6 +3086,30 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             }
         }
 
+        // Canonical Center mental-model/observation alignment: when an Endpoint pulls a consolidated
+        // Center revision, retire stale locally-synthesized system reflections that Center no longer keeps active.
+        if (isCanonicalFromCenter && Number(bundle.consolidation?.revision || 0) > 0) {
+            const centerActiveIds = new Set(bundle.items.filter(i => i?.status === "active").map(i => i.id));
+            const centerReflTs = Number(bundle.consolidation?.lastConsolidatedAt || nowTs);
+            const hasCenterReflections = bundle.items.some(i => i?.status === "active" && (i.bank === "mental_model" || i.bank === "observation"));
+            if (hasCenterReflections) {
+                for (const it of itemStore.items) {
+                    if (it.status !== "active") continue;
+                    if (it.bank !== "mental_model" && it.bank !== "observation") continue;
+                    if (it.source !== "system") continue;
+                    if (centerActiveIds.has(it.id)) continue;
+                    if ((it.updatedAt || 0) > centerReflTs + 60_000) continue;
+                    it.status = "superseded";
+                    it.validTo = nowTs;
+                    it.updatedAt = nowTs;
+                    it.version = (it.version || 1) + 1;
+                    it.deleteReason = `aligned with center canonical rev #${bundle.consolidation.revision}`;
+                    tombstonesApplied++;
+                    itemsUpdated++;
+                }
+            }
+        }
+
         const entById = new Map(graphStore.entities.map(e => [e.id, e]));
         let entitiesAdded = 0;
         for (const ent of Array.isArray(bundle.entities) ? bundle.entities.slice(0, 500) : []) {

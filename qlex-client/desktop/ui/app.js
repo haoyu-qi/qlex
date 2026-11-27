@@ -816,13 +816,14 @@ function renderEStage() {
         </div>
         ${isEndpoint ? `
           <div class="proj-meta-badges">
+            <span class="mini-pill" style="color:var(--accent)">自动同步已开启</span>
             <span class="mini-pill" style="color:var(--accent)">中心版本 #${cons.syncedCenterRevision || 0}</span>
             <span class="mini-pill">来源 ${esc(cons.syncedCenterDevice || net.endpoint?.name || "中心点")}</span>
-            <span class="mini-pill">${cons.syncedCenterAt ? `整理于 ${fmtTime(cons.syncedCenterAt)}` : "等待中心定时整理"}</span>
+            <span class="mini-pill">${net.syncMeta?.lastMemorySync?.time ? `已同步 ${fmtShortTime(net.syncMeta.lastMemorySync.time)}` : (cons.syncedCenterAt ? `整理于 ${fmtTime(cons.syncedCenterAt)}` : "等待中心同步")}</span>
           </div>
-          <div class="muted-note">${esc(cons.lastSummary || "接入点负责采集并推送本地记忆，由中心点按时间段调用大模型统一去重整合后，再同步分发至所有端。")}</div>
+          <div class="muted-note">${esc(cons.lastSummary || "已自动开启 10s 中心新版本检测与 60s 定时双向同步：中心点完成整理后，本机将自动拉取并收敛为全端统一记忆。")}</div>
           <div class="btn-row">
-            <button type="button" class="glass-btn sm primary" data-action="sync-memory-now">⟳ 拉取中心整理记忆</button>
+            <button type="button" class="glass-btn sm primary" data-action="sync-memory-now">⟳ 立即同步中心记忆</button>
             <button type="button" class="glass-btn sm" data-action="read-consolidation-report">查看整理报告</button>
           </div>
         ` : `
@@ -1738,11 +1739,11 @@ function renderSettingsStage() {
                 </button>
               `).join("")}
             </div>
-            <div class="settings-row">
-              <span class="settings-label">系统毛玻璃材质</span>
-              <input id="systemGlassInput" class="settings-switch" type="checkbox" ${a.systemGlass !== false ? "checked" : ""} />
-            </div>
             ${state.platform === "darwin" ? `
+              <div class="settings-row">
+                <span class="settings-label">系统毛玻璃材质</span>
+                <input id="systemGlassInput" class="settings-switch" type="checkbox" ${a.systemGlass !== false ? "checked" : ""} />
+              </div>
               <div class="settings-row">
                 <span class="settings-label">macOS 背景材质</span>
                 <select id="macBackdropSelect" class="glass-select" style="width:188px" ${a.systemGlass === false ? "disabled" : ""}>
@@ -1753,13 +1754,15 @@ function renderSettingsStage() {
                   ` : ""}
                 </select>
               </div>
-            ` : ""}
-            ${isGlass && a.systemGlass !== false ? `
-              <div class="settings-row"><span class="settings-label">液态玻璃染色深度</span><span class="card-meta" id="tintValueLabel">${tintVal}%</span></div>
-              <input id="glassTintRange" class="glass-range" type="range" min="0" max="85" value="${tintVal}" />
+              ${isGlass && a.systemGlass !== false ? `
+                <div class="settings-row"><span class="settings-label">液态玻璃染色深度</span><span class="card-meta" id="tintValueLabel">${tintVal}%</span></div>
+                <input id="glassTintRange" class="glass-range" type="range" min="0" max="85" value="${tintVal}" />
+              ` : `
+                <div class="settings-row"><span class="settings-label">毛玻璃不透明度</span><span class="card-meta" id="opacityValueLabel">${a.glassOpacity ?? 68}%</span></div>
+                <input id="glassOpacityRange" class="glass-range" type="range" min="20" max="100" value="${a.glassOpacity ?? 68}" />
+              `}
             ` : `
-              <div class="settings-row"><span class="settings-label">毛玻璃不透明度</span><span class="card-meta" id="opacityValueLabel">${a.glassOpacity ?? 68}%</span></div>
-              <input id="glassOpacityRange" class="glass-range" type="range" min="20" max="100" value="${a.glassOpacity ?? 68}" />
+              <div class="muted-note">Windows 已启用原生高清渲染模式（支持 ClearType 字体抗锯齿、原生圆角窗口与托盘面板自适应定位）。</div>
             `}
           </div>
 
@@ -1843,10 +1846,10 @@ function renderSettingsStage() {
 
 function render() {
     if (!state) return;
-    const appFp = JSON.stringify(state.appearance || {});
+    const appFp = JSON.stringify({ a: state.appearance || {}, p: state.platform || "" });
     if (appFp !== lastAppearanceFp) {
         lastAppearanceFp = appFp;
-        window.QlexTheme?.applyAppearance(state.appearance);
+        window.QlexTheme?.applyAppearance(state.appearance, document.documentElement, document.body, state.platform);
     }
     const matFp = JSON.stringify(state.nativeMaterial || {});
     if (state.nativeMaterial && matFp !== lastMaterialFp) {

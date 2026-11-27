@@ -55,11 +55,35 @@
         t3code: "#93c5fd",
     };
 
-    function applyAppearance(appearance = {}, rootEl = document.documentElement, bodyEl = document.body) {
+    function detectIsWindows(platform) {
+        if (platform) return platform === "win32";
+        return typeof navigator !== "undefined" && /windows/i.test(navigator.userAgent || "");
+    }
+
+    function applyPlatformClasses(platform, rootEl = document.documentElement, bodyEl = document.body) {
+        const isWin = detectIsWindows(platform);
+        const isMac = platform ? platform === "darwin" : (typeof navigator !== "undefined" && /mac/i.test(navigator.userAgent || ""));
+        for (const node of [rootEl, bodyEl]) {
+            if (!node) continue;
+            node.classList.toggle("platform-win32", isWin);
+            node.classList.toggle("platform-darwin", isMac);
+        }
+        return { isWin, isMac };
+    }
+
+    if (typeof document !== "undefined") {
+        applyPlatformClasses(undefined, document.documentElement, document.body);
+    }
+
+    function applyAppearance(appearance = {}, rootEl = document.documentElement, bodyEl = document.body, platform) {
         const preset = PRESETS[appearance.themePreset] || PRESETS.default;
-        const opacity = glassRendering
-            ? glassRendering.renderedGlassOpacity(appearance, { platform: "darwin" })
+        const { isWin } = applyPlatformClasses(platform, rootEl, bodyEl);
+        const resolvedPlatform = platform || (isWin ? "win32" : "darwin");
+        const rawOpacity = glassRendering
+            ? glassRendering.renderedGlassOpacity(appearance, { platform: resolvedPlatform })
             : Math.max(0.15, Math.min(1, Number(appearance.glassOpacity ?? 68) / 100));
+        // On Windows, solid DWM window + high-opacity surface keeps ClearType text razor-sharp without see-through artifacts
+        const opacity = isWin ? Math.max(0.96, rawOpacity) : rawOpacity;
 
         const vars = {
             "--glass-rgb": preset.bgRgb,
@@ -81,7 +105,7 @@
         for (const [k, v] of Object.entries(vars)) {
             rootEl.style.setProperty(k, v);
         }
-        rootEl.classList.toggle("system-glass-disabled", appearance.systemGlass === false);
+        rootEl.classList.toggle("system-glass-disabled", appearance.systemGlass === false || isWin);
         bodyEl?.classList.toggle("light-theme", preset.light);
         return preset;
     }
