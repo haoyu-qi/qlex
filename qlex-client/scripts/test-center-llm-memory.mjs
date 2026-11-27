@@ -27,6 +27,8 @@ const {
     normalizeTimeSlots,
     publicMemoryLlmConfig,
     evaluateConsolidationSchedule,
+    extractJsonObject,
+    buildConsolidationBatches,
     testMemoryLlmConnection,
 } = require(path.join(root, "desktop/src/memory-consolidator.js"));
 
@@ -285,7 +287,39 @@ try {
     assert.equal(epBEng.getConsolidationStatus().syncedCenterRevision, 1);
     assert.ok(epAEng.readConsolidationReport().content.includes("Tailscale"));
 
-    // ---- 4. Graceful fallback when LLM API fails ----
+    // ---- 4. Resilient JSON Repair / Truncation Recovery & Project-Grouped Batching Tests ----
+    // Exact reproduction of DeepSeek max_tokens truncation mid-array (which previously threw Expected ',' or ']'!)
+    const truncatedMidArray = [
+        '```json',
+        '{',
+        '  "summary": "已合并重复记忆并淘汰杂音",',
+        '  "merges": [],',
+        '  "prunes": [',
+        '    { "id": "mem_1", "reason": "一次性指令" },',
+        '    { "id": "mem_2", "reason": "重复杂音" },',
+        '    { "id": "mem_3", "reason": "此处输出超过 token 上限被直接截断',
+    ].join("\n");
+    const recovered = extractJsonObject(truncatedMidArray);
+    assert.equal(recovered.summary, "已合并重复记忆并淘汰杂音");
+    assert.equal(recovered.prunes.length, 2, "Must recover all complete array items before truncation");
+    assert.equal(recovered.prunes[1].id, "mem_2");
+
+    // Trailing comma + raw unescaped newline inside string
+    const dirtyJson = `{\n  "summary": "第一行\n第二行",\n  "prunes": [{"id": "mem_x", "reason": "noise",},],\n}`;
+    const repaired = extractJsonObject(dirtyJson);
+    assert.equal(repaired.prunes.length, 1);
+    assert.ok(repaired.summary.includes("第一行"));
+
+    // 60 items grouped into <=25-item project-preserving batches
+    const sixtyItems = Array.from({ length: 60 }, (_, idx) => ({
+        id: `mem_${idx}`,
+        project: idx < 20 ? "alpha" : idx < 40 ? "beta" : "gamma",
+    }));
+    const batches = buildConsolidationBatches(sixtyItems, 25);
+    assert.equal(batches.length, 3, "60 items across 3 projects of 20 must split into 3 clean batches <= 25");
+    assert.ok(batches.every(b => b.length <= 25));
+
+    // ---- 5. Graceful fallback when LLM API fails ----
     llmFailNext = true;
     const fallbackRes = await centerEng.consolidateCenterMemory({
         llmConfig: store.snapshot().centerMemoryLlm,
