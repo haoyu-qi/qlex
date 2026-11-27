@@ -424,7 +424,7 @@ try {
     fs.writeFileSync(agFile, agLines.join("\n") + "\n");
     const agStat = fs.statSync(agFile);
     const agParsed = parseAntigravityTranscript({ path: agFile, mtimeMs: agStat.mtimeMs, size: agStat.size }, ledgerCache);
-    assert.equal(agParsed.workspace, "/tmp/workcontext", "Must parse 'Your working directory:' workspace");
+    assert.equal(agParsed.workspace, path.normalize("/tmp/workcontext"), "Must parse 'Your working directory:' workspace");
     assert.equal(agParsed.dailyBuckets["2026-11-26"].input, 350000);
     assert.equal(agParsed.dailyBuckets["2026-11-26"].output, 12000);
     assert.equal(agParsed.dailyBuckets["2026-11-26"].cacheRead, 10200000);
@@ -491,7 +491,7 @@ try {
         fs.writeFileSync(dshFile, Buffer.concat([frame1, frame2]));
         const dshStat = fs.statSync(dshFile);
         const dshParsed = parseDshFile({ path: dshFile, mtimeMs: dshStat.mtimeMs, size: dshStat.size }, ledgerCache);
-        assert.equal(dshParsed.workspace, "/tmp/dsh-proj");
+        assert.equal(dshParsed.workspace, path.normalize("/tmp/dsh-proj"));
         assert.equal(dshParsed.dailyBuckets["2026-11-26"].tokens, 12350, "DSH multi-frame ZSTD must parse all frames and camelCase usage");
         assert.ok(dshParsed.topics.some(t => t.text.includes("多帧 ZSTD")));
     }
