@@ -234,3 +234,55 @@ li strong { flex: none; font-variant-numeric: tabular-nums; }
 }
 #open:hover { transform: translateY(-1px) scale(1.015); filter: brightness(1.04); }
 #open span { float: right; }
+
+/* ---- UI Moments Tactile Physics (Edge Dock) ---- */
+:root {
+  --um-spring: cubic-bezier(0.3, 1.45, 0.5, 1);
+  --um-ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2.5px rgba(var(--accent-rgb), 0.38);
+}
+#rail button {
+  transition: transform 300ms var(--um-spring), background-color 180ms var(--um-ease), color 180ms var(--um-ease), box-shadow 200ms var(--um-ease);
+}
+#dismiss {
+  transition: background 160ms var(--um-ease), color 160ms var(--um-ease), transform 260ms var(--um-spring);
+}
+#dismiss:active {
+  transform: scale(0.88);
+  transition-duration: 90ms;
+}
+.quick-action-btn,
+#open {
+  position: relative;
+  overflow: hidden;
+  transition: transform 300ms var(--um-spring), background 180ms var(--um-ease), border-color 180ms var(--um-ease), box-shadow 200ms var(--um-ease), filter 160ms ease;
+}
+.quick-action-btn::after,
+#open::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(circle 46px at var(--um-x, 50%) var(--um-y, 50%), rgba(255, 255, 255, 0.28), transparent 72%);
+}
+.quick-action-btn.um-pulse::after,
+#open.um-pulse::after {
+  animation: dockUmPulse 400ms var(--um-ease) both;
+}
+@keyframes dockUmPulse {
+  0% { opacity: 0.9; transform: scale(0.75); }
+  100% { opacity: 0; transform: scale(1.35); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
+}

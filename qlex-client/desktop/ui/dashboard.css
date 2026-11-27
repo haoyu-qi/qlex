@@ -399,3 +399,69 @@ html.platform-win32 .dash-shell {
   border: 1px solid rgba(var(--overlay-rgb), 0.16);
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.48);
 }
+
+/* ---- UI Moments Tactile Controls & Sliding Leaf Tabs (Dashboard) ---- */
+.dash-header-actions .icon-button {
+  position: relative;
+  overflow: hidden;
+  border-radius: 999px;
+  transition:
+    transform 300ms var(--um-spring),
+    background 180ms var(--um-ease),
+    border-color 180ms var(--um-ease),
+    box-shadow 220ms var(--um-ease),
+    color 160ms ease;
+}
+.dash-header-actions .icon-button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(circle 28px at var(--um-x, 50%) var(--um-y, 50%), rgba(255, 255, 255, 0.28), transparent 72%);
+}
+.dash-header-actions .icon-button.um-pulse::after {
+  animation: umSpecularPulse 380ms var(--um-ease) both;
+}
+.dash-header-actions .icon-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
+}
+.dash-header-actions .icon-button:active {
+  transform: scale(0.91);
+  transition-duration: 90ms;
+}
+
+.dash-tabs {
+  position: relative;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid rgba(var(--line-rgb), 0.14);
+  background: rgba(var(--sunken-rgb), 0.36);
+}
+.dash-range-group {
+  position: relative;
+}
+.dash-tabs .dash-tab,
+.dash-range-group .range-btn {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+  transition: color 200ms var(--um-ease), transform 280ms var(--um-spring), background 160ms ease;
+}
+.dash-tabs .dash-tab:hover:not(.active),
+.dash-range-group .range-btn:hover:not(.active) {
+  background: rgba(var(--overlay-rgb), 0.07);
+}
+.dash-tabs .dash-tab:active,
+.dash-range-group .range-btn:active {
+  transform: scale(0.94);
+  transition-duration: 90ms;
+}
+.dash-tabs.um-has-slider .dash-tab.active,
+.dash-range-group.um-has-slider .range-btn.active {
+  background: transparent;
+  box-shadow: none;
+}

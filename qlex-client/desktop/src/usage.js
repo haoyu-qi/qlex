@@ -212,7 +212,7 @@ function createUsageCollector({ home = homedir(), env = process.env, run = exec,
         running = (async () => {
             const customPaths = getCustomPaths?.() || {};
             const [nativeRes, quotaRes, extraToday, extraWeek] = await Promise.all([
-                collectAllNative({ home, env, cachePath, days: 90, customPaths }),
+                collectAllNative({ home, env, cachePath, days: 185, customPaths }),
                 codexQuota(home, env).catch(() => null),
                 optionalTokscale(["--today"]),
                 optionalTokscale(["--week"]),
@@ -227,6 +227,7 @@ function createUsageCollector({ home = homedir(), env = process.env, run = exec,
                 engine: hasExtra ? "native+tokscale" : "native",
                 today,
                 week,
+                dailyActivity: nativeRes.dailyTokens || {},
                 quotas: { codex: quotaRes },
                 diagnostics: nativeRes.diagnostics,
                 time: Date.now(),

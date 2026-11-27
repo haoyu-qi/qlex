@@ -98,6 +98,7 @@ function patchHtml(el, html) {
     if (!el || el.__mbHtml === html) return;
     el.__mbHtml = html;
     el.innerHTML = html;
+    window.QlexMoments?.scheduleSync();
 }
 
 function computeHealth(st) {
@@ -400,12 +401,16 @@ function render() {
           <span class="mb-tag ${syncTagClass}">${esc(syncTimeText)}</span>
         </div>
         <div class="mb-card-metric">${esc(syncMetricText)}</div>
-        <svg class="mb-spark-svg" viewBox="0 0 120 20" preserveAspectRatio="none">
-          <path id="mbSyncWavePath" d="M0 14 L20 13 L35 11 L52 13 L68 9 L86 12 L102 7 L120 9" fill="none" stroke="rgba(244,160,115,0.34)" stroke-width="1.6" stroke-linecap="round"/>
-          <path class="mb-spark-flow" d="M0 14 L20 13 L35 11 L52 13 L68 9 L86 12 L102 7 L120 9" fill="none" stroke="var(--orange)" stroke-width="1.9" stroke-linecap="round"/>
-          <circle r="2.6" fill="var(--orange)">
-            <animateMotion dur="${syncSpeed}" repeatCount="indefinite" path="M0 14 L20 13 L35 11 L52 13 L68 9 L86 12 L102 7 L120 9"/>
-          </circle>
+        <svg class="mb-spark-svg" viewBox="0 0 160 22" preserveAspectRatio="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="mbSyncFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="var(--orange)" stop-opacity="0.22"/>
+              <stop offset="100%" stop-color="var(--orange)" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <path d="M 2 15 C 22 14, 34 11, 52 12 C 70 13, 84 8, 106 10 C 124 12, 138 6, 158 8 L 158 22 L 2 22 Z" fill="url(#mbSyncFill)"/>
+          <path d="M 2 15 C 22 14, 34 11, 52 12 C 70 13, 84 8, 106 10 C 124 12, 138 6, 158 8" fill="none" stroke="rgba(244,160,115,0.34)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+          <path class="mb-spark-flow mb-spark-orange" style="--spark-dur:${syncSpeed}" pathLength="100" d="M 2 15 C 22 14, 34 11, 52 12 C 70 13, 84 8, 106 10 C 124 12, 138 6, 158 8" fill="none" stroke="var(--orange)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
         </svg>
         <div class="mb-card-sub">点击立即同步记忆 · 项目 · 技能</div>
       </div>
@@ -436,13 +441,17 @@ function render() {
           <span class="mb-tag ${tsTagClass}">${tsTagText}</span>
         </div>
         <div class="mb-card-metric">${tsMetric}</div>
-        <svg class="mb-spark-svg" viewBox="0 0 120 20" preserveAspectRatio="none">
-          <path d="M0 15 Q 25 14, 45 11 T 78 6 T 120 12" fill="none" stroke="rgba(183,234,212,0.34)" stroke-width="1.6"/>
-          <path class="mb-spark-flow" d="M0 15 Q 25 14, 45 11 T 78 6 T 120 12" fill="none" stroke="var(--accent)" stroke-width="1.9"/>
-          <path d="M0 16 Q 30 15, 60 12 T 120 15" fill="none" stroke="var(--blue)" stroke-width="1.2" opacity="0.65"/>
-          <circle r="2.6" fill="var(--accent)">
-            <animateMotion dur="4.2s" repeatCount="indefinite" path="M0 15 Q 25 14, 45 11 T 78 6 T 120 12"/>
-          </circle>
+        <svg class="mb-spark-svg" viewBox="0 0 160 22" preserveAspectRatio="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="mbTsFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.2"/>
+              <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <path d="M 2 16 C 28 16, 46 13, 72 10 C 96 7, 114 6, 158 11 L 158 22 L 2 22 Z" fill="url(#mbTsFill)"/>
+          <path d="M 2 17 C 34 16, 62 14, 96 12 C 122 11, 140 13, 158 14" fill="none" stroke="rgba(115,189,245,0.32)" stroke-width="1.2" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+          <path d="M 2 16 C 28 16, 46 13, 72 10 C 96 7, 114 6, 158 11" fill="none" stroke="rgba(183,234,212,0.34)" stroke-width="1.5" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+          <path class="mb-spark-flow mb-spark-accent" style="--spark-dur:4.2s" pathLength="100" d="M 2 16 C 28 16, 46 13, 72 10 C 96 7, 114 6, 158 11" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
         </svg>
         <div class="mb-card-sub">${esc(tsSub)}</div>
       </div>

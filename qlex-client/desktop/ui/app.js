@@ -102,6 +102,7 @@ function patchHtml(el, html) {
     if (!el || el.__qlexHtml === html) return;
     el.__qlexHtml = html;
     el.innerHTML = html;
+    window.QlexMoments?.scheduleSync();
 }
 
 function setVisible(el, visible) {
@@ -217,6 +218,7 @@ function updateTopbarAndRail() {
     const workspaceAlerts = (sk.conflicts || 0) + (state.remoteProjects?.length || 0);
     setVisible(railWorkspaceBadge, workspaceAlerts > 0);
     if (workspaceAlerts > 0) railWorkspaceBadge.textContent = String(workspaceAlerts);
+    window.QlexMoments?.scheduleSync();
 }
 
 /* ---- Onboarding ---- */
@@ -299,38 +301,129 @@ function buildQTrendSvg() {
 }
 
 /* ---- Overview Stage: Constellation Orbital Hub + Right Live Telemetry Rail ---- */
-function buildRightBarChartSvg() {
-    const usageDaily = state.usage?.week?.daily || state.usage?.history?.[7]?.daily || [];
-    const usageMap = new Map(usageDaily.map(r => [r.date, Number(r.tokens || 0)]));
-    const memDaily = state.memoryArchive?.items?.daily || [];
-    const memMap = new Map(memDaily.map(item => [item.key, Number(item.rawBytes || item.compressedBytes || 0)]));
-    const todayTotal = Number(state.usage?.today?.total || 0);
+function buildActivityHeatmapHtml() {
+    const scoreMap = new Map();
+    const detailMap = new Map();
+    const addActivity = (dateKey, tokens, memBytes) => {
+        if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return;
+        const prev = detailMap.get(dateKey) || { tokens: 0, memBytes: 0 };
+        const next = {
+            tokens: Math.max(prev.tokens, Number(tokens || 0)),
+            memBytes: Math.max(prev.memBytes, Number(memBytes || 0)),
+        };
+        detailMap.set(dateKey, next);
+        // Normalize tokens & archive bytes onto a unified activity intensity score
+        const score = next.tokens > 0 ? next.tokens : (next.memBytes > 0 ? next.memBytes * 120 : 0);
+        if (score > 0) scoreMap.set(dateKey, score);
+    };
 
-    const end = new Date();
-    const days = Array.from({ length: 7 }, (_, idx) => {
-        const d = new Date(end.getFullYear(), end.getMonth(), end.getDate() - (6 - idx));
-        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-        const tok = usageMap.get(key) ?? (idx === 6 ? todayTotal : 0);
-        const mem = memMap.get(key) || 0;
-        return { key, short: key.slice(5), val: tok || mem, tok, mem };
-    });
+    for (const [d, tok] of Object.entries(state.usage?.dailyActivity || {})) {
+        addActivity(d, tok, 0);
+    }
+    for (const rep of [state.usage?.week, state.usage?.history?.[30], state.usage?.history?.[90]]) {
+        for (const row of rep?.daily || []) addActivity(row.date, row.tokens, 0);
+    }
+    const todayNow = new Date();
+    const todayStr = `${todayNow.getFullYear()}-${String(todayNow.getMonth() + 1).padStart(2, "0")}-${String(todayNow.getDate()).padStart(2, "0")}`;
+    if (Number(state.usage?.today?.total || 0) > 0) {
+        addActivity(todayStr, Number(state.usage.today.total), 0);
+    }
+    for (const item of state.memoryArchive?.items?.daily || []) {
+        addActivity(item.key, 0, Number(item.rawBytes || item.compressedBytes || 1024));
+    }
 
-    const maxV = Math.max(1, ...days.map(d => d.val));
-    const W = 250, H = 64, top = 6, base = 58, plotH = base - top, step = W / 7, barW = 14;
-    const bars = days.map((d, i) => {
-        const cx = step * (i + 0.5);
-        const bh = d.val > 0 ? Math.max(5, Math.round((d.val / maxV) * plotH)) : 3;
-        return `<rect x="${(cx - barW / 2).toFixed(1)}" y="${(base - bh).toFixed(1)}" width="${barW}" height="${bh}" rx="3.5" fill="var(--accent)" fill-opacity="${d.val > 0 ? 0.85 : 0.16}"><title>${d.key} · 活动 ${fmtNum(d.tok)} tok / 记忆 ${fmtBytes(d.mem)}</title></rect>`;
+    // Build 24-week (~6 months) Monday-to-Sunday calendar grid ending on current week
+    const COLS = 24;
+    const today = new Date(todayNow.getFullYear(), todayNow.getMonth(), todayNow.getDate());
+    const todayDow = (today.getDay() + 6) % 7; // Mon=0 .. Sun=6
+    const startDate = new Date(today);
+    startDate.setDate(today.getDate() - todayDow - (COLS - 1) * 7);
+
+    const positiveVals = [];
+    const weeks = [];
+    let activeDays = 0;
+
+    for (let c = 0; c < COLS; c++) {
+        const colDays = [];
+        for (let r = 0; r < 7; r++) {
+            const d = new Date(startDate);
+            d.setDate(startDate.getDate() + c * 7 + r);
+            const isFuture = d > today;
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+            const val = isFuture ? 0 : (scoreMap.get(key) || 0);
+            const info = detailMap.get(key) || { tokens: 0, memBytes: 0 };
+            if (!isFuture && val > 0) {
+                activeDays += 1;
+                positiveVals.push(val);
+            }
+            colDays.push({ key, date: d, val, info, isFuture });
+        }
+        weeks.push(colDays);
+    }
+
+    // Quartile thresholds for 4 non-zero intensity tiers (1..4)
+    positiveVals.sort((a, b) => a - b);
+    const q = (p) => positiveVals.length ? positiveVals[Math.min(positiveVals.length - 1, Math.floor((positiveVals.length - 1) * p))] : 1;
+    const t1 = q(0.28);
+    const t2 = q(0.58);
+    const t3 = q(0.84);
+    const levelOf = (v) => {
+        if (!v || v <= 0) return 0;
+        if (v <= t1) return 1;
+        if (v <= t2) return 2;
+        if (v <= t3) return 3;
+        return 4;
+    };
+
+    // Month labels positioned at the first column where each month begins
+    const monthLabels = [];
+    let lastMonth = -1;
+    for (let c = 0; c < COLS; c++) {
+        const firstDay = weeks[c][0].date;
+        const m = firstDay.getMonth();
+        const containsFirstOfMonth = weeks[c].find(d => d.date.getDate() === 1 && !d.isFuture);
+        if (c === 0) {
+            monthLabels.push({ col: c, label: `${m + 1}月` });
+            lastMonth = m;
+        } else if (containsFirstOfMonth && containsFirstOfMonth.date.getMonth() !== lastMonth) {
+            const nm = containsFirstOfMonth.date.getMonth();
+            // Avoid crowding if previous label is less than 2 columns away
+            if (!monthLabels.length || c - monthLabels[monthLabels.length - 1].col >= 3) {
+                monthLabels.push({ col: c, label: `${nm + 1}月` });
+            }
+            lastMonth = nm;
+        }
+    }
+
+    const cellsHtml = weeks.map((col, cIdx) => {
+        const fadeCls = cIdx === 0 ? " fade-1" : cIdx === 1 ? " fade-2" : "";
+        return `<div class="hm-col${fadeCls}">${col.map(cell => {
+            if (cell.isFuture) return `<span class="hm-cell future" aria-hidden="true"></span>`;
+            const lv = levelOf(cell.val);
+            const tipParts = [cell.key];
+            if (cell.info.tokens > 0) tipParts.push(`${fmtCompact(cell.info.tokens)} tokens`);
+            if (cell.info.memBytes > 0) tipParts.push(`记忆归档 ${fmtBytes(cell.info.memBytes)}`);
+            if (!cell.info.tokens && !cell.info.memBytes) tipParts.push("无活动记录");
+            return `<span class="hm-cell lv-${lv}" title="${esc(tipParts.join(" · "))}"></span>`;
+        }).join("")}</div>`;
     }).join("");
 
-    return `
-      <svg class="q-trend-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-        <line x1="0" y1="${top + plotH * 0.5}" x2="${W}" y2="${top + plotH * 0.5}" stroke="rgba(232,238,244,0.07)" stroke-width="1"/>
-        <line x1="0" y1="${base}" x2="${W}" y2="${base}" stroke="rgba(232,238,244,0.12)" stroke-width="1"/>
-        ${bars}
-      </svg>
-      <div class="q-trend-axis">${days.map(d => `<span>${d.short}</span>`).join("")}</div>
-    `;
+    const monthsHtml = monthLabels.map(m =>
+        `<span class="hm-month" style="left:${((m.col / COLS) * 100).toFixed(2)}%">${m.label}</span>`
+    ).join("");
+
+    return {
+        activeDays,
+        monthsCount: 6,
+        gridHtml: `
+          <div class="hm-wrap">
+            <div class="hm-grid" role="img" aria-label="近 6 个月活动热力图，活跃 ${activeDays} 天">
+              ${cellsHtml}
+            </div>
+            <div class="hm-months">${monthsHtml}</div>
+          </div>
+        `,
+    };
 }
 
 function renderQStage() {
@@ -377,6 +470,7 @@ function renderQStage() {
     recentFeed.push({ icon: ts.online ? "✓" : "•", text: ts.online ? `穿透在线：${ts.self?.dnsName || ts.self?.ip}` : `本机节点：${cleanHost(state.deviceName)}`, time: fmtShortTime(st.time) });
 
     const issueCount = (sk.conflicts || 0) + anomalies.length;
+    const activityHeatmap = buildActivityHeatmapHtml();
 
     patchHtml(overviewStage, `
       <div class="hub-left-main">
@@ -518,25 +612,31 @@ function renderQStage() {
           </div>
         </div>
 
-        <div class="hub-right-card" data-rail="insights" style="cursor:pointer">
+        <div class="hub-right-card hm-card" data-rail="insights" title="点击查看详细用量与趋势分析">
           <div class="card-head">
-            <span class="card-title">活动趋势 <small style="font-weight:500;color:var(--muted)">(辅助统计)</small></span>
-            <span class="tag">近 7 天</span>
+            <span class="card-title">活动记录</span>
+            <span class="hm-summary">
+              <span>近 ${activityHeatmap.monthsCount} 个月活跃 <strong>${activityHeatmap.activeDays}</strong> 天</span>
+              <svg class="hm-trend-ico" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M2.5 13v-3M6 13V8.5M9.5 13V6M13 13V3.5"/>
+                <path d="M2.2 8.2 6.2 5.4 9.6 7 13.4 2.8"/>
+              </svg>
+            </span>
           </div>
-          <div style="display:flex;align-items:baseline;justify-content:space-between">
-            <strong style="font-size:18px;color:var(--number);font-variant-numeric:tabular-nums">${fmtCompact(weekTotal)} <small style="font-size:11px;font-weight:500;color:var(--muted)">tokens</small></strong>
-            <span class="card-meta">${Object.values(state.usage?.diagnostics || {}).filter(d => d.status === "ok").length}/8 工具活跃</span>
+          ${activityHeatmap.gridHtml}
+          <div class="hm-foot">
+            <span>近 7 天 ${fmtCompact(weekTotal)} tok · ${Object.values(state.usage?.diagnostics || {}).filter(d => d.status === "ok").length}/8 工具</span>
+            <span class="hm-legend" aria-hidden="true">少<i class="hm-cell lv-0"></i><i class="hm-cell lv-1"></i><i class="hm-cell lv-2"></i><i class="hm-cell lv-3"></i><i class="hm-cell lv-4"></i>多</span>
           </div>
-          ${buildRightBarChartSvg()}
         </div>
 
-        <div class="hub-right-card grow">
+        <div class="hub-right-card hub-feed-card">
           <div class="card-head">
             <span class="card-title">最近同步活动</span>
             <button type="button" class="q-inline-link" data-rail="status">查看全部 ›</button>
           </div>
-          <div>
-            ${recentFeed.slice(0, 5).map(f => `
+          <div class="hub-feed-list">
+            ${recentFeed.slice(0, 4).map(f => `
               <div class="hub-feed-row">
                 <span class="hub-feed-text">${esc(f.icon)} ${esc(f.text)}</span>
                 <span class="hub-feed-time">${esc(f.time)}</span>
@@ -589,7 +689,16 @@ function renderLStage() {
               <div class="mono-line">接入地址：${esc(inv.host)}:${inv.port}</div>
               <div class="invite-code-mono" title="${esc(inv.code)}">${esc(inv.code)}</div>
               <div class="btn-grid-2">
-                <button type="button" class="glass-btn primary" data-action="copy-invite">复制邀请码</button>
+                <button type="button" class="glass-btn primary copy-morph" data-action="copy-invite">
+                  <span class="copy-ico" aria-hidden="true">
+                    <svg class="clip" viewBox="0 0 16 16"><rect x="5" y="4" width="7.5" height="9" rx="1.5"/><path d="M3.5 10.5V3.5A1.5 1.5 0 0 1 5 2h5.5"/></svg>
+                    <svg class="check" viewBox="0 0 16 16"><path d="M3.2 8.4 6.4 11.6 12.8 4.8"/></svg>
+                  </span>
+                  <span class="copy-swap">
+                    <span class="copy-idle">复制邀请码</span>
+                    <span class="copy-done">已复制</span>
+                  </span>
+                </button>
                 <button type="button" class="glass-btn" data-action="invite">⟳ 刷新邀请链接</button>
               </div>
             </div>
@@ -782,7 +891,16 @@ function renderEStage() {
         <input id="llmBaseUrlInput" class="glass-input" value="${esc(llmCfg.baseUrl || "")}" placeholder="API Base URL（如 https://api.deepseek.com/v1）" />
         <div class="btn-grid-2">
           <input id="llmModelInput" class="glass-input" value="${esc(llmCfg.model || "")}" placeholder="模型名（如 deepseek-chat / gpt-4o-mini）" />
-          <input id="llmApiKeyInput" class="glass-input" type="password" autocomplete="off" placeholder="${llmCfg.hasApiKey ? `已保存 ${esc(llmCfg.apiKeyPreview)}（留空不改）` : "输入 API Key（本地 Ollama 可留空）"}" />
+          <div class="secret-field">
+            <input id="llmApiKeyInput" class="glass-input" type="password" autocomplete="off" placeholder="${llmCfg.hasApiKey ? `已保存 ${esc(llmCfg.apiKeyPreview)}（留空不改）` : "输入 API Key（本地 Ollama 可留空）"}" />
+            <button type="button" class="secret-eye" data-toggle-secret="#llmApiKeyInput" aria-pressed="false" aria-label="切换 API Key 显示" title="显示密钥">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/>
+                <circle cx="12" cy="12" r="2.6"/>
+                <path class="eye-slash" d="M4 20 20 4"/>
+              </svg>
+            </button>
+          </div>
         </div>
         <div class="btn-grid-2">
           <select id="llmScheduleModeSelect" class="glass-select">
@@ -924,7 +1042,7 @@ function renderEStage() {
               <span class="card-title">分层归档 · 图谱 · 反思浏览器</span>
               <span class="tag ok">压缩率 ${mem.compressionRatio ?? 0}%</span>
             </div>
-            <div class="seg-bar">
+            <div class="seg-bar" data-um-group="mem-cat">
               <button type="button" class="seg-btn ${memoryCategory === "daily" ? "active" : ""}" data-mem-cat="daily">日(${c.daily})</button>
               <button type="button" class="seg-btn ${memoryCategory === "weekly" ? "active" : ""}" data-mem-cat="weekly">周(${c.weekly})</button>
               <button type="button" class="seg-btn ${memoryCategory === "monthly" ? "active" : ""}" data-mem-cat="monthly">月(${c.monthly})</button>
@@ -986,15 +1104,15 @@ function renderEStage() {
           <div class="card card-fill">
             <div class="card-head">
               <span class="card-title">RRF 混合分层检索</span>
-              <div class="seg-bar">
+              <div class="seg-bar" data-um-group="mem-level">
                 ${["L0", "L1", "L2"].map(lv => `<button type="button" class="seg-btn ${memoryRecallLevel === lv ? "active" : ""}" data-mem-level="${lv}">${lv}</button>`).join("")}
               </div>
             </div>
             <div class="btn-row" style="justify-content:space-between;gap:6px">
-              <div class="seg-bar">
+              <div class="seg-bar" data-um-group="mem-layer">
                 ${[["all", "全部"], ["memory", "记忆"], ["lesson", "教训"], ["observation", "洞察"]].map(([k, lbl]) => `<button type="button" class="seg-btn ${memoryRecallLayer === k ? "active" : ""}" data-mem-layer="${k}">${lbl}</button>`).join("")}
               </div>
-              <div class="seg-bar">
+              <div class="seg-bar" data-um-group="mem-budget">
                 ${[[0, "全量"], [600, "600t"], [1200, "1200t"]].map(([b, lbl]) => `<button type="button" class="seg-btn ${memoryRecallBudget === b ? "active" : ""}" data-mem-budget="${b}">${lbl}</button>`).join("")}
               </div>
             </div>
@@ -1637,12 +1755,12 @@ function renderInsightsStage() {
           <span class="stage-subtitle">${PERIODS[period]} · ${fmtNum(totalSessions)} 次会话 · Token 统计仅作辅助参考</span>
         </div>
         <div class="stage-actions">
-          <div class="seg-bar">
+          <div class="seg-bar" data-um-group="insights-tab">
             <button type="button" class="seg-btn ${insightsTab === "usage" ? "active" : ""}" data-insights-tab="usage">用量与趋势</button>
             <button type="button" class="seg-btn ${insightsTab === "limits" ? "active" : ""}" data-insights-tab="limits">订阅额度</button>
             <button type="button" class="seg-btn ${insightsTab === "sessions" ? "active" : ""}" data-insights-tab="sessions">历史会话</button>
           </div>
-          <div class="seg-bar">
+          <div class="seg-bar" data-um-group="insights-period">
             <button type="button" class="seg-btn ${period === 1 ? "active" : ""}" data-period="1">今日</button>
             <button type="button" class="seg-btn ${period === 7 ? "active" : ""}" data-period="7">7天</button>
             <button type="button" class="seg-btn ${period === 30 ? "active" : ""}" data-period="30">30天</button>
@@ -2101,6 +2219,7 @@ document.addEventListener("click", (event) => {
             invitationAddress = document.querySelector("#centerAddress")?.value || invitationAddress || state?.pairing?.activeInvite?.host || state?.pairing?.addresses?.[0] || "";
             void runAction(actionBtn, () => window.qlex.createInvite(invitationAddress), { success: "已刷新配对邀请并复制到剪贴板" });
         } else if (act === "copy-invite") {
+            window.QlexMoments?.triggerCopyFeedback(actionBtn);
             void runAction(actionBtn, () => window.qlex.copyInvite(), { success: "邀请码已复制到剪贴板" });
         } else if (act === "approve") void runAction(actionBtn, () => window.qlex.approveDevice(actionBtn.dataset.id));
         else if (act === "remove") void runAction(actionBtn, () => window.qlex.removeDevice(actionBtn.dataset.id));

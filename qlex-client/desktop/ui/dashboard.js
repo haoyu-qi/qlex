@@ -189,6 +189,7 @@ function render() {
             </div>`;
         }).join("");
     }
+    window.QlexMoments?.scheduleSync();
 }
 
 document.addEventListener("mousemove", (event) => {

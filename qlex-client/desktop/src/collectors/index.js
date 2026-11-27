@@ -1609,6 +1609,7 @@ async function collectAllNative({ home = homedir(), env = process.env, cachePath
         episodes,
         today: buildWindowReport(allSessions, todayKey),
         week: buildWindowReport(allSessions, weekStart),
+        dailyTokens: allDailyTokens,
         windowReport: (windowDays) => buildWindowReport(allSessions, localDateKey(now - (windowDays - 1) * 86400_000)),
         topicsByDate,
         diagnostics,

@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="dashboard.css" />
   <script src="../vendor/token-monitor/glassRendering.js" defer></script>
   <script src="theme.js" defer></script>
+  <script src="ui-moments.js" defer></script>
   <script src="dashboard.js" defer></script>
 </head>
 <body>
@@ -27,11 +28,11 @@
     </header>
 
     <div class="dash-tabs-bar">
-      <nav class="dash-tabs">
+      <nav class="dash-tabs" data-um-group="dash-tabs">
         <button id="activityTab" class="dash-tab active" type="button" data-tab="activity">总览</button>
         <button id="trendsTab" class="dash-tab" type="button" data-tab="trends">趋势分析</button>
       </nav>
-      <div id="rangeGroup" class="dash-range-group">
+      <div id="rangeGroup" class="dash-range-group" data-um-group="dash-range">
         <button class="range-btn" type="button" data-days="1">今日</button>
         <button class="range-btn active" type="button" data-days="7">近 7 天</button>
         <button class="range-btn" type="button" data-days="30">近 30 天</button>
