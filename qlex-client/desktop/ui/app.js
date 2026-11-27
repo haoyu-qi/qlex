@@ -73,6 +73,7 @@ let memoryRecallLayer = "all";
 let memoryRecallBudget = 0;
 let memoryRecallResult = null;
 let memoryRetainOpen = false;
+let memoryLlmConfigOpen = false;
 let noticeTimer = null;
 let pendingDestination = null;
 let lastAppearanceFp = "";
@@ -195,13 +196,19 @@ function updateTopbarAndRail() {
     syncStatusText.textContent = st.label || "立即同步";
     syncStatusBtn.title = st.detail || "立即执行全量双向同步";
 
-    const hasUpdate = upd.phase === "available" || upd.phase === "ready";
+    const hasUpdate = ["available", "downloading", "verifying", "ready", "installing"].includes(upd.phase);
     updatePillBtn.classList.toggle("has-update", hasUpdate);
-    updatePillText.textContent = upd.phase === "ready"
-        ? `安装 ${upd.latest?.version || ""}`
-        : upd.phase === "available"
-            ? `更新 ${upd.latest?.version || ""}`
-            : `v${state.version || "0.3.0"}`;
+    updatePillText.textContent = upd.phase === "installing"
+        ? "更新重启中…"
+        : upd.phase === "ready"
+            ? `更新重启 ${upd.latest?.version || ""}`
+            : upd.phase === "verifying"
+                ? "校验安装包…"
+                : upd.phase === "downloading"
+                    ? `下载中 ${upd.progress || 0}%`
+                    : upd.phase === "available"
+                        ? `更新 ${upd.latest?.version || ""}`
+                        : `v${state.version || "0.3.0"}`;
 
     setVisible(qlexRail, state.configured);
     for (const btn of qlexRail.querySelectorAll(".nav-capsule-btn, .rail-aux-btn")) {
@@ -737,6 +744,105 @@ function renderEStage() {
     const tiers = cog.tiers || { working: 0, episodic: 0, semantic: 0, procedural: 0 };
     const ms = state.memorySkill || { installedCount: 0, totalCount: 9 };
     const list = mem.items?.[memoryCategory] || [];
+    const net = state.pairing || { mode: "local" };
+    const cons = mem.consolidation || { revision: 0, pendingCount: 0, pendingDevices: [], syncedCenterRevision: 0 };
+    const llmCfg = state.centerMemoryLlm || { enabled: true, preset: "deepseek", provider: "openai-compatible", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", scheduleMode: "slots", timeSlots: ["12:30", "18:30", "21:30"], intervalHours: 4, onlyWhenChanged: true, configured: false, hasApiKey: false, nextTriggerLabel: "—" };
+    const llmPresets = state.llmProviderPresets || {};
+    const isEndpoint = net.mode === "endpoint";
+    const llmTagCls = mem.phase === "consolidating" ? "blue" : isEndpoint ? (cons.syncedCenterRevision ? "ok" : "warn") : (llmCfg.configured && llmCfg.enabled ? "ok" : "warn");
+    const llmTagText = mem.phase === "consolidating"
+        ? "整理中…"
+        : isEndpoint
+            ? (cons.syncedCenterRevision ? `同步中心 #${cons.syncedCenterRevision}` : "等待中心整理")
+            : (llmCfg.configured && llmCfg.enabled ? `LLM #${cons.revision || 0}` : `规则 #${cons.revision || 0}`);
+
+    const llmConfigForm = (!isEndpoint && memoryLlmConfigOpen) ? `
+      <form id="memoryLlmForm" class="card" style="background:rgba(var(--sunken-rgb),0.42)">
+        <div class="card-head">
+          <span class="card-title">中心大模型 API 与定时整理配置</span>
+          <button type="button" class="glass-btn sm" data-action="toggle-memory-llm-config">收起</button>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">按时间段自动整理并分发全端</span>
+          <input id="llmEnabledInput" class="settings-switch" type="checkbox" ${llmCfg.enabled !== false ? "checked" : ""} />
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">仅在有新增/变更记忆时调用大模型</span>
+          <input id="llmOnlyChangedInput" class="settings-switch" type="checkbox" ${llmCfg.onlyWhenChanged !== false ? "checked" : ""} />
+        </div>
+        <div class="btn-grid-2">
+          <select id="llmPresetSelect" class="glass-select">
+            ${Object.values(llmPresets).map(pr => `<option value="${esc(pr.id)}" ${llmCfg.preset === pr.id ? "selected" : ""}>${esc(pr.label)}</option>`).join("")}
+          </select>
+          <select id="llmProviderSelect" class="glass-select">
+            <option value="openai-compatible" ${llmCfg.provider !== "anthropic" ? "selected" : ""}>OpenAI 兼容协议</option>
+            <option value="anthropic" ${llmCfg.provider === "anthropic" ? "selected" : ""}>Anthropic Messages</option>
+          </select>
+        </div>
+        <input id="llmBaseUrlInput" class="glass-input" value="${esc(llmCfg.baseUrl || "")}" placeholder="API Base URL（如 https://api.deepseek.com/v1）" />
+        <div class="btn-grid-2">
+          <input id="llmModelInput" class="glass-input" value="${esc(llmCfg.model || "")}" placeholder="模型名（如 deepseek-chat / gpt-4o-mini）" />
+          <input id="llmApiKeyInput" class="glass-input" type="password" autocomplete="off" placeholder="${llmCfg.hasApiKey ? `已保存 ${esc(llmCfg.apiKeyPreview)}（留空不改）` : "输入 API Key（本地 Ollama 可留空）"}" />
+        </div>
+        <div class="btn-grid-2">
+          <select id="llmScheduleModeSelect" class="glass-select">
+            <option value="slots" ${llmCfg.scheduleMode !== "interval" ? "selected" : ""}>按每日时间段触发</option>
+            <option value="interval" ${llmCfg.scheduleMode === "interval" ? "selected" : ""}>按固定小时间隔</option>
+          </select>
+          ${llmCfg.scheduleMode === "interval"
+            ? `<input id="llmIntervalHoursInput" class="glass-input" type="number" min="1" max="24" value="${esc(llmCfg.intervalHours || 4)}" placeholder="间隔小时数（1-24）" />`
+            : `<input id="llmTimeSlotsInput" class="glass-input" value="${esc((llmCfg.timeSlots || []).join(", "))}" placeholder="如 12:30, 18:30, 21:30" />`}
+        </div>
+        ${llmCfg.scheduleMode !== "interval" ? `
+          <div class="btn-row" style="gap:5px">
+            <button type="button" class="glass-btn sm" data-llm-slots="12:30, 18:30, 21:30">午晚日结 (12:30/18:30/21:30)</button>
+            <button type="button" class="glass-btn sm" data-llm-slots="09:30, 13:30, 21:30">早中晚</button>
+            <button type="button" class="glass-btn sm" data-llm-slots="21:30">仅 21:30</button>
+          </div>
+        ` : ""}
+        <div class="btn-row">
+          <button type="submit" class="glass-btn sm primary">保存配置</button>
+          <button type="button" class="glass-btn sm" data-action="test-memory-llm">测试连通性</button>
+          ${llmCfg.hasApiKey ? `<button type="button" class="glass-btn sm" data-action="clear-memory-llm-key">清除 Key</button>` : ""}
+        </div>
+      </form>
+    ` : "";
+
+    const centerConsolidationCard = `
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">${isEndpoint ? "全端共享记忆 · 中心权威同步" : "中心大模型记忆整理 · 全端共享"}</span>
+          <span class="tag ${llmTagCls}">${esc(llmTagText)}</span>
+        </div>
+        ${isEndpoint ? `
+          <div class="proj-meta-badges">
+            <span class="mini-pill" style="color:var(--accent)">中心版本 #${cons.syncedCenterRevision || 0}</span>
+            <span class="mini-pill">来源 ${esc(cons.syncedCenterDevice || net.endpoint?.name || "中心点")}</span>
+            <span class="mini-pill">${cons.syncedCenterAt ? `整理于 ${fmtTime(cons.syncedCenterAt)}` : "等待中心定时整理"}</span>
+          </div>
+          <div class="muted-note">${esc(cons.lastSummary || "接入点负责采集并推送本地记忆，由中心点按时间段调用大模型统一去重整合后，再同步分发至所有端。")}</div>
+          <div class="btn-row">
+            <button type="button" class="glass-btn sm primary" data-action="sync-memory-now">⟳ 拉取中心整理记忆</button>
+            <button type="button" class="glass-btn sm" data-action="read-consolidation-report">查看整理报告</button>
+          </div>
+        ` : `
+          <div class="proj-meta-badges">
+            <span class="mini-pill" style="color:var(--accent)">权威版 #${cons.revision || 0}</span>
+            <span class="mini-pill" style="${(cons.pendingCount || 0) > 0 ? "color:var(--orange)" : ""}">待整理 ${cons.pendingCount || 0} 条</span>
+            <span class="mini-pill">触发 ${esc(llmCfg.nextTriggerLabel || "—")}</span>
+            <span class="mini-pill">${esc(llmCfg.configured ? `${llmCfg.model}` : "未配 API（规则兜底）")}</span>
+          </div>
+          ${cons.lastError ? `<div class="muted-note" style="color:var(--red)">上次告警：${esc(cons.lastError)}</div>` : ""}
+          <div class="muted-note">${esc(cons.lastSummary || (llmCfg.configured ? `已配置 ${llmCfg.model}，将按 ${llmCfg.scheduleMode === "interval" ? `每 ${llmCfg.intervalHours} 小时` : (llmCfg.timeSlots || []).join(" / ")} 自动整理多端记忆并同步给所有接入点。` : "配置大模型 API 后，中心点将按时间段自动把全端记忆去重、消解冲突、提炼压缩后再同步给其他端。"))}</div>
+          <div class="btn-row">
+            <button type="button" class="glass-btn sm primary" data-action="consolidate-memory-now"${mem.phase === "consolidating" ? " disabled" : ""}>${mem.phase === "consolidating" ? "大模型整理中…" : "✦ 立即大模型整理"}</button>
+            <button type="button" class="glass-btn sm" data-action="toggle-memory-llm-config">⚙ 模型与时间段</button>
+            <button type="button" class="glass-btn sm" data-action="read-consolidation-report">整理报告</button>
+          </div>
+        `}
+      </div>
+      ${llmConfigForm}
+    `;
 
     const retainForm = memoryRetainOpen ? `
       <form id="memoryRetainForm" class="card" style="background:rgba(var(--sunken-rgb),0.38)">
@@ -871,6 +977,8 @@ function renderEStage() {
             </div>
             <div class="mono-line">${esc(mem.archiveDir || state.memoryArchiveDir || "")}</div>
           </div>
+
+          ${centerConsolidationCard}
 
           ${retainForm}
 
@@ -1423,10 +1531,14 @@ function renderStatusStage() {
               <div class="kpi-chip"><span>系统平台</span><strong>${state.platform === "darwin" ? "macOS" : state.platform}</strong></div>
               <div class="kpi-chip"><span>已绑项目</span><strong>${(state.projects || []).length}</strong></div>
             </div>
+            ${upd.phase === "downloading" || upd.phase === "verifying" ? `
+              <div class="muted-note">${upd.phase === "verifying" ? "正在校验 SHA-256…" : `正在下载 v${esc(upd.latest?.version || "")} (${upd.progress || 0}%${upd.totalBytes ? ` · ${fmtBytes(upd.downloadedBytes)} / ${fmtBytes(upd.totalBytes)}` : ""})`}</div>
+              <div class="update-progress-track"><div class="update-progress-fill" style="width:${upd.progress || 0}%"></div></div>
+            ` : ""}
             <div class="btn-row">
-              <button type="button" class="glass-btn sm" data-action="update-check">${upd.phase === "checking" ? "检查中…" : "检查新版本"}</button>
+              <button type="button" class="glass-btn sm" data-action="update-check"${["checking", "downloading", "verifying", "installing"].includes(upd.phase) ? " disabled" : ""}>${upd.phase === "checking" ? "检查中…" : "检查新版本"}</button>
               ${upd.phase === "available" ? `<button type="button" class="glass-btn sm primary" data-action="update-download">↓ 下载 ${esc(upd.latest?.version || "")}</button>` : ""}
-              ${upd.phase === "ready" ? `<button type="button" class="glass-btn sm primary" data-action="update-install">⚡ 立即安装</button>` : ""}
+              ${upd.phase === "ready" ? `<button type="button" class="glass-btn sm primary" data-action="update-install">⚡ 更新并重启</button>` : ""}
               <button type="button" class="glass-btn sm" data-action="open-memory-dir">记忆目录 ↗</button>
             </div>
           </div>
@@ -1687,19 +1799,22 @@ function renderSettingsStage() {
             </div>
             <div class="settings-row"><span class="settings-label">启动与定时自动检查更新</span><input id="autoUpdatesInput" class="settings-switch" type="checkbox" ${state.autoCheckUpdates !== false ? "checked" : ""} /></div>
             ${upd.phase === "downloading" || upd.phase === "verifying" ? `
-              <div class="muted-note">${upd.phase === "verifying" ? "正在校验 SHA-256…" : `正在下载 ${esc(upd.latest?.assetName || "")} (${upd.progress || 0}%)`}</div>
+              <div class="muted-note">${upd.phase === "verifying" ? "正在校验 SHA-256…" : `正在下载 ${esc(upd.latest?.assetName || "")} (${upd.progress || 0}%${upd.totalBytes ? ` · ${fmtBytes(upd.downloadedBytes)} / ${fmtBytes(upd.totalBytes)}` : ""}${upd.speedBytesPerSec ? ` · ${fmtBytes(upd.speedBytesPerSec)}/s` : ""})`}</div>
               <div class="update-progress-track"><div class="update-progress-fill" style="width:${upd.progress || 0}%"></div></div>
+            ` : upd.phase === "installing" ? `
+              <div class="muted-note" style="color:var(--blue)">正在安装 v${esc(upd.latest?.version || "")}，完成后将自动重启应用…</div>
+              <div class="update-progress-track"><div class="update-progress-fill" style="width:100%"></div></div>
             ` : upd.phase === "available" && upd.latest ? `
               <div class="muted-note" style="color:var(--accent)">发现新版本 <strong>${esc(upd.latest.version)}</strong>（支持 SHA-256 强制校验）</div>
             ` : upd.phase === "ready" ? `
-              <div class="muted-note" style="color:var(--success)">✓ 安装包已校验就绪，点击下方按钮立即安装。</div>
+              <div class="muted-note" style="color:var(--success)">✓ 安装包已校验就绪，点击下方按钮更新并自动重启应用。</div>
             ` : upd.phase === "error" ? `
               <div class="muted-note" style="color:var(--red)">${esc(upd.error || "检查更新失败")}</div>
             ` : `<div class="muted-note">当前已是最新${(state.updateChannel || "beta") === "beta" ? " Beta " : " "}版本（更新源：haoyu-qi/qlex）。</div>`}
             <div class="btn-row">
-              <button type="button" class="glass-btn sm" data-action="update-check">${upd.phase === "checking" ? "检查中…" : "检查更新"}</button>
+              <button type="button" class="glass-btn sm" data-action="update-check"${["checking", "downloading", "verifying", "installing"].includes(upd.phase) ? " disabled" : ""}>${upd.phase === "checking" ? "检查中…" : "检查更新"}</button>
               ${upd.phase === "available" ? `<button type="button" class="glass-btn sm primary" data-action="update-download">↓ 下载更新</button>` : ""}
-              ${upd.phase === "ready" ? `<button type="button" class="glass-btn sm primary" data-action="update-install">⚡ 立即安装</button>` : ""}
+              ${upd.phase === "ready" ? `<button type="button" class="glass-btn sm primary" data-action="update-install">⚡ 更新并重启</button>` : ""}
               <button type="button" class="glass-btn sm" data-action="update-open-release">发布页 ↗</button>
             </div>
           </div>
@@ -1914,6 +2029,36 @@ document.addEventListener("click", (event) => {
             memoryRetainOpen = !memoryRetainOpen;
             renderEStage();
             if (memoryRetainOpen) document.querySelector("#retainContentInput")?.focus();
+        } else if (act === "toggle-memory-llm-config") {
+            memoryLlmConfigOpen = !memoryLlmConfigOpen;
+            renderEStage();
+        } else if (act === "consolidate-memory-now") {
+            void runAction(actionBtn, async () => {
+                const res = await window.qlex.consolidateMemoryNow({ force: true, triggerReason: "manual" });
+                const r = res?.result;
+                if (r?.skipped) {
+                    notify("当前没有待整理的新增记忆");
+                } else {
+                    const modeStr = r?.mode === "llm" ? `大模型(${r.model})` : r?.mode === "fallback-rules" ? "规则降级" : "规则引擎";
+                    const st = r?.stats || {};
+                    notify(`中心整理完成 #${r?.revision || 0} [${modeStr}]：合并 ${st.mergedGroups || 0} 组 · 替代 ${st.supersededCount || 0} · 淘汰 ${st.prunedCount || 0}`);
+                }
+                return res?.state;
+            });
+        } else if (act === "read-consolidation-report") {
+            void window.qlex.readConsolidationReport().then(entry => {
+                memoryPreview = entry;
+                renderEStage();
+            }).catch(() => notify("读取中心整理报告失败"));
+        } else if (act === "test-memory-llm") {
+            const draft = collectMemoryLlmFormValues();
+            void runAction(actionBtn, async () => {
+                const res = await window.qlex.testMemoryLlm(draft);
+                notify(`模型连通成功：${res.model} (${res.latencyMs}ms)`);
+                return state;
+            });
+        } else if (act === "clear-memory-llm-key") {
+            void runAction(actionBtn, () => window.qlex.setMemoryLlmConfig({ clearApiKey: true }), { success: "已清除保存的 API Key" });
         } else if (act === "open-memory-dir") void window.qlex.openMemoryDir();
         else if (act === "choose-memory-dir") void runAction(actionBtn, () => window.qlex.chooseMemoryDir(), { success: "记忆归档目录已更新" });
         else if (act === "open-memory-file") void window.qlex.openMemoryFile(actionBtn.dataset.kind, actionBtn.dataset.key);
@@ -1925,7 +2070,7 @@ document.addEventListener("click", (event) => {
         else if (act === "tailscale-stop-embedded") void runAction(actionBtn, () => window.qlex.tailscaleStopEmbedded(), { success: "已停止内嵌 tsnet SDK" });
         else if (act === "tailscale-open-auth") void window.qlex.tailscaleOpenAuth();
         else if (act === "update-check") void runAction(actionBtn, () => window.qlex.updateCheck(true), { success: "更新检查完成" });
-        else if (act === "update-download") void runAction(actionBtn, () => window.qlex.updateDownload(), { success: "更新下载并校验完成" });
+        else if (act === "update-download") void runAction(actionBtn, () => window.qlex.updateDownload(), { success: "更新下载并校验完成，点击「更新并重启」生效" });
         else if (act === "update-install") void runAction(actionBtn, () => window.qlex.updateInstall());
         else if (act === "update-open-release") void window.qlex.updateOpenRelease();
         else if (act === "open-dashboard-trends") void window.qlex.openDashboard("trends");
@@ -2108,6 +2253,13 @@ document.addEventListener("click", (event) => {
         return;
     }
 
+    const slotPresetBtn = target.closest("[data-llm-slots]");
+    if (slotPresetBtn) {
+        const input = document.querySelector("#llmTimeSlotsInput");
+        if (input) input.value = slotPresetBtn.dataset.llmSlots || "";
+        return;
+    }
+
     const railBtn = target.closest("[data-rail]");
     if (railBtn && state?.configured) {
         activeSection = railBtn.dataset.rail;
@@ -2116,11 +2268,54 @@ document.addEventListener("click", (event) => {
     }
 });
 
+function collectMemoryLlmFormValues() {
+    const preset = document.querySelector("#llmPresetSelect")?.value || state?.centerMemoryLlm?.preset || "custom";
+    const provider = document.querySelector("#llmProviderSelect")?.value || "openai-compatible";
+    const baseUrl = document.querySelector("#llmBaseUrlInput")?.value?.trim() || "";
+    const model = document.querySelector("#llmModelInput")?.value?.trim() || "";
+    const rawKey = document.querySelector("#llmApiKeyInput")?.value?.trim() || "";
+    const scheduleMode = document.querySelector("#llmScheduleModeSelect")?.value || "slots";
+    const timeSlotsEl = document.querySelector("#llmTimeSlotsInput");
+    const intervalEl = document.querySelector("#llmIntervalHoursInput");
+    return {
+        enabled: document.querySelector("#llmEnabledInput")?.checked !== false,
+        onlyWhenChanged: document.querySelector("#llmOnlyChangedInput")?.checked !== false,
+        preset,
+        provider,
+        baseUrl,
+        model,
+        apiKey: rawKey ? rawKey : "__KEEP__",
+        scheduleMode,
+        ...(timeSlotsEl ? { timeSlots: timeSlotsEl.value } : {}),
+        ...(intervalEl ? { intervalHours: Number(intervalEl.value || 4) } : {}),
+    };
+}
+
 document.addEventListener("change", (event) => {
     const t = event.target;
     if (t.name === "mode") {
         const box = document.querySelector("#onboardingInviteBox");
         if (box) box.classList.toggle("hidden", t.value !== "endpoint");
+        return;
+    }
+    if (t.id === "llmPresetSelect") {
+        const preset = state?.llmProviderPresets?.[t.value];
+        if (preset) {
+            const provSel = document.querySelector("#llmProviderSelect");
+            const urlInp = document.querySelector("#llmBaseUrlInput");
+            const modelInp = document.querySelector("#llmModelInput");
+            if (provSel && preset.protocol) provSel.value = preset.protocol;
+            if (urlInp && preset.baseUrl) urlInp.value = preset.baseUrl;
+            if (modelInp && preset.defaultModel) modelInp.value = preset.defaultModel;
+        }
+        return;
+    }
+    if (t.id === "llmScheduleModeSelect") {
+        const draft = collectMemoryLlmFormValues();
+        if (state?.centerMemoryLlm) {
+            state.centerMemoryLlm = { ...state.centerMemoryLlm, ...draft, scheduleMode: t.value };
+        }
+        renderEStage();
         return;
     }
     if (t.id === "centerAddress") { invitationAddress = t.value; return; }
@@ -2164,6 +2359,17 @@ document.addEventListener("submit", (event) => {
             memoryRecallResult = res;
             renderEStage();
         }).catch(() => notify("记忆检索失败"));
+        return;
+    }
+    if (form.id === "memoryLlmForm") {
+        event.preventDefault();
+        const payload = collectMemoryLlmFormValues();
+        void runAction(form.querySelector('button[type="submit"]'), async () => {
+            const next = await window.qlex.setMemoryLlmConfig(payload);
+            memoryLlmConfigOpen = false;
+            notify("中心大模型记忆整理配置已保存");
+            return next;
+        });
         return;
     }
     if (form.id === "memoryRetainForm") {
@@ -2211,7 +2417,8 @@ window.qlex.onNativeMaterial?.((mat) => {
 window.qlex.onStateChanged?.((next) => {
     const activeEl = document.activeElement;
     const editingControl = activeEl?.tagName === "SELECT" || activeEl?.tagName === "TEXTAREA" || activeEl?.tagName === "INPUT";
-    if (!busy && !editingProject && !editingControl && !memoryRetainOpen) {
+    const updaterTick = next?.updater && JSON.stringify(next.updater) !== JSON.stringify(state?.updater);
+    if ((!busy || updaterTick) && !editingProject && !editingControl && !memoryRetainOpen && !memoryLlmConfigOpen) {
         state = next;
         render();
     }

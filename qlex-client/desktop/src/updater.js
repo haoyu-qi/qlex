@@ -147,6 +147,16 @@ function extractAppVersionFromRelease(release) {
     return String(release.tag_name || "").replace(/^v/i, "");
 }
 
+function hashFileSha256(filePath) {
+    return new Promise((resolve, reject) => {
+        const hash = createHash("sha256");
+        const stream = fs.createReadStream(filePath);
+        stream.on("data", chunk => hash.update(chunk));
+        stream.on("end", () => resolve(hash.digest("hex")));
+        stream.on("error", reject);
+    });
+}
+
 function createUpdater({ currentVersion, repo = DEFAULT_REPO, cacheDir, getChannel = () => "beta", onChange, onUpdateFound } = {}) {
     const downloadDir = cacheDir || (process.platform === "darwin"
         ? path.join(os.homedir(), "Library", "Caches", "QLEX", "updates")
@@ -156,7 +166,7 @@ function createUpdater({ currentVersion, repo = DEFAULT_REPO, cacheDir, getChann
     let downloading = null;
 
     let state = {
-        phase: "idle", // "idle" | "checking" | "available" | "up-to-date" | "downloading" | "verifying" | "ready" | "error"
+        phase: "idle", // "idle" | "checking" | "available" | "up-to-date" | "downloading" | "verifying" | "ready" | "installing" | "error"
         currentVersion: currentVersion || "0.2.0-beta.1",
         channel: getChannel(),
         repo,
@@ -164,6 +174,8 @@ function createUpdater({ currentVersion, repo = DEFAULT_REPO, cacheDir, getChann
         progress: 0,
         downloadedBytes: 0,
         totalBytes: 0,
+        speedBytesPerSec: 0,
+        etaSeconds: null,
         downloadedFile: "",
         verifiedSha256: "",
         lastChecked: 0,
@@ -172,6 +184,23 @@ function createUpdater({ currentVersion, repo = DEFAULT_REPO, cacheDir, getChann
 
     function emit() {
         onChange?.(structuredClone(state));
+    }
+
+    function setInstalling(active, errorMsg = null) {
+        if (active) {
+            state = { ...state, phase: "installing", error: null };
+        } else if (errorMsg) {
+            state = { ...state, phase: "error", error: errorMsg };
+        } else {
+            const readyFile = state.downloadedFile && fs.existsSync(state.downloadedFile);
+            state = {
+                ...state,
+                phase: readyFile ? "ready" : (state.latest && compareVersions(state.latest.version, state.currentVersion) > 0 ? "available" : "idle"),
+                error: null,
+            };
+        }
+        emit();
+        return structuredClone(state);
     }
 
     async function resolveReleaseCandidate(releases, channel) {
@@ -262,8 +291,14 @@ function createUpdater({ currentVersion, repo = DEFAULT_REPO, cacheDir, getChann
     }
 
     async function checkForUpdates({ force = false, mockReleases = null } = {}) {
+        if (["downloading", "verifying", "installing"].includes(state.phase)) {
+            return structuredClone(state);
+        }
         if (checking) return checking;
         checking = (async () => {
+            const prevPhase = state.phase;
+            const prevDownloadedFile = state.downloadedFile;
+            const prevAssetName = state.latest?.assetName;
             const channel = getChannel();
             state = { ...state, phase: "checking", channel, error: null };
             emit();
@@ -275,7 +310,13 @@ function createUpdater({ currentVersion, repo = DEFAULT_REPO, cacheDir, getChann
                 const headers = (!force && etag) ? { "If-None-Match": etag } : {};
                 const res = await httpsGetBuffer(`https://api.github.com/repos/${repo}/releases?per_page=10`, headers);
                 if (res.status === 304 && state.lastChecked > 0) {
-                    state = { ...state, phase: state.latest && compareVersions(state.latest.version, state.currentVersion) > 0 ? "available" : "up-to-date", lastChecked: Date.now() };
+                    const keepReady = prevPhase === "ready" && prevDownloadedFile && fs.existsSync(prevDownloadedFile);
+                    const nextPhase = keepReady
+                        ? "ready"
+                        : state.latest && compareVersions(state.latest.version, state.currentVersion) > 0
+                            ? "available"
+                            : "up-to-date";
+                    state = { ...state, phase: nextPhase, lastChecked: Date.now() };
                     emit();
                     return structuredClone(state);
                 }
@@ -300,10 +341,17 @@ function createUpdater({ currentVersion, repo = DEFAULT_REPO, cacheDir, getChann
             }
 
             const prevTag = state.latest?.tag;
+            const alreadyReady = prevPhase === "ready"
+                && prevAssetName === candidate.assetName
+                && prevDownloadedFile
+                && fs.existsSync(prevDownloadedFile);
             state = {
                 ...state,
-                phase: "available",
+                phase: alreadyReady ? "ready" : "available",
                 latest: candidate,
+                progress: alreadyReady ? 100 : 0,
+                speedBytesPerSec: 0,
+                etaSeconds: null,
                 lastChecked: Date.now(),
                 error: null,
             };
@@ -326,27 +374,98 @@ function createUpdater({ currentVersion, repo = DEFAULT_REPO, cacheDir, getChann
         downloading = (async () => {
             const target = state.latest;
             const destFile = path.join(downloadDir, target.assetName);
+
+            // Fast-path: reuse cached installer if already downloaded & verified on disk
+            if (fs.existsSync(destFile)) {
+                try {
+                    const stat = fs.statSync(destFile);
+                    const sizeOk = !target.assetSize || stat.size === target.assetSize;
+                    if (stat.isFile() && stat.size > 0 && sizeOk) {
+                        state = {
+                            ...state,
+                            phase: "verifying",
+                            progress: 100,
+                            downloadedBytes: stat.size,
+                            totalBytes: stat.size,
+                            speedBytesPerSec: 0,
+                            etaSeconds: 0,
+                            error: null,
+                        };
+                        emit();
+                        const cachedSha = await hashFileSha256(destFile);
+                        if (!target.expectedSha256 || cachedSha === target.expectedSha256) {
+                            state = {
+                                ...state,
+                                phase: "ready",
+                                progress: 100,
+                                downloadedBytes: stat.size,
+                                totalBytes: stat.size,
+                                speedBytesPerSec: 0,
+                                etaSeconds: 0,
+                                downloadedFile: destFile,
+                                verifiedSha256: cachedSha,
+                                error: null,
+                            };
+                            emit();
+                            return structuredClone(state);
+                        }
+                        fs.rmSync(destFile, { force: true });
+                    }
+                } catch {
+                    fs.rmSync(destFile, { force: true });
+                }
+            }
+
             state = {
                 ...state,
                 phase: "downloading",
                 progress: 0,
                 downloadedBytes: 0,
                 totalBytes: target.assetSize || 0,
+                speedBytesPerSec: 0,
+                etaSeconds: null,
                 error: null,
             };
             emit();
 
             let lastEmit = 0;
+            let sampleAt = Date.now();
+            let sampleBytes = 0;
+            let smoothSpeed = 0;
             const result = await streamDownloadToFile(target.assetUrl, destFile, (done, total) => {
                 const now = Date.now();
-                if (now - lastEmit < 120 && done < total) return;
+                const effectiveTotal = total || target.assetSize || 0;
+                if (now - lastEmit < 150 && (effectiveTotal <= 0 || done < effectiveTotal)) return;
+                const dtSec = Math.max(0.05, (now - sampleAt) / 1000);
+                const instSpeed = (done - sampleBytes) / dtSec;
+                smoothSpeed = smoothSpeed > 0 ? smoothSpeed * 0.65 + instSpeed * 0.35 : instSpeed;
+                sampleAt = now;
+                sampleBytes = done;
                 lastEmit = now;
-                const pct = total > 0 ? Math.min(99, Math.round((done / total) * 100)) : 0;
-                state = { ...state, downloadedBytes: done, totalBytes: total || target.assetSize || 0, progress: pct };
+
+                const pct = effectiveTotal > 0 ? Math.min(99, Math.round((done / effectiveTotal) * 100)) : 0;
+                const remaining = effectiveTotal > done ? effectiveTotal - done : 0;
+                const eta = smoothSpeed > 1024 && remaining > 0 ? Math.max(1, Math.ceil(remaining / smoothSpeed)) : null;
+                state = {
+                    ...state,
+                    downloadedBytes: done,
+                    totalBytes: effectiveTotal,
+                    progress: pct,
+                    speedBytesPerSec: Math.max(0, Math.round(smoothSpeed)),
+                    etaSeconds: eta,
+                };
                 emit();
             });
 
-            state = { ...state, phase: "verifying", progress: 100 };
+            state = {
+                ...state,
+                phase: "verifying",
+                progress: 100,
+                downloadedBytes: result.size,
+                totalBytes: result.size,
+                speedBytesPerSec: 0,
+                etaSeconds: 0,
+            };
             emit();
 
             if (target.expectedSha256 && result.sha256 !== target.expectedSha256) {
@@ -360,6 +479,8 @@ function createUpdater({ currentVersion, repo = DEFAULT_REPO, cacheDir, getChann
                 progress: 100,
                 downloadedBytes: result.size,
                 totalBytes: result.size,
+                speedBytesPerSec: 0,
+                etaSeconds: 0,
                 downloadedFile: result.filePath,
                 verifiedSha256: result.sha256,
                 error: null,
@@ -367,7 +488,7 @@ function createUpdater({ currentVersion, repo = DEFAULT_REPO, cacheDir, getChann
             emit();
             return structuredClone(state);
         })().catch(err => {
-            state = { ...state, phase: "error", error: err?.message || "下载更新失败" };
+            state = { ...state, phase: "error", speedBytesPerSec: 0, etaSeconds: null, error: err?.message || "下载更新失败" };
             emit();
             return structuredClone(state);
         }).finally(() => { downloading = null; });
@@ -377,6 +498,7 @@ function createUpdater({ currentVersion, repo = DEFAULT_REPO, cacheDir, getChann
     return {
         checkForUpdates,
         downloadUpdate,
+        setInstalling,
         snapshot: () => structuredClone(state),
     };
 }

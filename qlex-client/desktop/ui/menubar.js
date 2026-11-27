@@ -8,12 +8,17 @@ const mbBentoGrid = document.querySelector("#mbBentoGrid");
 const mbRingsCard = document.querySelector("#mbRingsCard");
 const mbListCard = document.querySelector("#mbListCard");
 const mbFooterCard = document.querySelector("#mbFooterCard");
+const mbUpdateTopBtn = document.querySelector("#mbUpdateTopBtn");
+const mbUpdateBanner = document.querySelector("#mbUpdateBanner");
 const mbSyncTopBtn = document.querySelector("#mbSyncTopBtn");
 const mbOpenMainBtn = document.querySelector("#mbOpenMainBtn");
 
 const ROLES = { local: "单机模式", center: "中心点", endpoint: "接入点" };
 let state = null;
 let busy = false;
+let updateBusy = false;
+let manualUpToDateUntil = 0;
+let manualUpToDateTimer = null;
 let lastAppearanceFp = "";
 let lastMaterialFp = "";
 const lastCountValues = new Map();
@@ -22,6 +27,22 @@ let revealPulse = false;
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const fmtNum = (v) => new Intl.NumberFormat("zh-CN").format(Math.round(v || 0));
 const fmtShortTime = (ts) => ts ? new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : "待同步";
+function fmtBytes(bytes) {
+    const n = Number(bytes || 0);
+    if (!Number.isFinite(n) || n <= 0) return "0 B";
+    if (n >= 1024 * 1024 * 1024) return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+    if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+    return `${Math.round(n)} B`;
+}
+function fmtEta(sec) {
+    const s = Number(sec);
+    if (!Number.isFinite(s) || s <= 0) return "";
+    if (s < 60) return `约 ${Math.ceil(s)} 秒`;
+    const m = Math.floor(s / 60);
+    const rem = Math.ceil(s % 60);
+    return rem > 0 ? `约 ${m} 分 ${rem} 秒` : `约 ${m} 分钟`;
+}
 
 function animateCounters(forceRoll = false) {
     const nodes = document.querySelectorAll("[data-count-key]");
@@ -158,6 +179,149 @@ function render() {
     mbSyncTopBtn.disabled = syncSt.phase === "syncing" || busy;
     mbSyncTopBtn.textContent = syncSt.phase === "syncing" ? "⟳ 同步中" : "⟳ 同步";
 
+    // Header Version Update Notification Button & Dynamic Banner
+    const updPhase = upd.phase || "idle";
+    const updVer = upd.latest?.version || "";
+    const updPct = Math.max(0, Math.min(100, Number(upd.progress || 0)));
+    const updInProgress = ["checking", "downloading", "verifying", "installing"].includes(updPhase);
+
+    if (mbUpdateTopBtn) {
+        mbUpdateTopBtn.className = `mb-mini-btn mb-update-btn${updPhase !== "idle" && updPhase !== "up-to-date" ? ` ${updPhase}` : ""}`;
+        mbUpdateTopBtn.disabled = updInProgress || updateBusy;
+        if (updPhase === "checking") {
+            mbUpdateTopBtn.textContent = "⟳ 检查";
+            mbUpdateTopBtn.title = "正在检查新版本…";
+        } else if (updPhase === "available") {
+            mbUpdateTopBtn.innerHTML = `<i class="mb-upd-dot"></i><span>更新</span>`;
+            mbUpdateTopBtn.title = `发现新版本 v${updVer}，点击下载更新`;
+        } else if (updPhase === "downloading") {
+            mbUpdateTopBtn.textContent = `↓ ${updPct}%`;
+            mbUpdateTopBtn.title = `正在下载 v${updVer} (${updPct}%)`;
+        } else if (updPhase === "verifying") {
+            mbUpdateTopBtn.textContent = "⟳ 校验";
+            mbUpdateTopBtn.title = `正在校验 v${updVer} 安装包`;
+        } else if (updPhase === "ready") {
+            mbUpdateTopBtn.innerHTML = `<i class="mb-upd-dot"></i><span>重启更新</span>`;
+            mbUpdateTopBtn.title = `v${updVer} 已就绪，点击更新并重启应用`;
+        } else if (updPhase === "installing") {
+            mbUpdateTopBtn.textContent = "⟳ 安装";
+            mbUpdateTopBtn.title = `正在安装 v${updVer} 并重启应用`;
+        } else if (updPhase === "error") {
+            mbUpdateTopBtn.textContent = "↑ 重试";
+            mbUpdateTopBtn.title = upd.error || "更新失败，点击重试";
+        } else {
+            mbUpdateTopBtn.textContent = "↑ 更新";
+            mbUpdateTopBtn.title = `当前版本 v${state.version || "0.3.0"}，点击检查更新`;
+        }
+    }
+
+    const showUpToDateNotice = updPhase === "up-to-date" && Date.now() < manualUpToDateUntil;
+    const showUpdateBanner = ["checking", "available", "downloading", "verifying", "ready", "installing", "error"].includes(updPhase) || showUpToDateNotice;
+    if (mbUpdateBanner) {
+        mbUpdateBanner.hidden = !showUpdateBanner;
+        if (showUpdateBanner) {
+            mbUpdateBanner.className = `mb-wide-card mb-update-card ${updPhase}`;
+            let bannerHtml = "";
+            if (updPhase === "available") {
+                const sizeText = upd.latest?.assetSize ? fmtBytes(upd.latest.assetSize) : "";
+                bannerHtml = `
+                  <div class="mb-card-head">
+                    <span class="mb-card-title" style="color:var(--accent)"><i class="dot live" style="background:var(--accent)"></i>发现新版本 v${esc(updVer)}</span>
+                    ${sizeText ? `<span class="mb-tag ok">${esc(sizeText)}</span>` : `<span class="mb-tag ok">${upd.latest?.prerelease ? "Beta" : "Stable"}</span>`}
+                  </div>
+                  <div class="mb-update-meta">
+                    <span>${esc(upd.latest?.assetName || "新版安装包")} · SHA-256 安全校验</span>
+                  </div>
+                  <div class="mb-update-actions">
+                    <button type="button" class="mb-upd-cta" data-action="update-download"${updateBusy ? " disabled" : ""}>↓ 下载新版本</button>
+                    <button type="button" class="mb-upd-cta secondary" data-action="update-open-release">说明 ↗</button>
+                  </div>
+                `;
+            } else if (updPhase === "downloading") {
+                const totalBytes = upd.totalBytes || upd.latest?.assetSize || 0;
+                const sizeProg = totalBytes > 0
+                    ? `${fmtBytes(upd.downloadedBytes)} / ${fmtBytes(totalBytes)}`
+                    : fmtBytes(upd.downloadedBytes);
+                const speedStr = upd.speedBytesPerSec > 0 ? `${fmtBytes(upd.speedBytesPerSec)}/s` : "连接中…";
+                const etaStr = fmtEta(upd.etaSeconds);
+                bannerHtml = `
+                  <div class="mb-card-head">
+                    <span class="mb-card-title" style="color:var(--blue)"><i class="dot live" style="background:var(--blue)"></i>正在下载 v${esc(updVer)}</span>
+                    <span class="mb-tag blue">${updPct}%</span>
+                  </div>
+                  <div class="mb-prog-track thick"><div class="mb-prog-fill blue live" style="width:${Math.max(2, updPct)}%"></div></div>
+                  <div class="mb-update-meta">
+                    <span>${esc(sizeProg)}</span>
+                    <span>${esc([speedStr, etaStr].filter(Boolean).join(" · "))}</span>
+                  </div>
+                `;
+            } else if (updPhase === "verifying") {
+                bannerHtml = `
+                  <div class="mb-card-head">
+                    <span class="mb-card-title" style="color:var(--blue)"><i class="dot live" style="background:var(--blue)"></i>正在校验 v${esc(updVer)}</span>
+                    <span class="mb-tag blue">100%</span>
+                  </div>
+                  <div class="mb-prog-track thick"><div class="mb-prog-fill blue live" style="width:100%"></div></div>
+                  <div class="mb-update-meta">
+                    <span>正在校验 SHA-256 完整性，请稍候…</span>
+                  </div>
+                `;
+            } else if (updPhase === "ready") {
+                bannerHtml = `
+                  <div class="mb-card-head">
+                    <span class="mb-card-title" style="color:var(--success)"><i class="dot live" style="background:var(--success)"></i>v${esc(updVer)} 已就绪</span>
+                    <span class="mb-tag ok">已校验</span>
+                  </div>
+                  <div class="mb-prog-track thick"><div class="mb-prog-fill green" style="width:100%"></div></div>
+                  <div class="mb-update-actions">
+                    <button type="button" class="mb-upd-cta" data-action="update-install"${updateBusy ? " disabled" : ""}>⚡ 立即更新并重启</button>
+                    <button type="button" class="mb-upd-cta secondary" data-action="update-open-release">说明 ↗</button>
+                  </div>
+                `;
+            } else if (updPhase === "installing") {
+                bannerHtml = `
+                  <div class="mb-card-head">
+                    <span class="mb-card-title" style="color:var(--blue)"><i class="dot live" style="background:var(--blue)"></i>正在更新并重启…</span>
+                    <span class="mb-tag blue">安装中</span>
+                  </div>
+                  <div class="mb-prog-track thick"><div class="mb-prog-fill green live" style="width:100%"></div></div>
+                  <div class="mb-update-meta">
+                    <span>请在系统弹窗确认授权，完成后将自动重启 QLEX</span>
+                  </div>
+                `;
+            } else if (updPhase === "checking") {
+                bannerHtml = `
+                  <div class="mb-card-head">
+                    <span class="mb-card-title"><i class="dot live" style="background:var(--blue)"></i>正在检查新版本…</span>
+                    <span class="mb-tag">v${esc(state.version || "0.3.0")}</span>
+                  </div>
+                `;
+            } else if (updPhase === "error") {
+                bannerHtml = `
+                  <div class="mb-card-head">
+                    <span class="mb-card-title" style="color:var(--red)"><i class="dot" style="background:var(--red)"></i>版本更新失败</span>
+                    <span class="mb-tag err">异常</span>
+                  </div>
+                  <div class="mb-update-meta">
+                    <span title="${esc(upd.error || "")}">${esc(upd.error || "请检查网络连接后重试")}</span>
+                  </div>
+                  <div class="mb-update-actions">
+                    <button type="button" class="mb-upd-cta" data-action="update-retry"${updateBusy ? " disabled" : ""}>↻ 重试更新</button>
+                    <button type="button" class="mb-upd-cta secondary" data-action="update-open-release">发布页 ↗</button>
+                  </div>
+                `;
+            } else if (showUpToDateNotice) {
+                bannerHtml = `
+                  <div class="mb-card-head">
+                    <span class="mb-card-title" style="color:var(--success)"><i class="dot" style="background:var(--success)"></i>当前已是最新版本</span>
+                    <span class="mb-tag ok">v${esc(state.version || "0.3.0")}</span>
+                  </div>
+                `;
+            }
+            patchHtml(mbUpdateBanner, bannerHtml);
+        }
+    }
+
     const pills = [
         { text: ROLES[net.mode] || "单机", flex: false },
         { text: (state.deviceName || "macOS").replace(/\.local$/i, ""), flex: true },
@@ -188,6 +352,21 @@ function render() {
 
     // 3. 记忆状态卡片
     const memRatio = Math.max(8, Math.min(100, mem.compressionRatio || 0));
+    const cons = mem.consolidation || {};
+    const llmCfg = state.centerMemoryLlm || {};
+    const memTagCls = mem.phase === "consolidating" ? "blue"
+        : (net.mode === "center" && (cons.pendingCount || 0) > 0) ? "warn"
+            : ((cons.revision || 0) > 0 || (cons.syncedCenterRevision || 0) > 0) ? "ok" : "";
+    const memTagText = mem.phase === "consolidating" ? "整理中"
+        : (net.mode === "center" && (cons.pendingCount || 0) > 0) ? `待整 ${cons.pendingCount}`
+            : net.mode === "endpoint" && cons.syncedCenterRevision ? `中心 #${cons.syncedCenterRevision}`
+                : cons.revision ? `权威 #${cons.revision}`
+                    : `压缩 ${mem.compressionRatio ?? 0}%`;
+    const memSubText = net.mode === "center"
+        ? `${llmCfg.configured ? `LLM · ${llmCfg.nextTriggerLabel || "定时"}` : `规则 · ${llmCfg.nextTriggerLabel || "定时"}`} · 日${counts.daily}/周${counts.weekly}/月${counts.monthly}`
+        : net.mode === "endpoint" && cons.syncedCenterRevision
+            ? `全端共享中心版 #${cons.syncedCenterRevision} · ${cog.entities || 0} 实体 · ${cog.activeEdges || 0} 边`
+            : `${cog.entities || 0} 实体 · ${cog.activeEdges || 0} 边 · 日${counts.daily}/周${counts.weekly}/月${counts.monthly}`;
 
     // 4. 项目同步卡片
     const totalProj = boundProjects.length + remoteProjects.length;
@@ -234,11 +413,11 @@ function render() {
       <div class="mb-card" data-open-page="memory">
         <div class="mb-card-head">
           <span class="mb-card-title"><i class="dot live" style="background:var(--purple)"></i>记忆同步</span>
-          <span class="mb-tag">压缩 ${mem.compressionRatio ?? 0}%</span>
+          <span class="mb-tag ${memTagCls}">${esc(memTagText)}</span>
         </div>
         <div class="mb-card-metric"><span data-count-key="memActive" data-count-to="${cog.activeItems || 0}">${fmtNum(cog.activeItems || 0)}</span><small>条</small></div>
         <div class="mb-prog-track"><div class="mb-prog-fill gold" style="width:${memRatio}%"></div></div>
-        <div class="mb-card-sub">${cog.entities || 0} 实体 · ${cog.activeEdges || 0} 边 · 日${counts.daily}/周${counts.weekly}/月${counts.monthly}</div>
+        <div class="mb-card-sub">${esc(memSubText)}</div>
       </div>
 
       <div class="mb-card" data-open-page="projects">
@@ -349,9 +528,13 @@ function render() {
     `);
 
     // Footer Quick Actions + 3 Summary KPIs
-    const updNotice = upd.phase === "available" || upd.phase === "ready"
-        ? `✦ 新版本 ${upd.latest?.version || ""}`
-        : `记忆归档 · ${counts.daily}日/${counts.weekly}周/${counts.monthly}月`;
+    const updNotice = updPhase === "ready"
+        ? `⚡ 新版本 v${updVer} 已就绪`
+        : updPhase === "downloading"
+            ? `↓ 正在下载 v${updVer} (${updPct}%)`
+            : updPhase === "available"
+                ? `✦ 发现新版本 v${updVer}`
+                : `记忆归档 · ${counts.daily}日/${counts.weekly}周/${counts.monthly}月`;
 
     patchHtml(mbFooterCard, `
       <div class="mb-footer-top">
@@ -403,6 +586,54 @@ async function runBusy(fn) {
     }
 }
 
+async function runUpdateAction(fn, { showUpToDate = false } = {}) {
+    if (updateBusy) return;
+    updateBusy = true;
+    render();
+    try {
+        const next = await fn();
+        if (next && next.version) state = next;
+        else if (next?.state) state = next.state;
+        else state = await window.qlex.getState();
+        if (showUpToDate && state?.updater?.phase === "up-to-date") {
+            manualUpToDateUntil = Date.now() + 4500;
+            clearTimeout(manualUpToDateTimer);
+            manualUpToDateTimer = setTimeout(() => {
+                manualUpToDateUntil = 0;
+                render();
+            }, 4600);
+        }
+    } catch (err) {
+        try {
+            state = await window.qlex.getState();
+        } catch { /* ignore */ }
+        if (state && err?.message) {
+            state.updater = {
+                ...(state.updater || {}),
+                phase: "error",
+                error: String(err.message).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ""),
+            };
+        }
+    } finally {
+        updateBusy = false;
+        render();
+    }
+}
+
+function handleUpdateTopClick() {
+    const ph = state?.updater?.phase || "idle";
+    if (ph === "ready") {
+        void runUpdateAction(() => window.qlex.updateInstall());
+    } else if (ph === "available") {
+        void runUpdateAction(() => window.qlex.updateDownload());
+    } else if (ph === "error" && state?.updater?.latest?.assetUrl) {
+        void runUpdateAction(() => window.qlex.updateDownload());
+    } else if (!["checking", "downloading", "verifying", "installing"].includes(ph)) {
+        void runUpdateAction(() => window.qlex.updateCheck(true), { showUpToDate: true });
+    }
+}
+
+mbUpdateTopBtn?.addEventListener("click", handleUpdateTopClick);
 mbSyncTopBtn.addEventListener("click", () => void runBusy(() => window.qlex.syncNow()));
 mbOpenMainBtn.addEventListener("click", () => void window.qlex.openMainPage("home"));
 
@@ -418,6 +649,14 @@ document.addEventListener("click", (event) => {
         else if (act === "tailscale-scan") void runBusy(() => window.qlex.tailscaleScan());
         else if (act === "compress-memory") void runBusy(() => window.qlex.syncMemoryNow());
         else if (act === "open-memory-dir") void window.qlex.openMemoryDir();
+        else if (act === "update-check") void runUpdateAction(() => window.qlex.updateCheck(true), { showUpToDate: true });
+        else if (act === "update-download") void runUpdateAction(() => window.qlex.updateDownload());
+        else if (act === "update-install") void runUpdateAction(() => window.qlex.updateInstall());
+        else if (act === "update-retry") {
+            if (state?.updater?.latest?.assetUrl) void runUpdateAction(() => window.qlex.updateDownload());
+            else void runUpdateAction(() => window.qlex.updateCheck(true), { showUpToDate: true });
+        }
+        else if (act === "update-open-release") void window.qlex.updateOpenRelease();
         return;
     }
 
@@ -441,7 +680,7 @@ document.addEventListener("keydown", (event) => {
 });
 
 window.qlex.onStateChanged?.((next) => {
-    if (!busy && next) {
+    if (next) {
         state = next;
         render();
     }

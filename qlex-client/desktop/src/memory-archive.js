@@ -43,16 +43,20 @@ function createMemoryArchiver({ getArchiveDir, getProjects, getUsageSnapshot, ge
             reflectionsCount: 0,
         },
         items: { daily: [], weekly: [], monthly: [] },
+        consolidation: null,
         error: null,
     };
     let running = null;
+    let consolidating = null;
 
     function loadExistingIndex() {
         const p = engine.pathsOf();
         const saved = readJsonSafe(p.indexFile, null);
         const liveStatus = engine.getStatus();
+        const consolidation = engine.getConsolidationStatus();
         state.archiveDir = p.root;
         state.cognitive = liveStatus.cognitive;
+        state.consolidation = consolidation;
         if (saved && saved.items) {
             state = {
                 ...state,
@@ -65,9 +69,36 @@ function createMemoryArchiver({ getArchiveDir, getProjects, getUsageSnapshot, ge
                 cacheMisses: saved.cacheMisses || 0,
                 counts: saved.counts || { daily: 0, weekly: 0, monthly: 0 },
                 cognitive: liveStatus.cognitive,
+                consolidation,
                 items: saved.items,
             };
         }
+    }
+
+    async function consolidateNow(opts = {}) {
+        if (consolidating) return consolidating;
+        consolidating = (async () => {
+            state = { ...state, phase: "consolidating", archiveDir: getArchiveDir(), error: null };
+            const res = await engine.consolidateCenterMemory(opts);
+            if (!res.skipped) {
+                const nextIndex = engine.compressSync({ settle: Boolean(opts.settle) });
+                state = {
+                    ...nextIndex,
+                    phase: "ready",
+                    consolidation: engine.getConsolidationStatus(),
+                    error: res.error || null,
+                };
+            } else {
+                loadExistingIndex();
+                state = { ...state, phase: "ready", error: null };
+            }
+            return { result: res, state: structuredClone(state) };
+        })().catch(err => {
+            loadExistingIndex();
+            state = { ...state, phase: "error", error: err?.message || "中心记忆整理失败" };
+            throw err;
+        }).finally(() => { consolidating = null; });
+        return consolidating;
     }
 
     async function compressNow(opts = {}) {
@@ -148,6 +179,9 @@ function createMemoryArchiver({ getArchiveDir, getProjects, getUsageSnapshot, ge
             const content = fs.existsSync(p.reflectionsMd) ? fs.readFileSync(p.reflectionsMd, "utf8") : "(尚未生成反思洞察)";
             return { kind: "reflections", key: "反思洞察与心智模型", mdPath: p.reflectionsMd, rawBytes: Buffer.byteLength(content), compressedBytes: Buffer.byteLength(content), content };
         }
+        if (kind === "consolidation") {
+            return engine.readConsolidationReport();
+        }
         if (kind === "items") {
             const res = engine.browse(key ? `qlex://items/${key}` : "qlex://items", "L2");
             return { kind: "items", key: key || "全部原子记忆", mdPath: p.itemsMd, rawBytes: Buffer.byteLength(res.content), compressedBytes: fs.existsSync(p.itemsStore) ? fs.statSync(p.itemsStore).size : 0, content: res.content };
@@ -163,16 +197,27 @@ function createMemoryArchiver({ getArchiveDir, getProjects, getUsageSnapshot, ge
         return engine.exportSyncBundle(meta);
     }
 
-    function mergeSyncBundle(bundle) {
-        const res = engine.mergeSyncBundle(bundle);
+    function mergeSyncBundle(bundle, opts) {
+        const res = engine.mergeSyncBundle(bundle, opts);
         loadExistingIndex();
         return res;
+    }
+
+    function getConsolidationStatus() {
+        return engine.getConsolidationStatus();
+    }
+
+    function readConsolidationReport() {
+        return engine.readConsolidationReport();
     }
 
     loadExistingIndex();
 
     return {
         compressNow,
+        consolidateNow,
+        getConsolidationStatus,
+        readConsolidationReport,
         retain,
         saveLesson,
         recall,

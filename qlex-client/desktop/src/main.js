@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const electron_1 = require("electron");
 const node_assert_1 = require("node:assert");
+const node_child_process_1 = require("node:child_process");
 const node_fs_1 = require("node:fs");
 const node_os_1 = require("node:os");
 const node_path_1 = require("node:path");
@@ -12,6 +13,13 @@ const { findAutoMatchDirectory } = require("./project-sync");
 const { createUsageCollector } = require("./usage");
 const { createSkillSync } = require("./skill-sync");
 const { createMemoryArchiver } = require("./memory-archive");
+const {
+    LLM_PROVIDER_PRESETS,
+    publicMemoryLlmConfig,
+    normalizeMemoryLlmConfig,
+    evaluateConsolidationSchedule,
+    testMemoryLlmConnection,
+} = require("./memory-consolidator");
 const { installMemorySkill, getMemorySkillStatus } = require("./memory-skill");
 const { createTailscaleManager } = require("./tailscale");
 const { createUpdater } = require("./updater");
@@ -168,7 +176,7 @@ function broadcastState(state, { force = false } = {}) {
 }
 
 function desktopState(state = store.snapshot()) {
-    const { pairing: _privatePairing, ...local } = state;
+    const { pairing: _privatePairing, centerMemoryLlm: rawMemoryLlm, ...local } = state;
     updateTray();
     const usageSnap = usage.snapshot();
     const discovered = usageSnap?.week?.projects || [];
@@ -180,6 +188,8 @@ function desktopState(state = store.snapshot()) {
     }
     return {
         ...local,
+        centerMemoryLlm: publicMemoryLlmConfig(rawMemoryLlm),
+        llmProviderPresets: LLM_PROVIDER_PRESETS,
         version: APP_VERSION,
         usage: usageSnap,
         projectAutoMatches,
@@ -209,7 +219,12 @@ async function runUnifiedSync() {
                 await pairing.refresh().catch(() => {});
             }
 
-            // 1. Core: Bidirectional Memory Sync & Project Sync (Endpoint <-> Center)
+            // 1. Local Cognitive Memory Compression first so newly captured memories push to Center immediately
+            if (snap.memoryAutoCompress !== false) {
+                await memoryArchive.compressNow();
+            }
+
+            // 2. Core: Bidirectional Memory Sync (pull Center canonical snapshot + push local) & Project Sync
             if (pairing.view().mode === "endpoint" && pairing.view().endpoint?.status === "connected") {
                 await Promise.all([
                     pairing.syncMemory().catch(err => console.warn("QLEX memory sync warning:", err?.message || err)),
@@ -219,7 +234,7 @@ async function runUnifiedSync() {
                 await pairing.syncProjects().catch(() => {});
             }
 
-            // 2. Core: Local Cognitive Memory Compression + Universal Agent Skill
+            // 3. Core: Universal Agent Skill & Skills Sync
             if (snap.skillSyncEnabled) {
                 installMemorySkill({ namespaces: snap.localSkillNamespaces });
                 skills.syncLocal(snap.localSkillNamespaces);
@@ -228,10 +243,6 @@ async function runUnifiedSync() {
                 }
             } else {
                 skills.scanLocal(snap.localSkillNamespaces);
-            }
-
-            if (snap.memoryAutoCompress !== false) {
-                await memoryArchive.compressNow();
             }
 
             // 3. Auxiliary: background usage & Tailscale peer scan
@@ -533,6 +544,174 @@ function createTray() {
     updateTray();
 }
 
+function execFileAsync(bin, args, opts = {}) {
+    return new Promise((resolve, reject) => {
+        node_child_process_1.execFile(bin, args, opts, (err, stdout, stderr) => {
+            if (err) {
+                err.stdout = stdout;
+                err.stderr = stderr;
+                reject(err);
+                return;
+            }
+            resolve({ stdout, stderr });
+        });
+    });
+}
+
+function resolveMacAppBundlePath() {
+    if (electron_1.app.isPackaged) {
+        const m = String(process.execPath || "").match(/^(.+\.app)\/Contents\/MacOS\//);
+        if (m && m[1]) return m[1];
+    }
+    return "/Applications/QLEX.app";
+}
+
+function scheduleMacRelaunchAndQuit(appPath) {
+    const script = [
+        'pid="$1"; app_path="$2"; i=0',
+        'while [ "$i" -lt 80 ]; do',
+        '  kill -0 "$pid" 2>/dev/null || break',
+        '  sleep 0.15',
+        '  i=$((i + 1))',
+        'done',
+        'sleep 0.25',
+        'open -n "$app_path" >/dev/null 2>&1 || open "$app_path" >/dev/null 2>&1',
+    ].join("\n");
+    const child = node_child_process_1.spawn("/bin/sh", ["-c", script, "_", String(process.pid), appPath], {
+        detached: true,
+        stdio: "ignore",
+    });
+    child.unref();
+    setTimeout(() => {
+        quitting = true;
+        electron_1.app.quit();
+    }, 180);
+}
+
+async function installDownloadedUpdateAndRestart() {
+    const snap = updater.snapshot();
+    const file = snap.downloadedFile;
+    if (!file || !node_fs_1.existsSync(file)) {
+        throw new Error("未找到已校验的安装包，请先下载更新。");
+    }
+    if (snap.phase === "installing") {
+        return { installed: false, installing: true, state: desktopState() };
+    }
+    updater.setInstalling(true);
+    broadcastState(undefined, { force: true });
+
+    try {
+        if (process.platform === "darwin") {
+            const lower = file.toLowerCase();
+            if (lower.endsWith(".pkg")) {
+                try {
+                    await execFileAsync("osascript", [
+                        "-e", "on run argv",
+                        "-e", 'do shell script "installer -pkg " & quoted form of (item 1 of argv) & " -target /" with administrator privileges with prompt "QLEX 需要管理员权限以完成版本更新并重新启动应用。"',
+                        "-e", "end run",
+                        "--", file,
+                    ], { timeout: 300_000 });
+                } catch (err) {
+                    const detail = `${err?.stderr || ""} ${err?.message || ""}`;
+                    if (/-128|User canceled|用户已取消/i.test(detail)) {
+                        updater.setInstalling(false);
+                        return { installed: false, cancelled: true, state: broadcastState(undefined, { force: true }) };
+                    }
+                    throw new Error(`安装新版本失败：${String(err?.stderr || err?.message || err).trim()}`);
+                }
+                scheduleMacRelaunchAndQuit("/Applications/QLEX.app");
+                return { installed: true, restarting: true, state: desktopState() };
+            }
+
+            if (lower.endsWith(".zip")) {
+                const tmpDir = (0, node_fs_1.mkdtempSync)((0, node_path_1.join)((0, node_os_1.tmpdir)(), "qlex-update-"));
+                try {
+                    await execFileAsync("ditto", ["-x", "-k", file, tmpDir], { timeout: 120_000 });
+                    const extractedApp = (0, node_path_1.join)(tmpDir, "QLEX.app");
+                    if (!node_fs_1.existsSync(extractedApp)) {
+                        throw new Error("更新包内未找到 QLEX.app。");
+                    }
+                    const targetApp = resolveMacAppBundlePath();
+                    const parentDir = (0, node_path_1.dirname)(targetApp);
+                    let directWritable = false;
+                    try {
+                        node_fs_1.accessSync(parentDir, node_fs_1.constants.W_OK);
+                        if (node_fs_1.existsSync(targetApp)) {
+                            node_fs_1.accessSync(targetApp, node_fs_1.constants.W_OK);
+                        }
+                        directWritable = true;
+                    } catch {
+                        directWritable = false;
+                    }
+
+                    if (directWritable) {
+                        node_fs_1.rmSync(targetApp, { recursive: true, force: true });
+                        await execFileAsync("ditto", [extractedApp, targetApp], { timeout: 120_000 });
+                    } else {
+                        try {
+                            await execFileAsync("osascript", [
+                                "-e", "on run argv",
+                                "-e", 'do shell script "rm -rf " & quoted form of (item 2 of argv) & " && ditto " & quoted form of (item 1 of argv) & " " & quoted form of (item 2 of argv) with administrator privileges with prompt "QLEX 需要管理员权限以完成版本更新并重新启动应用。"',
+                                "-e", "end run",
+                                "--", extractedApp, targetApp,
+                            ], { timeout: 300_000 });
+                        } catch (err) {
+                            const detail = `${err?.stderr || ""} ${err?.message || ""}`;
+                            if (/-128|User canceled|用户已取消/i.test(detail)) {
+                                updater.setInstalling(false);
+                                return { installed: false, cancelled: true, state: broadcastState(undefined, { force: true }) };
+                            }
+                            throw new Error(`替换应用失败：${String(err?.stderr || err?.message || err).trim()}`);
+                        }
+                    }
+                    scheduleMacRelaunchAndQuit(targetApp);
+                    return { installed: true, restarting: true, state: desktopState() };
+                } finally {
+                    node_fs_1.rmSync(tmpDir, { recursive: true, force: true });
+                }
+            }
+
+            const err = await electron_1.shell.openPath(file);
+            if (err) throw new Error("无法拉起安装程序：" + err);
+            setTimeout(() => {
+                quitting = true;
+                electron_1.app.relaunch();
+                electron_1.app.quit();
+            }, 250);
+            return { installed: true, restarting: true, state: desktopState() };
+        }
+
+        if (process.platform === "win32") {
+            if (file.toLowerCase().endsWith(".exe")) {
+                const child = node_child_process_1.spawn(file, [], { detached: true, stdio: "ignore" });
+                child.unref();
+            } else {
+                const err = await electron_1.shell.openPath(file);
+                if (err) throw new Error("无法拉起安装程序：" + err);
+            }
+            setTimeout(() => {
+                quitting = true;
+                electron_1.app.quit();
+            }, 250);
+            return { installed: true, restarting: true, state: desktopState() };
+        }
+
+        const err = await electron_1.shell.openPath(file);
+        if (err) throw new Error("无法拉起安装程序：" + err);
+        setTimeout(() => {
+            quitting = true;
+            electron_1.app.relaunch();
+            electron_1.app.quit();
+        }, 250);
+        return { installed: true, restarting: true, state: desktopState() };
+    } catch (err) {
+        const msg = err?.message || "安装更新失败";
+        updater.setInstalling(false, msg);
+        broadcastState(undefined, { force: true });
+        throw new Error(msg);
+    }
+}
+
 function updateTray() {
     if (!tray)
         return;
@@ -541,6 +720,7 @@ function updateTray() {
     const appearance = snap.appearance;
     const syncInfo = computeSyncSummary();
     const sk = skills.snapshot();
+    const upd = updater ? updater.snapshot() : null;
     const pendingPeers = (network.peers || []).filter(p => p.status === "pending").length;
     let status = "仅在本机使用";
     if (network.mode === "center")
@@ -550,18 +730,31 @@ function updateTray() {
     }
     const dockSide = edgeDock?.side() || "off";
     const dockMode = snap.edgeDockMode || "autoHide";
+    const updPhase = upd?.phase || "idle";
+    const updVersion = upd?.latest?.version || "";
+    const updPct = upd?.progress || 0;
     const trayBadge = syncInfo.phase === "syncing" ? " ⟳"
+        : updPhase === "downloading" ? ` ↓${updPct}%`
+        : (updPhase === "verifying" || updPhase === "installing") ? " ⟳"
+        : updPhase === "ready" ? " ⚡"
+        : updPhase === "available" ? " ↑"
         : sk.conflicts > 0 ? " !"
         : pendingPeers > 0 ? " •" : "";
-    const fingerprint = `${status}|${syncInfo.label}|${trayBadge}|${dockSide}|${dockMode}|${appearance?.alwaysOnTop}|${appearance?.macBackdrop}`;
+    const fingerprint = `${status}|${syncInfo.label}|${trayBadge}|${updPhase}|${updVersion}|${updPct}|${dockSide}|${dockMode}|${appearance?.alwaysOnTop}|${appearance?.macBackdrop}`;
     if (trayStatus === fingerprint)
         return;
     trayStatus = fingerprint;
-    tray.setToolTip(`QLEX · ${status} · ${syncInfo.label}`);
+    const updTip = updPhase === "downloading" ? ` · 下载更新 ${updPct}%`
+        : updPhase === "verifying" ? " · 校验安装包中"
+        : updPhase === "installing" ? " · 正在更新并重启"
+        : updPhase === "ready" ? ` · 新版本 v${updVersion} 已就绪`
+        : updPhase === "available" ? ` · 发现新版本 v${updVersion}`
+        : "";
+    tray.setToolTip(`QLEX · ${status} · ${syncInfo.label}${updTip}`);
     if (process.platform === "darwin") {
         tray.setTitle(trayBadge);
     }
-    const animMode = syncInfo.phase === "syncing"
+    const animMode = (syncInfo.phase === "syncing" || updPhase === "downloading" || updPhase === "verifying" || updPhase === "installing")
         ? "syncing"
         : (sk.conflicts > 0 || pendingPeers > 0 || (network.mode !== "local" && !network.online))
             ? "warn"
@@ -574,11 +767,23 @@ function updateTray() {
             { label: "清透液态玻璃 (Clear Glass)", type: "radio", checked: appearance.macBackdrop === "liquid-glass-clear", click: () => { const next = store.setAppearance({ macBackdrop: "liquid-glass-clear", systemGlass: true }); applyAllNativeMaterials(next.appearance); broadcastState(next); } },
         ] : []),
     ];
+    const updateMenuItem = updPhase === "ready"
+        ? { label: `⚡ 安装新版本 v${updVersion} 并重启`, click: () => { void installDownloadedUpdateAndRestart().catch(err => console.warn("QLEX update install warning:", err?.message || err)); } }
+        : updPhase === "downloading"
+            ? { label: `↓ 正在下载更新 v${updVersion} (${updPct}%)`, click: () => { toggleMenubarPopover(true); } }
+            : updPhase === "verifying"
+                ? { label: `⟳ 正在校验 v${updVersion} 安装包…`, enabled: false }
+                : updPhase === "installing"
+                    ? { label: `⚡ 正在安装 v${updVersion} 并重启…`, enabled: false }
+                    : updPhase === "available"
+                        ? { label: `↑ 发现新版本 v${updVersion} · 点击下载`, click: () => { toggleMenubarPopover(true); void updater.downloadUpdate().catch(console.warn); } }
+                        : { label: `检查版本更新 (v${APP_VERSION})`, click: () => { toggleMenubarPopover(true); void updater.checkForUpdates({ force: true }).catch(console.warn); } };
     const menu = electron_1.Menu.buildFromTemplate([
         { label: "打开菜单栏状态面板", click: () => { toggleMenubarPopover(true); } },
         { label: "打开 QLEX 主窗口", click: () => { showWindow(); } },
         { label: "打开用量大屏看板", click: () => { openDashboardWindow("activity"); } },
         { label: `立即同步（${syncInfo.label}）`, click: () => { void runUnifiedSync(); } },
+        updateMenuItem,
         { label: status, enabled: false },
         { type: "separator" },
         { label: "窗口置顶", type: "checkbox", checked: Boolean(appearance?.alwaysOnTop), click: () => {
@@ -831,6 +1036,28 @@ function registerHandlers() {
         },
         "qlex:set-memory-auto": (enabled) => broadcastState(store.setMemoryAutoCompress(enabled)),
         "qlex:set-memory-daily-time": (hhmm) => broadcastState(store.setMemoryDailySettleTime(hhmm)),
+        "qlex:set-memory-llm-config": (patch) => {
+            const next = store.setCenterMemoryLlm(patch);
+            return broadcastState(next, { force: true });
+        },
+        "qlex:test-memory-llm": async (override) => {
+            const merged = normalizeMemoryLlmConfig(override || {}, store.snapshot().centerMemoryLlm);
+            return testMemoryLlmConnection(merged);
+        },
+        "qlex:consolidate-memory-now": async (opts) => {
+            const snap = store.snapshot();
+            const res = await memoryArchive.consolidateNow({
+                llmConfig: snap.centerMemoryLlm,
+                triggerReason: opts?.triggerReason || "manual",
+                force: opts?.force !== false,
+                deviceName: (0, node_os_1.hostname)(),
+            });
+            if (!res.result?.skipped) {
+                store.markCenterMemoryConsolidated({ at: Date.now() });
+            }
+            return { result: res.result, state: broadcastState(undefined, { force: true }) };
+        },
+        "qlex:read-consolidation-report": () => memoryArchive.readConsolidationReport(),
         "qlex:set-collector-path": async (input) => {
             store.setCollectorPath(input?.source, input?.dir);
             await usage.refresh();
@@ -856,19 +1083,13 @@ function registerHandlers() {
         },
         "qlex:update-check": async (force) => {
             await updater.checkForUpdates({ force: Boolean(force) });
-            return broadcastState();
+            return broadcastState(undefined, { force: true });
         },
         "qlex:update-download": async () => {
             await updater.downloadUpdate();
-            return broadcastState();
+            return broadcastState(undefined, { force: true });
         },
-        "qlex:update-install": async () => {
-            const file = updater.snapshot().downloadedFile;
-            if (!file || !node_fs_1.existsSync(file)) throw new Error("未找到已校验的安装包，请先下载更新。");
-            const err = await electron_1.shell.openPath(file);
-            if (err) throw new Error("无法拉起安装程序：" + err);
-            return desktopState();
-        },
+        "qlex:update-install": async () => installDownloadedUpdateAndRestart(),
         "qlex:update-open-release": async () => {
             const url = updater.snapshot().latest?.htmlUrl || "https://github.com/haoyu-qi/qlex/releases";
             await electron_1.shell.openExternal(url);
@@ -1003,11 +1224,11 @@ function registerHandlers() {
             return broadcastState(undefined, { force: true });
         },
         "qlex:sync-memory-now": async () => {
+            await memoryArchive.compressNow();
             let remote = null;
             if (pairing.view().mode === "endpoint") {
                 remote = await pairing.syncMemory();
             }
-            await memoryArchive.compressNow();
             return { remote, state: broadcastState(undefined, { force: true }) };
         },
         "qlex:sync-projects-now": async () => {
@@ -1200,7 +1421,8 @@ else {
             currentVersion: APP_VERSION,
             getChannel: () => store.snapshot().updateChannel || "beta",
             onChange: () => {
-                if ((window && !window.isDestroyed()) || (menubarWindow && !menubarWindow.isDestroyed() && menubarWindow.isVisible())) {
+                updateTray();
+                if ((window && !window.isDestroyed()) || (dashboardWindow && !dashboardWindow.isDestroyed()) || (menubarWindow && !menubarWindow.isDestroyed())) {
                     broadcastState();
                 }
             },
@@ -1209,9 +1431,12 @@ else {
                     if (!smoke && electron_1.Notification?.isSupported?.()) {
                         const n = new electron_1.Notification({
                             title: `发现 QLEX 新版本 ${latest.version}`,
-                            body: latest.prerelease ? "Beta 更新通道已推送新版本，点击打开下载。" : "正式版更新已就绪，点击打开下载。",
+                            body: latest.prerelease ? "Beta 更新通道已推送新版本，点击打开菜单栏下载更新。" : "正式版更新已就绪，点击打开菜单栏下载更新。",
                         });
-                        n.on("click", () => { showWindow(); });
+                        n.on("click", () => {
+                            if (tray) toggleMenubarPopover(true);
+                            else showWindow();
+                        });
                         n.show();
                     }
                 } catch { /* ignore notification errors */ }
@@ -1299,6 +1524,40 @@ else {
             };
             setTimeout(checkDailyMemorySettle, 15_000).unref();
             setInterval(checkDailyMemorySettle, 30_000).unref();
+            // Center-side scheduled LLM memory consolidation by configured time-slots / interval
+            let centerConsolidateRunning = false;
+            const checkCenterMemoryConsolidation = () => {
+                if (centerConsolidateRunning) return;
+                if (pairing.view().mode !== "center") return;
+                const snap = store.snapshot();
+                const evalRes = evaluateConsolidationSchedule(snap.centerMemoryLlm);
+                if (!evalRes.due) return;
+
+                centerConsolidateRunning = true;
+                void (async () => {
+                    try {
+                        await usage.refresh().catch(console.warn);
+                        await memoryArchive.compressNow().catch(console.warn);
+                        const out = await memoryArchive.consolidateNow({
+                            llmConfig: snap.centerMemoryLlm,
+                            triggerReason: evalRes.reason,
+                            force: false,
+                            deviceName: (0, node_os_1.hostname)(),
+                        });
+                        store.markCenterMemoryConsolidated({
+                            slotKey: evalRes.slotKey,
+                            at: out.result?.skipped ? (snap.centerMemoryLlm?.lastConsolidatedAt || Date.now()) : Date.now(),
+                        });
+                        broadcastState(undefined, { force: true });
+                    } catch (err) {
+                        console.warn("QLEX center LLM consolidation warning:", err?.message || err);
+                    } finally {
+                        centerConsolidateRunning = false;
+                    }
+                })();
+            };
+            setTimeout(checkCenterMemoryConsolidation, 20_000).unref();
+            setInterval(checkCenterMemoryConsolidation, 30_000).unref();
             // Lightweight local file trigger for external scripts / agents (e.g. Hermes cron without screen recording or open HTTP ports)
             let localTriggerRunning = false;
             const checkLocalCompressTrigger = () => {

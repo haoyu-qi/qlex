@@ -172,6 +172,42 @@ try {
     const stableCheck = await stableUpdater.checkForUpdates({ mockReleases });
     assert.equal(stableCheck.phase, "up-to-date", "Stable channel must ignore beta pre-releases");
 
+    // Updater cached-file SHA-256 fast-path + installing phase transitions + check protection
+    const crypto = await import("node:crypto");
+    const updCacheDir = path.join(tmpHome, "upd-cache");
+    fs.mkdirSync(updCacheDir, { recursive: true });
+    const fakePkgName = "QLEX-0.3.0-beta.99-macOS-arm64.pkg";
+    const fakePkgBytes = Buffer.from("QLEX-FAKE-PKG-CONTENT-FOR-HASH-CHECK");
+    const fakePkgSha = crypto.createHash("sha256").update(fakePkgBytes).digest("hex");
+    fs.writeFileSync(path.join(updCacheDir, fakePkgName), fakePkgBytes);
+    const updEvents = [];
+    const dlUpdater = createUpdater({
+        currentVersion: "0.3.0-beta.13",
+        cacheDir: updCacheDir,
+        getChannel: () => "beta",
+        onChange: (st) => updEvents.push({ phase: st.phase, progress: st.progress }),
+    });
+    await dlUpdater.checkForUpdates({
+        mockReleases: [{
+            tag_name: "v0.3.0-beta.99",
+            name: "QLEX 0.3.0-beta.99",
+            prerelease: true,
+            draft: false,
+            html_url: "https://github.com/haoyu-qi/qlex/releases/tag/v0.3.0-beta.99",
+            assets: [{ name: fakePkgName, browser_download_url: "https://example.invalid/pkg", size: fakePkgBytes.length }],
+        }],
+    });
+    const dlState = await dlUpdater.downloadUpdate();
+    assert.equal(dlState.phase, "ready");
+    assert.equal(dlState.progress, 100);
+    assert.equal(dlState.verifiedSha256, fakePkgSha);
+    assert.ok(updEvents.some(e => e.phase === "verifying"), "Must emit verifying phase");
+    assert.equal(dlUpdater.setInstalling(true).phase, "installing");
+    const duringInstall = await dlUpdater.checkForUpdates({ mockReleases });
+    assert.equal(duringInstall.phase, "installing", "checkForUpdates must not clobber active installing phase");
+    assert.equal(dlUpdater.setInstalling(false).phase, "ready", "Cancelling install must restore ready phase");
+    assert.equal(dlUpdater.setInstalling(false, "mock err").phase, "error", "Install error must set error phase");
+
     // ---- 4. Center <-> Endpoint Bidirectional Memory Sync & Project Sync Tests ----
     const centerMemDir = path.join(tmpHome, "center-mem");
     const endpointMemDir = path.join(tmpHome, "endpoint-mem");

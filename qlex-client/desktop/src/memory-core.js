@@ -18,6 +18,16 @@ const path = require("node:path");
 const zlib = require("node:zlib");
 const { createHash, randomUUID } = require("node:crypto");
 const { homedir } = require("node:os");
+let _consolidator = null;
+try {
+    _consolidator = require("./memory-consolidator");
+} catch {
+    // Standalone CLI copy (qlex-memory skill's memory-core.cjs) does not need LLM consolidation module
+}
+const runLlmConsolidationPlan = _consolidator?.runLlmConsolidationPlan
+    || (async () => ({ skipped: true, plan: { summary: "", merges: [], supersedes: [], prunes: [], syntheses: [] }, usage: { inputTokens: 0, outputTokens: 0 }, latencyMs: 0, model: "" }));
+const normalizeMemoryLlmConfig = _consolidator?.normalizeMemoryLlmConfig
+    || ((raw) => ({ enabled: false, onlyWhenChanged: true, maxItemsPerRun: 60, ...(raw && typeof raw === "object" ? raw : {}) }));
 
 const ENGINE_VERSION = "3.0.0";
 const VALID_BANKS = new Set(["world", "experience", "opinion", "observation", "mental_model"]);
@@ -888,6 +898,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             root,
             indexFile: path.join(root, "index.json"),
             cacheFile: path.join(root, "cache", "digest-cache.json"),
+            consolidationMetaFile: path.join(root, "cache", "consolidation-meta.json"),
             resourcesDir: path.join(root, "resources"),
             resourcesStore: path.join(root, "resources", "resources.json.gz"),
             itemsDir: path.join(root, "items"),
@@ -899,10 +910,99 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             graphMd: path.join(root, "graph", "graph.md"),
             reflectionsDir: path.join(root, "reflections"),
             reflectionsMd: path.join(root, "reflections", "reflections.md"),
+            consolidationMd: path.join(root, "reflections", "CONSOLIDATION_LOG.md"),
             dailyRoot: path.join(root, "daily"),
             weeklyRoot: path.join(root, "weekly"),
             monthlyRoot: path.join(root, "monthly"),
         };
+    }
+
+    function loadConsolidationMeta(p = pathsOf()) {
+        const saved = readJsonSafe(p.consolidationMetaFile, null);
+        const base = {
+            revision: 0,
+            lastConsolidatedAt: 0,
+            lastMode: "idle", // "idle" | "llm" | "rules" | "fallback-rules"
+            lastModel: "",
+            lastSummary: "",
+            lastTriggerReason: "",
+            lastError: "",
+            pendingCount: 0,
+            pendingDevices: [],
+            lastStats: {
+                inputCount: 0,
+                mergedGroups: 0,
+                supersededCount: 0,
+                prunedCount: 0,
+                synthesizedCount: 0,
+                activeAfter: 0,
+                inputTokens: 0,
+                outputTokens: 0,
+                latencyMs: 0,
+            },
+            syncedCenterRevision: 0,
+            syncedCenterAt: 0,
+            syncedCenterDevice: "",
+            history: [],
+        };
+        if (!saved || typeof saved !== "object") return base;
+        return {
+            ...base,
+            ...saved,
+            pendingDevices: Array.isArray(saved.pendingDevices) ? saved.pendingDevices.slice(0, 20) : [],
+            lastStats: { ...base.lastStats, ...(saved.lastStats && typeof saved.lastStats === "object" ? saved.lastStats : {}) },
+            history: Array.isArray(saved.history) ? saved.history.slice(-20) : [],
+        };
+    }
+
+    function saveConsolidationMeta(meta, p = pathsOf()) {
+        ensureDirs(p);
+        writeAtomic(p.consolidationMetaFile, JSON.stringify(meta, null, 2) + "\n");
+        return meta;
+    }
+
+    function renderConsolidationMarkdown(meta) {
+        const modeLabel = meta.lastMode === "llm" ? `大模型智能整理 (${meta.lastModel || "LLM"})`
+            : meta.lastMode === "fallback-rules" ? "本地规则整理（LLM 降级）"
+                : meta.lastMode === "rules" ? "本地规则整理"
+                    : "尚未整理";
+        const lines = [
+            "# QLEX 中心记忆全端整理报告",
+            "",
+            `- **当前权威修订版**：\`#${meta.revision || 0}\``,
+            `- **上次整理时间**：${fmtIsoShort(meta.lastConsolidatedAt)}`,
+            `- **整理模式**：${modeLabel}`,
+            `- **触发方式**：${meta.lastTriggerReason || "—"}`,
+            `- **待整理新增条数**：${meta.pendingCount || 0}${meta.pendingDevices?.length ? `（来源：${meta.pendingDevices.join("、")}）` : ""}`,
+            ...(meta.syncedCenterRevision ? [`- **本机已同步中心版本**：\`#${meta.syncedCenterRevision}\`（${meta.syncedCenterDevice || "中心点"} · ${fmtIsoShort(meta.syncedCenterAt)}）`] : []),
+            ...(meta.lastError ? [`- **上次告警**：${meta.lastError}`] : []),
+            "",
+            "## 最新整理摘要",
+            "",
+            meta.lastSummary || "_尚未执行中心整理。配置大模型 API 或点击「立即大模型整理」后将生成全端权威整理摘要。_",
+            "",
+        ];
+        if (meta.lastStats && meta.lastConsolidatedAt) {
+            const st = meta.lastStats;
+            lines.push(
+                "## 本次整理统计",
+                "",
+                `- 参与整理记忆：${st.inputCount || 0} 条 → 整理后活跃记忆：${st.activeAfter || 0} 条`,
+                `- 跨端合并组数：${st.mergedGroups || 0} 组 · 演进替代：${st.supersededCount || 0} 条 · 噪音淘汰：${st.prunedCount || 0} 条 · 综合提炼：${st.synthesizedCount || 0} 条`,
+                ...(st.inputTokens || st.outputTokens ? [`- 模型消耗：输入 ${fmtNum(st.inputTokens)} tok · 输出 ${fmtNum(st.outputTokens)} tok · 耗时 ${((st.latencyMs || 0) / 1000).toFixed(1)}s`] : []),
+                ""
+            );
+        }
+        if (Array.isArray(meta.history) && meta.history.length) {
+            lines.push("## 历史整理记录", "");
+            for (const h of [...meta.history].reverse().slice(0, 15)) {
+                lines.push(`### #${h.revision} · ${fmtIsoShort(h.at)} · ${h.mode === "llm" ? `LLM(${h.model || ""})` : h.mode} [${h.triggerReason || "manual"}]`);
+                lines.push(`- 合并 ${h.mergedGroups || 0} 组 · 替代 ${h.supersededCount || 0} 条 · 淘汰 ${h.prunedCount || 0} 条 · 提炼 ${h.synthesizedCount || 0} 条 → 活跃 ${h.activeAfter || 0} 条`);
+                if (h.summary) lines.push(`- ${h.summary}`);
+                lines.push("");
+            }
+        }
+        return lines.join("\n") + "\n";
     }
 
     function ensureDirs(p) {
@@ -1421,6 +1521,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                 agent,
                 agentId,
                 source,
+                originDevice: input.originDevice ? sanitizeSnippet(input.originDevice, 64) : (matched?.originDevice || ""),
                 category,
                 factKey: factKey || matched.factKey || "",
                 tags: [...new Set([...(matched.tags || []), ...tags])].slice(0, 12),
@@ -1498,6 +1599,7 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                 agent,
                 agentId,
                 source,
+                originDevice: input.originDevice ? sanitizeSnippet(input.originDevice, 64) : (matched?.originDevice || ""),
                 category,
                 factKey,
                 tags,
@@ -2845,39 +2947,65 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         };
     }
 
-    function exportSyncBundle({ deviceId = "", deviceName = "" } = {}) {
+    function exportSyncBundle({ deviceId = "", deviceName = "", canonical = false } = {}) {
         const p = pathsOf();
         const itemStore = loadItemStore(p);
         const graphStore = loadGraphStore(p);
+        const meta = loadConsolidationMeta(p);
+
+        // Always prioritize ALL active canonical memories + recent superseded/deleted tombstones
+        // so tombstones never crowd out active items and endpoints cleanly retire merged/pruned fragments.
+        const activeItems = itemStore.items
+            .filter(it => it.status === "active")
+            .sort((a, b) => (a.updatedAt || 0) - (b.updatedAt || 0))
+            .slice(-600);
+        const retiredItems = itemStore.items
+            .filter(it => it.status === "superseded" || it.status === "deleted")
+            .sort((a, b) => (a.updatedAt || a.validTo || 0) - (b.updatedAt || b.validTo || 0))
+            .slice(-300);
+
         return {
-            version: 2,
+            version: 3,
             engineVersion: ENGINE_VERSION,
+            canonical: Boolean(canonical),
             deviceId,
             deviceName,
             exportedAt: Date.now(),
-            items: itemStore.items.slice(-500),
-            entities: graphStore.entities.slice(-400),
-            edges: graphStore.edges.slice(-800),
+            consolidation: {
+                revision: meta.revision || 0,
+                lastConsolidatedAt: meta.lastConsolidatedAt || 0,
+                lastMode: meta.lastMode || "idle",
+                lastModel: meta.lastModel || "",
+                lastSummary: meta.lastSummary || "",
+            },
+            items: [...retiredItems, ...activeItems],
+            entities: graphStore.entities.slice(-450),
+            edges: graphStore.edges.slice(-900),
         };
     }
 
-    function mergeSyncBundle(bundle) {
+    function mergeSyncBundle(bundle, { isCenter = false, peerName = "" } = {}) {
         if (!bundle || typeof bundle !== "object" || !Array.isArray(bundle.items)) {
-            return { itemsAdded: 0, itemsUpdated: 0, entitiesAdded: 0, edgesAdded: 0, edgesUpdated: 0 };
+            return { itemsAdded: 0, itemsUpdated: 0, entitiesAdded: 0, edgesAdded: 0, edgesUpdated: 0, tombstonesApplied: 0, factKeyConverged: 0 };
         }
         const p = pathsOf();
         ensureDirs(p);
         const itemStore = loadItemStore(p);
         const graphStore = loadGraphStore(p);
+        const isCanonicalFromCenter = !isCenter && bundle.canonical === true;
+        const incomingDevice = sanitizeSnippet(bundle.deviceName || peerName || "", 64);
 
         const itemById = new Map(itemStore.items.map(it => [it.id, it]));
         let itemsAdded = 0;
         let itemsUpdated = 0;
+        let tombstonesApplied = 0;
+        let factKeyConverged = 0;
 
-        for (const inc of bundle.items.slice(0, 600)) {
+        for (const inc of bundle.items.slice(0, 900)) {
             if (!inc || typeof inc.id !== "string" || typeof inc.l0 !== "string") continue;
             const clean = {
                 ...inc,
+                originDevice: sanitizeSnippet(inc.originDevice || incomingDevice || "", 64),
                 title: sanitizeSnippet(inc.title || inc.l0, 90),
                 l0: sanitizeSnippet(inc.l0, 160),
                 l1: scrubSecrets(String(inc.l1 || inc.l0)).slice(0, 1200),
@@ -2893,18 +3021,68 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
                 const curVer = Number(cur.version || 1);
                 const incUpd = Number(clean.updatedAt || 0);
                 const curUpd = Number(cur.updatedAt || 0);
-                if (incVer > curVer || (incVer === curVer && incUpd > curUpd)) {
+                const incRetired = clean.status === "deleted" || clean.status === "superseded";
+                const curRetired = cur.status === "deleted" || cur.status === "superseded";
+
+                // 1. Tombstones (deleted / superseded) propagate strictly and never resurrect from stale active copies
+                if (incRetired && (!curRetired || incVer > curVer || incUpd > curUpd || isCanonicalFromCenter)) {
+                    const changed = cur.status !== clean.status
+                        || cur.validTo !== (clean.validTo || cur.validTo)
+                        || (clean.supersededBy && cur.supersededBy !== clean.supersededBy);
+                    cur.status = clean.status;
+                    cur.validTo = clean.validTo || cur.validTo || Date.now();
+                    if (clean.supersededBy) cur.supersededBy = clean.supersededBy;
+                    if (clean.deleteReason) cur.deleteReason = clean.deleteReason;
+                    cur.version = Math.max(curVer, incVer);
+                    cur.updatedAt = Math.max(curUpd, incUpd);
+                    if (changed) {
+                        itemsUpdated++;
+                        tombstonesApplied++;
+                    }
+                } else if (curRetired && !incRetired && !isCanonicalFromCenter) {
+                    // Local tombstone wins over stale active copy from an endpoint
+                    continue;
+                } else if (incVer > curVer || (incVer === curVer && incUpd > curUpd) || (isCanonicalFromCenter && incUpd >= curUpd && clean.l2 !== cur.l2)) {
                     Object.assign(cur, clean, {
                         evidence: [...new Set([...(cur.evidence || []), ...(clean.evidence || [])])].slice(0, 20),
                         tags: [...new Set([...(cur.tags || []), ...(clean.tags || [])])].slice(0, 12),
                     });
                     itemsUpdated++;
-                } else if (clean.status === "superseded" && cur.status === "active" && clean.validTo) {
-                    cur.status = "superseded";
-                    cur.validTo = clean.validTo;
-                    cur.supersededBy = clean.supersededBy || cur.supersededBy;
-                    itemsUpdated++;
                 }
+            }
+        }
+
+        // Cross-device factKey convergence: if two distinct active UUIDs share the exact same factKey,
+        // keep the canonical / newer winner active and supersede the stale duplicate so all devices converge.
+        const incomingIdSet = new Set(bundle.items.map(i => i?.id).filter(Boolean));
+        const activeByFactKey = new Map();
+        for (const it of itemStore.items) {
+            if (it.status !== "active" || !it.factKey) continue;
+            const list = activeByFactKey.get(it.factKey) || [];
+            list.push(it);
+            activeByFactKey.set(it.factKey, list);
+        }
+        const nowTs = Date.now();
+        for (const list of activeByFactKey.values()) {
+            if (list.length < 2) continue;
+            list.sort((a, b) => {
+                if (isCanonicalFromCenter) {
+                    const aIn = incomingIdSet.has(a.id) ? 1 : 0;
+                    const bIn = incomingIdSet.has(b.id) ? 1 : 0;
+                    if (bIn !== aIn) return bIn - aIn;
+                }
+                return (b.updatedAt || 0) - (a.updatedAt || 0) || (b.version || 1) - (a.version || 1);
+            });
+            const winner = list[0];
+            for (const loser of list.slice(1)) {
+                loser.status = "superseded";
+                loser.validTo = nowTs;
+                loser.supersededBy = winner.id;
+                loser.updatedAt = nowTs;
+                loser.version = (loser.version || 1) + 1;
+                loser.deleteReason = "cross-device factKey convergence";
+                factKeyConverged++;
+                itemsUpdated++;
             }
         }
 
@@ -2952,14 +3130,357 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
             }
         }
 
+        const meta = loadConsolidationMeta(p);
+        let metaChanged = false;
+        if (isCenter && (itemsAdded || itemsUpdated)) {
+            meta.pendingCount = (meta.pendingCount || 0) + itemsAdded + itemsUpdated;
+            if (incomingDevice && !meta.pendingDevices.includes(incomingDevice)) {
+                meta.pendingDevices = [...meta.pendingDevices, incomingDevice].slice(-20);
+            }
+            metaChanged = true;
+        }
+        if (isCanonicalFromCenter && bundle.consolidation && typeof bundle.consolidation === "object") {
+            const cRev = Number(bundle.consolidation.revision || 0);
+            if (cRev >= (meta.syncedCenterRevision || 0)) {
+                meta.syncedCenterRevision = cRev;
+                meta.syncedCenterAt = Number(bundle.consolidation.lastConsolidatedAt || Date.now());
+                meta.syncedCenterDevice = incomingDevice || meta.syncedCenterDevice;
+                if (bundle.consolidation.lastSummary) {
+                    meta.lastSummary = bundle.consolidation.lastSummary;
+                }
+                if (bundle.consolidation.lastMode && bundle.consolidation.lastMode !== "idle") {
+                    meta.lastMode = bundle.consolidation.lastMode;
+                    meta.lastModel = bundle.consolidation.lastModel || "";
+                }
+                metaChanged = true;
+            }
+        }
+
         if (itemsAdded || itemsUpdated || entitiesAdded || edgesAdded || edgesUpdated) {
             saveItemStore(itemStore, p);
             saveGraphStore(graphStore, p);
             materializeViews(itemStore, graphStore, p);
             syncIndexCognitiveStats(itemStore, graphStore, p);
         }
+        if (metaChanged) {
+            saveConsolidationMeta(meta, p);
+            writeAtomic(p.consolidationMd, renderConsolidationMarkdown(meta));
+        }
 
-        return { itemsAdded, itemsUpdated, entitiesAdded, edgesAdded, edgesUpdated };
+        return { itemsAdded, itemsUpdated, entitiesAdded, edgesAdded, edgesUpdated, tombstonesApplied, factKeyConverged };
+    }
+
+    /**
+     * Center Canonical Memory Consolidation (LLM-powered with deterministic rule fallback).
+     * Merges cross-device duplicates, supersedes outdated facts, prunes noise, synthesizes
+     * unified mental models, bumps canonical revision, and writes tombstones so all endpoints
+     * converge to one clean shared memory on their next sync.
+     */
+    async function consolidateCenterMemory({ llmConfig = null, triggerReason = "manual", force = false, deviceName = "" } = {}) {
+        const p = pathsOf();
+        ensureDirs(p);
+        const cfg = normalizeMemoryLlmConfig(llmConfig || {});
+        const meta = loadConsolidationMeta(p);
+
+        // 1. Pre-hygiene sweep (noise, empty shells, TTL expiry, exact dupes)
+        const preSweep = autoForget({ dryRun: false, cleanNoise: true });
+        const itemStore = loadItemStore(p);
+        const graphStore = loadGraphStore(p);
+
+        const activeBase = itemStore.items
+            .filter(i => i.status === "active" && i.bank !== "observation" && i.bank !== "mental_model")
+            .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+        const existingModels = itemStore.items
+            .filter(i => i.status === "active" && (i.bank === "mental_model" || i.bank === "observation"));
+
+        const hasNewSinceLast = activeBase.some(i => (i.updatedAt || 0) > (meta.lastConsolidatedAt || 0));
+        const hasPending = (meta.pendingCount || 0) > 0 || (preSweep.retiredTotal || 0) > 0 || hasNewSinceLast;
+
+        if (!force && cfg.onlyWhenChanged && meta.revision > 0 && !hasPending) {
+            return {
+                skipped: true,
+                reason: "no_changes",
+                revision: meta.revision,
+                meta,
+            };
+        }
+
+        const now = Date.now();
+        const candidateItems = activeBase.slice(0, cfg.maxItemsPerRun || 60);
+        const itemById = new Map(itemStore.items.map(it => [it.id, it]));
+        const devices = [...new Set([
+            ...(meta.pendingDevices || []),
+            ...candidateItems.map(i => i.originDevice).filter(Boolean),
+            deviceName,
+        ].filter(Boolean))];
+
+        let mode = "rules";
+        let usedModel = "";
+        let llmError = "";
+        let summary = "";
+        let usage = { inputTokens: 0, outputTokens: 0 };
+        let latencyMs = 0;
+        let mergedGroups = 0;
+        let supersededCount = preSweep.duplicatesSuperseded?.length || 0;
+        let prunedCount = (preSweep.noiseEvicted?.length || 0) + (preSweep.ttlExpired?.length || 0) + (preSweep.bogusModelsEvicted?.length || 0);
+        let synthesizedCount = 0;
+
+        const isOllamaLocal = /^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?/i.test(cfg.baseUrl || "");
+        const canCallLlm = Boolean(cfg.enabled && cfg.baseUrl && cfg.model && (cfg.apiKey || isOllamaLocal) && candidateItems.length > 0);
+
+        const retireAs = (it, status, reason, supersededBy = null) => {
+            if (!it || it.status !== "active") return false;
+            it.status = status;
+            it.validTo = now;
+            it.updatedAt = now;
+            it.version = (it.version || 1) + 1;
+            if (supersededBy) it.supersededBy = supersededBy;
+            it.deleteReason = sanitizeSnippet(reason || "center consolidation", 120);
+            for (const edge of graphStore.edges) {
+                if (!edge.validTo && Array.isArray(edge.evidence) && edge.evidence.length === 1 && edge.evidence[0] === it.id) {
+                    edge.validTo = now;
+                    if (supersededBy) edge.supersededBy = supersededBy;
+                }
+            }
+            return true;
+        };
+
+        if (canCallLlm) {
+            try {
+                const llmRes = await runLlmConsolidationPlan(cfg, candidateItems, { devices, existingModels });
+                mode = "llm";
+                usedModel = llmRes.model || cfg.model;
+                usage = llmRes.usage || usage;
+                latencyMs = llmRes.latencyMs || 0;
+                const plan = llmRes.plan || {};
+                summary = plan.summary || "大模型已完成全端记忆整合压缩。";
+
+                const createdIds = new Set();
+
+                // Apply merges: create 1 canonical consolidated item & supersede every source fragment
+                for (const m of (plan.merges || []).slice(0, 20)) {
+                    const srcIds = Array.isArray(m?.sourceIds) ? [...new Set(m.sourceIds.filter(id => typeof id === "string"))] : [];
+                    const validSources = srcIds.map(id => itemById.get(id)).filter(it => it && it.status === "active");
+                    if (validSources.length < 2) continue;
+                    const body = scrubSecrets(String(m.l2 || m.l1 || m.l0 || "")).trim();
+                    if (body.length < 16) continue;
+                    const mergedTags = [...new Set([
+                        "consolidated",
+                        ...(Array.isArray(m.tags) ? m.tags : []),
+                        ...validSources.flatMap(s => s.tags || []),
+                    ])].slice(0, 12);
+                    const mergedProject = m.project || validSources.find(s => s.project)?.project || "";
+                    const mergedBank = VALID_BANKS.has(m.bank) ? m.bank : validSources[0].bank;
+                    const retained = retain({
+                        title: m.title || validSources[0].title,
+                        content: body,
+                        l0: m.l0,
+                        l1: m.l1,
+                        l2: body,
+                        bank: mergedBank,
+                        scope: mergedProject ? "project" : "user",
+                        project: mergedProject,
+                        factKey: m.factKey ? slugify(m.factKey) : "",
+                        tags: mergedTags,
+                        confidence: Number.isFinite(Number(m.confidence)) ? Number(m.confidence) : 0.92,
+                        evidence: validSources.map(s => s.id),
+                        source: "system",
+                        originChannel: "shared",
+                        originDevice: deviceName || "center",
+                        timestamp: now,
+                    }, { _itemStore: itemStore, _graphStore: graphStore, _deferPersist: true });
+
+                    const newId = retained.item.id;
+                    createdIds.add(newId);
+                    itemById.set(newId, itemStore.items.find(x => x.id === newId) || retained.item);
+                    for (const src of validSources) {
+                        if (src.id !== newId && retireAs(src, "superseded", `LLM merged into ${newId}`, newId)) {
+                            supersededCount++;
+                        }
+                    }
+                    mergedGroups++;
+                }
+
+                // Apply explicit supersedes
+                for (const s of (plan.supersedes || []).slice(0, 30)) {
+                    const oldIt = itemById.get(s?.supersededId);
+                    const winIt = itemById.get(s?.winnerId);
+                    if (!oldIt || !winIt || oldIt.id === winIt.id || oldIt.status !== "active") continue;
+                    if (retireAs(oldIt, "superseded", s.reason || "superseded by newer memory", winIt.id)) {
+                        winIt.evidence = [...new Set([...(winIt.evidence || []), oldIt.id])].slice(0, 20);
+                        winIt.updatedAt = now;
+                        winIt.version = (winIt.version || 1) + 1;
+                        supersededCount++;
+                    }
+                }
+
+                // Apply prunes (never prune newly created items)
+                for (const pr of (plan.prunes || []).slice(0, 40)) {
+                    if (!pr?.id || createdIds.has(pr.id)) continue;
+                    const target = itemById.get(pr.id);
+                    if (target && target.status === "active" && retireAs(target, "deleted", pr.reason || "pruned by center LLM")) {
+                        prunedCount++;
+                    }
+                }
+
+                // Apply high-level cross-device syntheses
+                for (const syn of (plan.syntheses || []).slice(0, 6)) {
+                    const body = scrubSecrets(String(syn?.l2 || syn?.l1 || syn?.l0 || "")).trim();
+                    if (body.length < 20) continue;
+                    const synBank = VALID_BANKS.has(syn.bank) ? syn.bank : "mental_model";
+                    const synProj = syn.project ? sanitizeSnippet(syn.project, 64) : "";
+                    const evIds = Array.isArray(syn.evidenceIds)
+                        ? syn.evidenceIds.filter(id => itemById.has(id)).slice(0, 20)
+                        : [];
+                    retain({
+                        title: syn.title || (synProj ? `${synProj} 跨端综合认知` : "跨端综合记忆洞察"),
+                        content: body,
+                        l0: syn.l0,
+                        l1: syn.l1,
+                        l2: body,
+                        bank: synBank,
+                        scope: synProj ? "project" : "user",
+                        project: synProj,
+                        category: (synBank === "mental_model" || synBank === "observation") ? "observations" : undefined,
+                        factKey: syn.factKey ? slugify(syn.factKey) : `center:${synBank}:${slugify(synProj || syn.title || "summary")}`,
+                        tags: [...new Set(["consolidated", "center-llm", ...(Array.isArray(syn.tags) ? syn.tags : [])])].slice(0, 12),
+                        confidence: 0.92,
+                        evidence: evIds,
+                        source: "system",
+                        originChannel: "shared",
+                        originDevice: deviceName || "center",
+                        timestamp: now,
+                    }, { _itemStore: itemStore, _graphStore: graphStore, _deferPersist: true });
+                    synthesizedCount++;
+                }
+            } catch (err) {
+                llmError = err?.message || "大模型调用失败，已自动降级为本地规则整理";
+                mode = "fallback-rules";
+            }
+        }
+
+        // Deterministic cross-device near-duplicate consolidation (runs when rules mode or fallback)
+        if (mode !== "llm") {
+            const activeRuleList = itemStore.items
+                .filter(i => i.status === "active" && i.bank !== "observation" && i.bank !== "mental_model")
+                .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+            const tokenCache = new Map();
+            const getToks = (it) => {
+                let t = tokenCache.get(it.id);
+                if (!t) {
+                    t = tokenize(`${it.title} ${it.l1}`);
+                    tokenCache.set(it.id, t);
+                }
+                return t;
+            };
+            for (let i = 0; i < activeRuleList.length; i++) {
+                const keep = activeRuleList[i];
+                if (keep.status !== "active") continue;
+                for (let j = i + 1; j < activeRuleList.length; j++) {
+                    const dup = activeRuleList[j];
+                    if (dup.status !== "active") continue;
+                    if (keep.bank !== dup.bank) continue;
+                    if ((keep.project || "").toLowerCase() !== (dup.project || "").toLowerCase()) continue;
+                    const sim = jaccardSimilarity(getToks(keep), getToks(dup));
+                    if (sim >= 0.72) {
+                        keep.evidence = [...new Set([...(keep.evidence || []), dup.id])].slice(0, 20);
+                        keep.tags = [...new Set([...(keep.tags || []), ...(dup.tags || []), "consolidated"])].slice(0, 12);
+                        keep.updatedAt = now;
+                        keep.version = (keep.version || 1) + 1;
+                        if (retireAs(dup, "superseded", `cross-device rule merge (sim=${sim.toFixed(2)})`, keep.id)) {
+                            supersededCount++;
+                            mergedGroups++;
+                        }
+                    }
+                }
+            }
+            if (!summary) {
+                summary = `规则引擎已整合 ${candidateItems.length} 条跨端记忆（合并 ${mergedGroups} 组，替代 ${supersededCount} 条，清理 ${prunedCount} 条）。`;
+            }
+        }
+
+        // Refresh Hindsight reflections & mental models based on consolidated canonical store
+        if (itemStore.items.some(i => i.status === "active")) {
+            reflect({ _itemStore: itemStore, _graphStore: graphStore, _deferPersist: true });
+        }
+
+        saveItemStore(itemStore, p);
+        saveGraphStore(graphStore, p);
+        const cogStats = materializeViews(itemStore, graphStore, p);
+        syncIndexCognitiveStats(itemStore, graphStore, p);
+
+        const nextRevision = (meta.revision || 0) + 1;
+        const stats = {
+            inputCount: candidateItems.length,
+            mergedGroups,
+            supersededCount,
+            prunedCount,
+            synthesizedCount,
+            activeAfter: cogStats.activeItems,
+            inputTokens: usage.inputTokens || 0,
+            outputTokens: usage.outputTokens || 0,
+            latencyMs,
+        };
+        const nextMeta = {
+            ...meta,
+            revision: nextRevision,
+            lastConsolidatedAt: now,
+            lastMode: mode,
+            lastModel: usedModel,
+            lastSummary: summary,
+            lastTriggerReason: triggerReason,
+            lastError: llmError,
+            pendingCount: 0,
+            pendingDevices: [],
+            lastStats: stats,
+            history: [
+                ...(meta.history || []),
+                {
+                    revision: nextRevision,
+                    at: now,
+                    mode,
+                    model: usedModel,
+                    triggerReason,
+                    summary,
+                    ...stats,
+                },
+            ].slice(-20),
+        };
+        saveConsolidationMeta(nextMeta, p);
+        writeAtomic(p.consolidationMd, renderConsolidationMarkdown(nextMeta));
+
+        return {
+            skipped: false,
+            revision: nextRevision,
+            mode,
+            model: usedModel,
+            summary,
+            error: llmError,
+            stats,
+            meta: nextMeta,
+            cognitive: cogStats,
+        };
+    }
+
+    function getConsolidationStatus() {
+        return loadConsolidationMeta(pathsOf());
+    }
+
+    function readConsolidationReport() {
+        const p = pathsOf();
+        const meta = loadConsolidationMeta(p);
+        const content = fs.existsSync(p.consolidationMd)
+            ? fs.readFileSync(p.consolidationMd, "utf8")
+            : renderConsolidationMarkdown(meta);
+        return {
+            kind: "consolidation",
+            key: `中心整理报告 #${meta.revision || 0}`,
+            mdPath: p.consolidationMd,
+            rawBytes: Buffer.byteLength(content),
+            compressedBytes: Buffer.byteLength(content),
+            content,
+            meta,
+        };
     }
 
     /**
@@ -3307,6 +3828,9 @@ function createCognitiveMemoryEngine({ getArchiveDir, getProjects, getUsageSnaps
         getStatus,
         exportSyncBundle,
         mergeSyncBundle,
+        consolidateCenterMemory,
+        getConsolidationStatus,
+        readConsolidationReport,
     };
 }
 

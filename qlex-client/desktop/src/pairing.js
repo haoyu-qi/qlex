@@ -415,15 +415,19 @@ class DevicePairing {
         const { mode, endpoint } = this.config;
         const local = this.store.snapshot();
         if (mode !== "endpoint" || endpoint?.status !== "connected" || !this.memoryArchive) return null;
-        const localBundle = this.memoryArchive.exportSyncBundle({ deviceId: local.deviceId, deviceName: deviceName() });
+        const localBundle = this.memoryArchive.exportSyncBundle({ deviceId: local.deviceId, deviceName: deviceName(), canonical: false });
         const response = await callCenter(endpoint, "memory", local.deviceId, localBundle);
         if (!response?.bundle) return null;
-        const mergedLocal = this.memoryArchive.mergeSyncBundle(response.bundle);
+        const peerLabel = endpoint.name || endpoint.invite.host;
+        const mergedLocal = this.memoryArchive.mergeSyncBundle(response.bundle, { isCenter: false, peerName: peerLabel });
         this.lastMemorySync = {
             time: Date.now(),
-            peer: endpoint.name || endpoint.invite.host,
+            peer: peerLabel,
+            centerRevision: Number(response.bundle?.consolidation?.revision || 0),
+            centerConsolidatedAt: Number(response.bundle?.consolidation?.lastConsolidatedAt || 0),
             pulledAdded: mergedLocal.itemsAdded,
             pulledUpdated: mergedLocal.itemsUpdated,
+            tombstonesApplied: mergedLocal.tombstonesApplied || 0,
             pushedAdded: response.merged?.itemsAdded || 0,
             pushedUpdated: response.merged?.itemsUpdated || 0,
         };
@@ -645,11 +649,16 @@ class DevicePairing {
                     return;
                 }
                 this.peerSeenAt.set(id, Date.now());
-                const merged = this.memoryArchive.mergeSyncBundle(bundle);
-                const centerBundle = this.memoryArchive.exportSyncBundle({ deviceId: this.store.snapshot().deviceId, deviceName: deviceName() });
+                const merged = this.memoryArchive.mergeSyncBundle(bundle, { isCenter: true, peerName: existing.name });
+                const centerBundle = this.memoryArchive.exportSyncBundle({
+                    deviceId: this.store.snapshot().deviceId,
+                    deviceName: deviceName(),
+                    canonical: true,
+                });
                 this.lastMemorySync = {
                     time: Date.now(),
                     peer: existing.name,
+                    centerRevision: Number(centerBundle?.consolidation?.revision || 0),
                     pushedAdded: merged.itemsAdded,
                     pushedUpdated: merged.itemsUpdated,
                     pulledAdded: 0,

@@ -89,6 +89,10 @@ electron_1.contextBridge.exposeInMainWorld("qlex", {
     openMemoryFile: (kind, key) => electron_1.ipcRenderer.invoke("qlex:open-memory-file", { kind, key }),
     setMemoryAutoCompress: (enabled) => electron_1.ipcRenderer.invoke("qlex:set-memory-auto", enabled),
     setMemoryDailySettleTime: (hhmm) => electron_1.ipcRenderer.invoke("qlex:set-memory-daily-time", hhmm),
+    setMemoryLlmConfig: (patch) => electron_1.ipcRenderer.invoke("qlex:set-memory-llm-config", patch),
+    testMemoryLlm: (override) => electron_1.ipcRenderer.invoke("qlex:test-memory-llm", override),
+    consolidateMemoryNow: (opts) => electron_1.ipcRenderer.invoke("qlex:consolidate-memory-now", opts),
+    readConsolidationReport: () => electron_1.ipcRenderer.invoke("qlex:read-consolidation-report"),
 
     // Pairing & device roles
     configureLocal: () => electron_1.ipcRenderer.invoke("qlex:configure-local"),

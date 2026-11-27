@@ -13,6 +13,10 @@ const {
     materializeMirrorToDirectory,
     safeProjectFolderName,
 } = require("./project-sync");
+const {
+    DEFAULT_MEMORY_LLM_CONFIG,
+    normalizeMemoryLlmConfig,
+} = require("./memory-consolidator");
 
 const DEFAULT_APPEARANCE = Object.freeze({
     themePreset: "default",
@@ -207,6 +211,7 @@ const defaultState = () => ({
     memoryAutoCompress: true,
     memoryDailySettleTime: "21:00",
     lastDailySettleDate: "",
+    centerMemoryLlm: { ...DEFAULT_MEMORY_LLM_CONFIG, timeSlots: [...DEFAULT_MEMORY_LLM_CONFIG.timeSlots] },
     projectSyncDir: defaultProjectsDir(),
     autoSaveSyncedProjects: true,
     updateChannel: "beta",
@@ -245,6 +250,7 @@ class LocalStore {
                     ? value.memoryDailySettleTime.trim()
                     : "21:00",
                 lastDailySettleDate: typeof value.lastDailySettleDate === "string" ? value.lastDailySettleDate.trim().slice(0, 10) : "",
+                centerMemoryLlm: normalizeMemoryLlmConfig(value.centerMemoryLlm),
                 projectSyncDir: typeof value.projectSyncDir === "string" && value.projectSyncDir.trim()
                     ? value.projectSyncDir.trim()
                     : defaultProjectsDir(),
@@ -645,6 +651,20 @@ class LocalStore {
         const clean = typeof dateKey === "string" ? dateKey.trim().slice(0, 10) : "";
         if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) return this.snapshot();
         return this.update({ lastDailySettleDate: clean });
+    }
+    setCenterMemoryLlm(patch) {
+        const next = normalizeMemoryLlmConfig(patch, this.state.centerMemoryLlm);
+        return this.update({ centerMemoryLlm: next });
+    }
+    markCenterMemoryConsolidated({ slotKey = "", at = Date.now() } = {}) {
+        const current = normalizeMemoryLlmConfig(this.state.centerMemoryLlm);
+        return this.update({
+            centerMemoryLlm: {
+                ...current,
+                ...(slotKey ? { lastSlotKey: String(slotKey).slice(0, 40) } : {}),
+                lastConsolidatedAt: Number.isFinite(Number(at)) ? Number(at) : Date.now(),
+            },
+        });
     }
     setProjectSyncDir(dir) {
         if (typeof dir !== "string" || !dir.trim()) throw new Error("无效的同步项目目录。");

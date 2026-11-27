@@ -23,12 +23,16 @@
           <span id="healthLabel" class="mb-score-label">很好</span>
         </div>
         <div class="mb-header-actions">
+          <button id="mbUpdateTopBtn" class="mb-mini-btn mb-update-btn" type="button" title="检查版本更新">↑ 更新</button>
           <button id="mbSyncTopBtn" class="mb-mini-btn" type="button" title="立即双向同步">⟳ 同步</button>
           <button id="mbOpenMainBtn" class="mb-mini-btn primary" type="button" title="打开 QLEX 主窗口">工作台 ↗</button>
         </div>
       </div>
       <div id="mbMetaPills" class="mb-meta-pills"></div>
     </header>
+
+    <!-- Dynamic Version Update & Download Progress Card -->
+    <section id="mbUpdateBanner" class="mb-wide-card mb-update-card" hidden></section>
 
     <!-- 2x3 Modular Bento Grid (状态 / 同步 / 记忆 / 项目 / 穿透 / Skills) -->
     <section id="mbBentoGrid" class="mb-bento-grid"></section>

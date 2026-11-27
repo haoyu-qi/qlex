@@ -46,6 +46,7 @@ body.light-theme {
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 button, input { font: inherit; color: inherit; }
 button:focus, button:focus-visible { outline: none; }
 
@@ -193,7 +194,138 @@ body.native-reduced-transparency .mb-shell {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22);
 }
 .mb-mini-btn.primary:hover { opacity: 0.92; }
-.mb-mini-btn:disabled { opacity: 0.48; cursor: default; }
+.mb-mini-btn:disabled { opacity: 0.56; cursor: default; }
+
+/* Header Version Update Button States */
+.mb-update-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.mb-update-btn.available {
+  background: rgba(var(--accent-rgb), 0.16);
+  border-color: rgba(var(--accent-rgb), 0.48);
+  color: var(--accent);
+  font-weight: 600;
+}
+.mb-update-btn.available:hover {
+  background: rgba(var(--accent-rgb), 0.24);
+  border-color: rgba(var(--accent-rgb), 0.68);
+}
+.mb-update-btn.downloading,
+.mb-update-btn.verifying,
+.mb-update-btn.installing {
+  background: rgba(var(--blue-rgb), 0.18);
+  border-color: rgba(var(--blue-rgb), 0.48);
+  color: var(--blue);
+  font-weight: 600;
+}
+.mb-update-btn.ready {
+  background: rgba(var(--success-rgb), 0.24);
+  border-color: rgba(var(--success-rgb), 0.65);
+  color: var(--success);
+  font-weight: 600;
+  box-shadow: 0 0 12px rgba(var(--success-rgb), 0.22);
+}
+.mb-update-btn.ready:hover {
+  background: rgba(var(--success-rgb), 0.34);
+}
+.mb-update-btn.error {
+  background: rgba(244, 119, 136, 0.16);
+  border-color: rgba(244, 119, 136, 0.45);
+  color: var(--red);
+}
+.mb-upd-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 6px;
+  animation: mbDotBreath 1.8s ease-in-out infinite;
+}
+
+/* Dynamic Version Update & Download Progress Card */
+.mb-update-card {
+  gap: 6px;
+  padding: 10px 11px;
+  border-color: rgba(var(--accent-rgb), 0.32);
+  background: rgba(var(--accent-rgb), 0.065);
+}
+.mb-update-card.downloading,
+.mb-update-card.verifying,
+.mb-update-card.installing {
+  border-color: rgba(var(--blue-rgb), 0.38);
+  background: rgba(var(--blue-rgb), 0.08);
+}
+.mb-update-card.ready {
+  border-color: rgba(var(--success-rgb), 0.48);
+  background: rgba(var(--success-rgb), 0.1);
+}
+.mb-update-card.error {
+  border-color: rgba(244, 119, 136, 0.42);
+  background: rgba(244, 119, 136, 0.08);
+}
+.mb-update-card.checking,
+.mb-update-card.up-to-date {
+  border-color: var(--line);
+  background: var(--mb-card);
+}
+.mb-update-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.mb-update-meta > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mb-update-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+.mb-upd-cta {
+  flex: 1 1 auto;
+  height: 27px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: var(--pill-solid);
+  color: var(--pill-solid-ink);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 140ms ease, transform 160ms ease, background 140ms ease;
+}
+.mb-upd-cta:hover { opacity: 0.92; }
+.mb-upd-cta:active { transform: scale(0.97); }
+.mb-upd-cta:disabled { opacity: 0.55; cursor: default; }
+.mb-upd-cta.secondary {
+  flex: 0 0 auto;
+  background: rgba(var(--overlay-rgb), 0.08);
+  color: var(--text);
+  border-color: var(--line);
+  font-weight: 500;
+}
+.mb-upd-cta.secondary:hover {
+  background: rgba(var(--overlay-rgb), 0.15);
+  border-color: var(--line-strong);
+}
+.mb-prog-track.thick {
+  height: 7px;
+}
+.mb-prog-fill.live {
+  transition: width 180ms linear;
+}
 
 .mb-meta-pills {
   display: flex;
