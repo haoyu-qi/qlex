@@ -462,9 +462,24 @@ function renderQStage() {
 
     const recentFeed = [];
     const projSync = net.syncMeta?.lastProjectsSync || net.syncMeta?.lastProjectSync;
+    const memSync = net.syncMeta?.lastMemorySync;
     if (projSync?.error) recentFeed.push({ icon: "!", text: `项目同步异常：${projSync.error}`, time: fmtShortTime(projSync.time) });
     else if (boundProjects[0]) recentFeed.push({ icon: "✓", text: `同步项目：${boundProjects[0].name}${boundProjects[0].gitBranch ? ` (${boundProjects[0].gitBranch})` : ""}`, time: fmtShortTime(projSync?.time || boundProjects[0].lastSyncedAt || boundProjects[0].updatedAt) });
-    if (sk.localTime) recentFeed.push({ icon: sk.conflicts > 0 ? "!" : "✓", text: sk.conflicts > 0 ? `技能存在 ${sk.conflicts} 项冲突待对齐` : `技能一致化：${sk.uniqueSkills ?? 0} 项已对齐`, time: fmtShortTime(sk.localTime) });
+    if (sk.conflicts > 0 || sk.localTime) {
+        recentFeed.push({
+            icon: sk.conflicts > 0 ? "!" : "✓",
+            text: sk.conflicts > 0 ? `技能冲突：${sk.conflicts} 项待对齐（共 ${sk.uniqueSkills ?? 0} 项）` : `技能一致化：${sk.uniqueSkills ?? 0} 项已对齐`,
+            time: fmtShortTime(sk.localTime || st.time),
+        });
+    }
+    if (mem.consolidation?.syncedCenterRevision || mem.consolidation?.revision) {
+        const rev = net.mode === "endpoint" ? mem.consolidation.syncedCenterRevision : mem.consolidation.revision;
+        recentFeed.push({
+            icon: "✦",
+            text: net.mode === "endpoint" ? `全端共享记忆：已对齐中心 #${rev}` : `中心记忆整理：权威版 #${rev}`,
+            time: fmtShortTime(memSync?.time || mem.consolidation?.lastRunAt || mem.lastRun),
+        });
+    }
     if (mem.items?.daily?.[0]) recentFeed.push({ icon: "⟳", text: `记忆归档：${mem.items.daily[0].key}（${cog.activeItems || 0} 条）`, time: fmtShortTime(mem.lastRun) });
     if (remoteProjects.length) recentFeed.push({ icon: "↓", text: `远端待绑定项目：${remoteProjects.length} 个`, time: fmtShortTime(projSync?.time) });
     recentFeed.push({ icon: ts.online ? "✓" : "•", text: ts.online ? `穿透在线：${ts.self?.dnsName || ts.self?.ip}` : `本机节点：${cleanHost(state.deviceName)}`, time: fmtShortTime(st.time) });
@@ -503,105 +518,196 @@ function renderQStage() {
         </div>`;
     };
 
+    const connectedPeerList = (net.peers || []).filter(p => p.status === "connected");
+    const topBeaconLabel = net.mode === "center"
+        ? (connectedPeerList.length ? `接入端 · ${cleanHost(connectedPeerList[0].name || connectedPeerList[0].address)}${connectedPeerList.length > 1 ? ` +${connectedPeerList.length - 1}` : ""}` : "等待接入设备配对")
+        : net.mode === "endpoint"
+            ? `中心 · ${cleanHost(net.endpoint?.name || net.endpoint?.address || "主控中心")}`
+            : (ts.discoveredCenters?.length ? `发现 ${ts.discoveredCenters.length} 台 Tailnet 中心` : "单机星核 · 可随时组网");
+    const topBeaconOnline = net.mode === "center"
+        ? onlinePeers > 0
+        : net.mode === "endpoint"
+            ? Boolean(net.online)
+            : Boolean(ts.online);
+    const bottomBeaconText = ts.online
+        ? `Tailscale ${ts.self?.ip || "已穿透"}${cons.syncedCenterRevision || cons.revision ? ` · 共享记忆 #${net.mode === "endpoint" ? (cons.syncedCenterRevision || 0) : (cons.revision || 0)}` : ""}`
+        : (net.online ? `局域网直连 · TLS :${net.port || 47821}` : `本地中枢 · ${fmtNum(cog.activeItems || 0)} 条记忆`);
+
+    const syncStreamTone = isSyncing ? "syncing" : st.phase === "error" ? "err" : (issueCount > 0 ? "warn" : "ok");
+    const syncStreamLabel = isSyncing ? "实时同步流传输中"
+        : st.phase === "error" ? "同步通道异常"
+            : issueCount > 0 ? `${issueCount} 项待处理`
+                : (st.time ? `实时同步 · ${fmtShortTime(st.time)}` : "实时同步就绪");
+
+    const defaultHudText = `${activeNodeLabel}（${nodeOnlineBadge}） · ${fmtNum(cog.activeItems || 0)} 条记忆 · ${sk.uniqueSkills ?? 0} 项技能 · ${ts.online ? `Tailscale ${ts.self?.ip || ""}` : "局域网"}`;
+    const tipLink = net.mode === "center"
+        ? `设备互联：当前中心托管 ${onlinePeers}/${connectedPeers} 台在线接入点 · Tailscale ${ts.online ? "已穿透" : "未连接"} · 点击管理拓扑 ›`
+        : net.mode === "endpoint"
+            ? `设备互联：已接入中心 ${cleanHost(net.endpoint?.name || net.endpoint?.address || "")} · 发现 ${(ts.discoveredCenters || []).length} 台中心 · 点击管理互联 ›`
+            : `设备互联：单机模式就绪 · 发现 ${(ts.discoveredCenters || []).length} 台内网中心 · 点击升级中心或加入网络 ›`;
+    const tipMemory = `持久记忆：${fmtNum(cog.activeItems || 0)} 条活跃记忆 · ${cog.entities || 0} 实体 / ${cog.activeEdges || 0} 边 · ${covTagText} · 点击进入记忆引擎 ›`;
+    const tipWorkspace = `工程同步：${boundProjects.length} 个托管项目${remoteProjects.length ? `（${remoteProjects.length} 待绑定）` : ""} · ${sk.uniqueSkills ?? 0} 项跨工具 Skills${sk.conflicts > 0 ? ` · ${sk.conflicts} 冲突` : " 已对齐"} · 点击进入工程 ›`;
+    const tipStatus = `AI 工具：已部署 qlex-memory ${ms.installedCount}/${ms.totalCount} 工具 · ${issueCount > 0 ? `${issueCount} 项冲突/异常待处理` : "全工具通道健康"} · 点击查看诊断 ›`;
+    const tipCore = `星轨中心核 · 健康分 ${health.score}（${health.label}）· 点击球核立即触发全量双向同步（记忆 + 项目 + Skills）`;
+    const tipPeer = `拓扑通道：${topBeaconLabel} ⇄ ${cleanHost(state.deviceName)} · ${bottomBeaconText} · 点击进入互联详情 ›`;
+
     patchHtml(overviewStage, `
       <div class="hub-left-main">
         <div class="hub-title-row">
-          <h1>中枢总览</h1>
+          <div class="hub-title-left">
+            <h1>中枢总览</h1>
+            <span class="hub-title-chip"><i class="hub-chip-dot ${syncStreamTone}"></i>星轨网络</span>
+          </div>
           <p>项目同步 · 持久记忆 · 跨设备工作空间 · 多工具统一 Skills</p>
         </div>
 
-        <section class="hub-constellation">
-          <svg class="hub-links-svg" viewBox="0 0 600 266" preserveAspectRatio="none" aria-hidden="true">
-            <line x1="184" y1="96" x2="226" y2="112" stroke="rgba(183,234,212,0.38)" stroke-width="1.2" stroke-dasharray="3 3"/>
-            <line x1="184" y1="170" x2="226" y2="154" stroke="rgba(183,234,212,0.38)" stroke-width="1.2" stroke-dasharray="3 3"/>
-            <line x1="416" y1="96" x2="374" y2="112" stroke="rgba(115,189,245,0.38)" stroke-width="1.2" stroke-dasharray="3 3"/>
-            <line x1="416" y1="170" x2="374" y2="154" stroke="rgba(115,189,245,0.38)" stroke-width="1.2" stroke-dasharray="3 3"/>
-            <circle cx="226" cy="112" r="2.5" fill="var(--accent)"/>
-            <circle cx="226" cy="154" r="2.5" fill="var(--accent)"/>
-            <circle cx="374" cy="112" r="2.5" fill="var(--blue)"/>
-            <circle cx="374" cy="154" r="2.5" fill="var(--blue)"/>
-          </svg>
+        <section id="hubOrbitalStage" class="hub-orbital-stage ${isSyncing ? "is-syncing" : ""} ${orbTone ? "is-warn" : ""}" data-default-hud="${esc(defaultHudText)}">
+          <div class="hub-orbital-bg" aria-hidden="true">
+            <div class="hub-orbital-grid"></div>
+            <div class="hub-radar-sweep"></div>
+          </div>
 
-          <div class="hub-sat-col">
-            <button type="button" class="hub-sat-card" data-rail="link">
-              <span class="hub-sat-ico blue">⌘</span>
-              <div class="hub-sat-text">
-                <div class="hub-sat-title">设备互联</div>
-                <div class="hub-sat-sub"><span class="hub-sat-dot ${net.online || ts.online ? "" : "warn"}"></span>${net.mode === "center" ? `${onlinePeers}/${connectedPeers} 节点 · 在线` : ts.online ? `${(ts.discoveredCenters || []).length} 台中心 · 穿透` : "单机就绪"}</div>
-              </div>
+          <div class="hub-orb-topbar">
+            <button type="button" class="hub-mesh-pill" data-rail="link" data-orb-node="peer" data-orb-tip="${esc(tipPeer)}">
+              <span class="hub-mesh-dot ${net.online || net.mode === "local" ? "live" : "warn"}"></span>
+              <span class="hub-mesh-self">${esc(cleanHost(state.deviceName))}</span>
+              <span class="hub-mesh-arrow" aria-hidden="true">⇄</span>
+              <span class="hub-mesh-peer">${esc(net.mode === "center" ? `${onlinePeers}/${connectedPeers} 接入点` : net.mode === "endpoint" ? cleanHost(net.endpoint?.name || net.endpoint?.address || "中心") : "本机单核")}</span>
             </button>
-            <button type="button" class="hub-sat-card" data-rail="memory">
-              <span class="hub-sat-ico purple">✦</span>
-              <div class="hub-sat-text">
-                <div class="hub-sat-title">持久记忆</div>
-                <div class="hub-sat-sub"><span class="hub-sat-dot"></span>${fmtNum(cog.activeItems || 0)} 条活跃记忆</div>
-              </div>
+
+            <button type="button" class="hub-stream-pill ${syncStreamTone}" data-action="sync-now" data-orb-node="core" data-orb-tip="${esc(tipCore)}" title="点击立即执行全量双向同步">
+              <span class="hub-stream-eq" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span>${esc(syncStreamLabel)}</span>
             </button>
           </div>
 
-          <div class="hub-orb-wrap ${isSyncing ? "syncing" : ""} ${orbTone ? "warn-tone" : ""}">
-            <span class="solar-star" style="width:2.5px;height:2.5px;top:14%;left:18%;animation-delay:0s"></span>
-            <span class="solar-star" style="width:2px;height:2px;top:20%;right:14%;animation-delay:1.4s"></span>
-            <span class="solar-star" style="width:2.5px;height:2.5px;bottom:16%;left:22%;animation-delay:2.6s"></span>
-            <span class="solar-star" style="width:2px;height:2px;bottom:12%;right:20%;animation-delay:0.8s"></span>
+          <div class="hub-constellation">
+            <svg class="hub-links-svg" viewBox="0 0 600 280" preserveAspectRatio="none" aria-hidden="true">
+              <!-- Top & Bottom Topology Conduits -->
+              <g class="hub-conduit" data-conduit="peer">
+                <path class="conduit-base" d="M 300 24 L 300 84" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-flow flow-cyan" pathLength="100" d="M 300 24 L 300 84" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-base" d="M 300 256 L 300 196" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-flow flow-mint" pathLength="100" d="M 300 256 L 300 196" vector-effect="non-scaling-stroke"/>
+              </g>
+              <!-- NW: link -->
+              <g class="hub-conduit" data-conduit="link">
+                <path class="conduit-base" d="M 154 88 C 204 88, 214 118, 246 126" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-flow flow-blue" pathLength="100" d="M 154 88 C 204 88, 214 118, 246 126" vector-effect="non-scaling-stroke"/>
+              </g>
+              <!-- SW: memory -->
+              <g class="hub-conduit" data-conduit="memory">
+                <path class="conduit-base" d="M 154 192 C 204 192, 214 162, 246 154" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-flow flow-purple" pathLength="100" d="M 154 192 C 204 192, 214 162, 246 154" vector-effect="non-scaling-stroke"/>
+              </g>
+              <!-- NE: workspace -->
+              <g class="hub-conduit" data-conduit="workspace">
+                <path class="conduit-base" d="M 446 88 C 396 88, 386 118, 354 126" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-flow flow-mint" pathLength="100" d="M 446 88 C 396 88, 386 118, 354 126" vector-effect="non-scaling-stroke"/>
+              </g>
+              <!-- SE: status -->
+              <g class="hub-conduit" data-conduit="status">
+                <path class="conduit-base" d="M 446 192 C 396 192, 386 162, 354 154" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-flow ${issueCount > 0 ? "flow-warn" : "flow-cyan"}" pathLength="100" d="M 446 192 C 396 192, 386 162, 354 154" vector-effect="non-scaling-stroke"/>
+              </g>
+            </svg>
 
-            <div class="solar-orbit orbit-3" aria-hidden="true">
-              <span class="orbit-body planet-purple"></span>
-              <span class="orbit-body moon-amber"></span>
-            </div>
-            <div class="solar-orbit orbit-2" aria-hidden="true">
-              <span class="orbit-body planet-blue"></span>
-            </div>
-            <div class="solar-orbit orbit-1" aria-hidden="true">
-              <span class="orbit-body moon-mint"></span>
-            </div>
-            <div class="planet-halo-ring" aria-hidden="true"></div>
-
-            <button type="button" class="q-core-orb ${orbTone}" data-action="sync-now" title="点击立即执行双向同步">
-              <svg class="orb-grid" viewBox="0 0 140 140" aria-hidden="true">
-                <circle cx="70" cy="70" r="68" fill="none" stroke="white" stroke-width="0.7"/>
-                <ellipse cx="70" cy="70" rx="34" ry="68" fill="none" stroke="white" stroke-width="0.7"/>
-                <ellipse cx="70" cy="70" rx="68" ry="24" fill="none" stroke="white" stroke-width="0.7"/>
-                <line x1="2" y1="70" x2="138" y2="70" stroke="white" stroke-width="0.6"/>
-              </svg>
-              <span class="q-core-score">${health.score}</span>
-              <span class="q-core-tag">${health.phase === "ok" ? "✓ " : "⚠ "}${esc(health.label)}</span>
+            <!-- Top & Bottom Live Device / Transport Orbital Beacons -->
+            <button type="button" class="hub-orbit-beacon top" data-rail="link" data-orb-node="peer" data-orb-tip="${esc(tipPeer)}">
+              <span class="beacon-dot ${topBeaconOnline ? "live" : "warn"}"></span>
+              <span class="beacon-txt">${esc(topBeaconLabel)}</span>
             </button>
+            <button type="button" class="hub-orbit-beacon bottom" data-rail="memory" data-orb-node="peer" data-orb-tip="${esc(tipPeer)}">
+              <span class="beacon-dot ${ts.online || net.online ? "cyan" : ""}"></span>
+              <span class="beacon-txt">${esc(bottomBeaconText)}</span>
+            </button>
+
+            <div class="hub-sat-col left">
+              <button type="button" class="hub-sat-card tone-blue" data-rail="link" data-orb-node="link" data-orb-tip="${esc(tipLink)}">
+                <span class="hub-sat-ico blue">⌘</span>
+                <div class="hub-sat-text">
+                  <div class="hub-sat-title">设备互联</div>
+                  <div class="hub-sat-sub"><span class="hub-sat-dot ${net.online || ts.online ? "" : "warn"}"></span>${net.mode === "center" ? `${onlinePeers}/${connectedPeers} 在线` : ts.online ? `${(ts.discoveredCenters || []).length} 中心·穿透` : "单机就绪"}</div>
+                </div>
+                <i class="sat-pin" aria-hidden="true"></i>
+              </button>
+              <button type="button" class="hub-sat-card tone-purple" data-rail="memory" data-orb-node="memory" data-orb-tip="${esc(tipMemory)}">
+                <span class="hub-sat-ico purple">✦</span>
+                <div class="hub-sat-text">
+                  <div class="hub-sat-title">持久记忆</div>
+                  <div class="hub-sat-sub"><span class="hub-sat-dot purple"></span>${fmtNum(cog.activeItems || 0)} 条活跃</div>
+                </div>
+                <i class="sat-pin" aria-hidden="true"></i>
+              </button>
+            </div>
+
+            <div class="hub-orb-wrap ${isSyncing ? "syncing" : ""} ${orbTone ? "warn-tone" : ""}">
+              <span class="solar-star" style="width:2.5px;height:2.5px;top:10%;left:14%;animation-delay:0s"></span>
+              <span class="solar-star" style="width:2px;height:2px;top:16%;right:12%;animation-delay:1.4s"></span>
+              <span class="solar-star" style="width:2.5px;height:2.5px;bottom:14%;left:18%;animation-delay:2.6s"></span>
+              <span class="solar-star" style="width:2px;height:2px;bottom:10%;right:16%;animation-delay:0.8s"></span>
+
+              <div class="orb-sonar-ring" aria-hidden="true"></div>
+              <div class="solar-orbit orbit-4" aria-hidden="true"></div>
+              <div class="solar-orbit orbit-3" aria-hidden="true">
+                <span class="orbit-body planet-purple"></span>
+                <span class="orbit-body moon-amber"></span>
+              </div>
+              <div class="solar-orbit orbit-2" aria-hidden="true">
+                <span class="orbit-body planet-blue"></span>
+              </div>
+              <div class="solar-orbit orbit-1" aria-hidden="true">
+                <span class="orbit-body moon-mint"></span>
+              </div>
+              <div class="planet-halo-ring" aria-hidden="true"></div>
+
+              <button type="button" class="q-core-orb ${orbTone}" data-action="sync-now" data-orb-node="core" data-orb-tip="${esc(tipCore)}" title="点击立即执行双向同步">
+                <svg class="orb-grid" viewBox="0 0 140 140" aria-hidden="true">
+                  <circle cx="70" cy="70" r="68" fill="none" stroke="white" stroke-width="0.7"/>
+                  <ellipse cx="70" cy="70" rx="34" ry="68" fill="none" stroke="white" stroke-width="0.7"/>
+                  <ellipse cx="70" cy="70" rx="68" ry="24" fill="none" stroke="white" stroke-width="0.7"/>
+                  <line x1="2" y1="70" x2="138" y2="70" stroke="white" stroke-width="0.6"/>
+                </svg>
+                <span class="q-core-score">${health.score}</span>
+                <span class="q-core-tag">${health.phase === "ok" ? "✓ " : "⚠ "}${esc(health.label)}</span>
+                <span class="q-core-cta">⟳ 触发同步</span>
+              </button>
+            </div>
+
+            <div class="hub-sat-col right">
+              <button type="button" class="hub-sat-card tone-mint" data-rail="workspace" data-orb-node="workspace" data-orb-tip="${esc(tipWorkspace)}">
+                <i class="sat-pin" aria-hidden="true"></i>
+                <span class="hub-sat-ico">❖</span>
+                <div class="hub-sat-text">
+                  <div class="hub-sat-title">工程同步</div>
+                  <div class="hub-sat-sub"><span class="hub-sat-dot ${issueCount > 0 ? "warn" : ""}"></span>${boundProjects.length} 项·${sk.uniqueSkills ?? 0} 技</div>
+                </div>
+              </button>
+              <button type="button" class="hub-sat-card ${issueCount > 0 ? "tone-warn" : "tone-cyan"}" data-rail="status" data-orb-node="status" data-orb-tip="${esc(tipStatus)}">
+                <i class="sat-pin" aria-hidden="true"></i>
+                <span class="hub-sat-ico ${issueCount > 0 ? "warn" : "blue"}">◎</span>
+                <div class="hub-sat-text">
+                  <div class="hub-sat-title">AI 工具</div>
+                  <div class="hub-sat-sub"><span class="hub-sat-dot ${issueCount > 0 ? "warn" : ""}"></span>${ms.installedCount}/${ms.totalCount} · ${issueCount > 0 ? `${issueCount} 待处理` : "已对齐"}</div>
+                </div>
+              </button>
+            </div>
           </div>
 
-          <div class="hub-sat-col">
-            <button type="button" class="hub-sat-card" data-rail="workspace">
-              <span class="hub-sat-ico">❖</span>
-              <div class="hub-sat-text">
-                <div class="hub-sat-title">工程同步</div>
-                <div class="hub-sat-sub"><span class="hub-sat-dot ${issueCount > 0 ? "warn" : ""}"></span>${boundProjects.length} 项目 · ${sk.uniqueSkills ?? 0} Skills</div>
-              </div>
-            </button>
-            <button type="button" class="hub-sat-card" data-rail="status">
-              <span class="hub-sat-ico ${issueCount > 0 ? "warn" : "blue"}">◎</span>
-              <div class="hub-sat-text">
-                <div class="hub-sat-title">AI 工具</div>
-                <div class="hub-sat-sub"><span class="hub-sat-dot ${issueCount > 0 ? "warn" : ""}"></span>${ms.installedCount}/${ms.totalCount} 工具 · ${issueCount > 0 ? `${issueCount} 项待处理` : "已对齐"}</div>
-              </div>
-            </button>
+          <div class="hub-hud-bar">
+            <div class="hub-hud-left">
+              <span class="hub-hud-led ${syncStreamTone}"></span>
+              <span id="hubHudLiveText" class="hub-hud-text">${esc(defaultHudText)}</span>
+            </div>
+            <div class="hub-hud-actions">
+              ${issueCount > 0
+                  ? `<button type="button" class="q-inline-link" style="color:var(--orange)" data-rail="workspace">处理 ${issueCount} 项冲突 ›</button>`
+                  : net.mode === "center" && net.online
+                      ? `<button type="button" class="q-inline-link" data-action="copy-invite">复制邀请码</button><span>·</span><button type="button" class="q-inline-link" data-action="invite">刷新链接</button>`
+                      : `<button type="button" class="q-inline-link" data-action="tailscale-scan">扫描节点 ›</button>`}
+            </div>
           </div>
         </section>
-
-        <div class="hub-node-banner">
-          <div class="hub-node-line">
-            <span>${esc(activeNodeLabel)}</span>
-            <span class="tag ${net.online || net.mode === "local" ? "ok" : "warn"}">${nodeOnlineBadge}</span>
-          </div>
-          <div class="hub-node-sub">
-            <span>${fmtNum(cog.activeItems || 0)} 条记忆 · ${sk.uniqueSkills ?? 0} 项技能 · ${ts.online ? `Tailscale ${esc(ts.self?.ip || "")}` : "局域网"}</span>
-            <span>·</span>
-            ${issueCount > 0
-                ? `<button type="button" class="q-inline-link" style="color:var(--orange)" data-rail="workspace">处理 ${issueCount} 项冲突/异常 ›</button>`
-                : net.mode === "center" && net.online
-                    ? `<button type="button" class="q-inline-link" data-action="copy-invite">复制邀请码</button><span>·</span><button type="button" class="q-inline-link" data-action="invite">刷新链接</button>`
-                    : `<button type="button" class="q-inline-link" data-action="tailscale-scan">扫描内网节点 ›</button>`}
-          </div>
-        </div>
 
         <section class="hub-mini-grid">
           <div class="hub-mini-card" data-rail="link">
@@ -667,7 +773,7 @@ function renderQStage() {
             <button type="button" class="q-inline-link" data-rail="status">查看全部 ›</button>
           </div>
           <div class="hub-feed-list">
-            ${recentFeed.slice(0, 4).map(f => `
+            ${recentFeed.slice(0, 5).map(f => `
               <div class="hub-feed-row">
                 <span class="hub-feed-text">${esc(f.icon)} ${esc(f.text)}</span>
                 <span class="hub-feed-time">${esc(f.time)}</span>
@@ -2619,6 +2725,51 @@ function openFromExternal(destination) {
 
 window.qlex.onNavigate?.(openFromExternal);
 window.addEventListener("resize", () => { if (activeSection === "insights" && insightsTab === "usage") paintTrendCanvas(); });
+
+/* Interactive Orbital Hub Hover / Focus Conduit Illumination + Sync Burst */
+(() => {
+    const applyFocus = (nodeEl) => {
+        const stage = document.querySelector("#hubOrbitalStage");
+        if (!stage) return;
+        const hudText = stage.querySelector("#hubHudLiveText");
+        const key = nodeEl?.dataset?.orbNode || "";
+        if (key) {
+            stage.dataset.focus = key;
+            if (hudText && nodeEl.dataset.orbTip) hudText.textContent = nodeEl.dataset.orbTip;
+        } else {
+            delete stage.dataset.focus;
+            if (hudText && stage.dataset.defaultHud) hudText.textContent = stage.dataset.defaultHud;
+        }
+    };
+    overviewStage.addEventListener("mouseover", (e) => {
+        const node = e.target instanceof Element ? e.target.closest("[data-orb-node]") : null;
+        if (node) applyFocus(node);
+    });
+    overviewStage.addEventListener("mouseout", (e) => {
+        const from = e.target instanceof Element ? e.target.closest("[data-orb-node]") : null;
+        if (!from) return;
+        const to = e.relatedTarget instanceof Element ? e.relatedTarget.closest("[data-orb-node]") : null;
+        if (from !== to) applyFocus(to);
+    });
+    overviewStage.addEventListener("focusin", (e) => {
+        const node = e.target instanceof Element ? e.target.closest("[data-orb-node]") : null;
+        if (node) applyFocus(node);
+    });
+    overviewStage.addEventListener("focusout", (e) => {
+        const to = e.relatedTarget instanceof Element ? e.relatedTarget.closest("[data-orb-node]") : null;
+        applyFocus(to);
+    });
+    overviewStage.addEventListener("click", (e) => {
+        const core = e.target instanceof Element ? e.target.closest(".q-core-orb, .hub-stream-pill") : null;
+        const stage = document.querySelector("#hubOrbitalStage");
+        if (core && stage) {
+            stage.classList.remove("sync-burst");
+            void stage.offsetWidth;
+            stage.classList.add("sync-burst");
+            setTimeout(() => stage.classList.remove("sync-burst"), 950);
+        }
+    });
+})();
 
 setInterval(async () => {
     if (!state?.configured || state.pairing.mode === "local" || (activeSection !== "link" && activeSection !== "status") || busy || refreshing || document.hidden) return;

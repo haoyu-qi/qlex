@@ -1,6 +1,6 @@
 {
   "name": "qlex",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "private": true,
   "description": "QLEX desktop workspace — Center/Endpoint Hub for cross-device Memory Sync, Project Sync, Tailscale NAT traversal, and universal qlex-memory Agent Skill",
   "author": "QLEX",
