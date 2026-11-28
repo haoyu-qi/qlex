@@ -986,17 +986,17 @@ function registerHandlers() {
             if (snap.skillSyncEnabled && pairing.view().mode === "endpoint") {
                 await skills.refresh(pairing, snap.localSkillNamespaces);
             }
-            return broadcastState();
+            return broadcastState(undefined, { force: true });
         },
-        "qlex:resolve-skill-conflict": (input) => {
+        "qlex:resolve-skill-conflict": async (input) => {
             const snap = store.snapshot();
-            const result = skills.resolveConflict(input?.name, input?.sourceNs, snap.localSkillNamespaces);
-            return { result, state: broadcastState() };
+            const result = await skills.resolveConflictWithPairing(pairing, input?.name, input?.sourceNs, snap.localSkillNamespaces);
+            return { result, state: broadcastState(undefined, { force: true }) };
         },
-        "qlex:resolve-all-skill-conflicts": (strategy) => {
+        "qlex:resolve-all-skill-conflicts": async (strategy) => {
             const snap = store.snapshot();
-            const result = skills.resolveAllConflicts(strategy || "latest", snap.localSkillNamespaces);
-            return { result, state: broadcastState() };
+            const result = await skills.resolveAllConflictsWithPairing(pairing, strategy || "latest", snap.localSkillNamespaces);
+            return { result, state: broadcastState(undefined, { force: true }) };
         },
         "qlex:repair-skill-anomalies": () => {
             const snap = store.snapshot();
@@ -1544,9 +1544,11 @@ else {
                     if (changingRole) return;
                     void pairing.refresh().then(async () => {
                         if (pairing.view().mode === "endpoint" && pairing.view().endpoint?.status === "connected") {
+                            const snap = store.snapshot();
                             await Promise.all([
                                 pairing.syncMemory({ reason: "wake-resume" }).catch(console.warn),
                                 pairing.syncProjects().catch(console.warn),
+                                snap.skillSyncEnabled ? skills.refresh(pairing, snap.localSkillNamespaces).catch(console.warn) : Promise.resolve(),
                             ]);
                         }
                         broadcastState();

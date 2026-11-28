@@ -398,6 +398,81 @@ try {
     assert.equal(fs.existsSync(path.join(codexSkills, "rich-large-skill/assets/sample.png")), true, "Large skill assets must sync across tools cleanly");
     assert.equal(fs.existsSync(path.join(codexSkills, "rich-large-skill/node_modules")), false, "node_modules inside skill must be skipped cleanly");
 
+    // ---- 5c. Bidirectional Center <-> Endpoint Skill Alignment & Cross-Device Conflict Resolution ----
+    const centerSkillHome = path.join(tmpHome, "center-skill-home");
+    const epSkillHome = path.join(tmpHome, "ep-skill-home");
+    fs.mkdirSync(path.join(centerSkillHome, ".codex/skills/center-only"), { recursive: true });
+    fs.mkdirSync(path.join(centerSkillHome, ".claude/skills"), { recursive: true });
+    fs.mkdirSync(path.join(centerSkillHome, ".codex/skills/shared-diverge"), { recursive: true });
+    fs.writeFileSync(path.join(centerSkillHome, ".codex/skills/center-only/SKILL.md"), "# From Center\n");
+    fs.writeFileSync(path.join(centerSkillHome, ".codex/skills/shared-diverge/SKILL.md"), "# Diverged Center Version\n");
+
+    fs.mkdirSync(path.join(epSkillHome, ".codex/skills/ep-only"), { recursive: true });
+    fs.mkdirSync(path.join(epSkillHome, ".claude/skills"), { recursive: true });
+    fs.mkdirSync(path.join(epSkillHome, ".codex/skills/shared-diverge"), { recursive: true });
+    fs.writeFileSync(path.join(epSkillHome, ".codex/skills/ep-only/SKILL.md"), "# From Endpoint\n");
+    fs.writeFileSync(path.join(epSkillHome, ".codex/skills/shared-diverge/SKILL.md"), "# Diverged Endpoint Version\n");
+
+    const centerSkStore = new LocalStore(path.join(tmpHome, "center-sk-state.json"));
+    const epSkStore = new LocalStore(path.join(tmpHome, "ep-sk-state.json"));
+    const centerSkEngine = createSkillSync(path.join(tmpHome, "center-sk-data"), centerSkillHome, {
+        getPolicy: () => centerSkStore.snapshot().skillSyncPolicy,
+    });
+    const epSkEngine = createSkillSync(path.join(tmpHome, "ep-sk-data"), epSkillHome, {
+        getPolicy: () => epSkStore.snapshot().skillSyncPolicy,
+    });
+
+    // In-process mock pairing transport speaking exact /qlex/v1/skills bidirectional protocol
+    const mockPairing = {
+        store: epSkStore,
+        view: () => ({ mode: "endpoint", online: true, endpoint: { name: "MacMini-Center", address: "127.0.0.1", status: "connected" } }),
+        async requestSkills(selection) {
+            const centerNs = ["codex", "claude"];
+            if (selection === undefined) {
+                return {
+                    centerName: "MacMini-Center",
+                    skillsDigest: centerSkEngine.getCatalogDigest(centerNs),
+                    canonical: centerSkEngine.canonicalCatalog(centerNs),
+                    items: centerSkEngine.catalog(),
+                };
+            }
+            if (selection.action === "push") {
+                return centerSkEngine.receiveRemoteSkill({
+                    name: selection.name,
+                    namespace: selection.namespace,
+                    hash: selection.hash,
+                    pkg: selection.package,
+                    force: Boolean(selection.force),
+                    peerName: "MacBook-EP",
+                    enabledNamespaces: centerNs,
+                });
+            }
+            return { package: centerSkEngine.read(selection.namespace, selection.name, { includeData: true }) };
+        },
+    };
+
+    const syncRes1 = await epSkEngine.refresh(mockPairing, ["codex", "claude"]);
+    assert.equal(fs.existsSync(path.join(epSkillHome, ".codex/skills/center-only/SKILL.md")), true, "Center-only skill must pull to Endpoint codex");
+    assert.equal(fs.existsSync(path.join(epSkillHome, ".claude/skills/center-only/SKILL.md")), true, "Center-only skill must fan out to Endpoint claude");
+    assert.equal(fs.existsSync(path.join(centerSkillHome, ".codex/skills/ep-only/SKILL.md")), true, "Endpoint-only skill must push to Center codex");
+    assert.equal(fs.existsSync(path.join(centerSkillHome, ".claude/skills/ep-only/SKILL.md")), true, "Endpoint-only skill must fan out to Center claude");
+    assert.equal(syncRes1.remoteConflicts, 1, "Initial diverged skill must surface as 1 structured cross-device conflict");
+    assert.equal(syncRes1.conflictDetails.some(c => c.name === "shared-diverge" && c.scope === "cross-device"), true, "Cross-device conflict must appear in conflictDetails UI list");
+
+    // Resolve cross-device conflict choosing Center authoritative version
+    await epSkEngine.resolveConflictWithPairing(mockPairing, "shared-diverge", "center", ["codex", "claude"]);
+    assert.equal(fs.readFileSync(path.join(epSkillHome, ".codex/skills/shared-diverge/SKILL.md"), "utf8"), "# Diverged Center Version\n", "Resolving with center must update Endpoint codex");
+    assert.equal(fs.readFileSync(path.join(epSkillHome, ".claude/skills/shared-diverge/SKILL.md"), "utf8"), "# Diverged Center Version\n", "Resolving with center must fan out to Endpoint claude");
+    assert.equal(epSkEngine.snapshot().conflicts, 0, "Zero conflicts must remain after cross-device resolution");
+
+    // 3-way fast-forward test: edit converged skill on Endpoint only -> pushes automatically to Center on next refresh
+    fs.writeFileSync(path.join(epSkillHome, ".codex/skills/ep-only/SKILL.md"), "# From Endpoint v2\n");
+    fs.writeFileSync(path.join(epSkillHome, ".claude/skills/ep-only/SKILL.md"), "# From Endpoint v2\n");
+    await epSkEngine.refresh(mockPairing, ["codex", "claude"]);
+    assert.equal(fs.readFileSync(path.join(centerSkillHome, ".codex/skills/ep-only/SKILL.md"), "utf8"), "# From Endpoint v2\n", "Single-side Endpoint edit after convergence must fast-forward push to Center");
+    assert.equal(fs.readFileSync(path.join(centerSkillHome, ".claude/skills/ep-only/SKILL.md"), "utf8"), "# From Endpoint v2\n", "Fast-forward push must fan out across Center namespaces");
+    assert.equal(epSkEngine.snapshot().conflicts, 0, "Fast-forward push must leave zero conflicts");
+
     // ---- 6. Full Workspace File Sync (Source + Docs + Task Files + Center Mirror Materialization) ----
     const wsSrc = path.join(tmpHome, "ws-src");
     const wsEmptyDst = path.join(tmpHome, "ws-empty-dst");

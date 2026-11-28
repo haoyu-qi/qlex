@@ -209,6 +209,7 @@ function callCenter(endpoint, route, id, payload) {
                     memoryRevision: Number.isFinite(Number(data.memoryRevision)) ? Number(data.memoryRevision) : 0,
                     memoryUpdatedAt: Number.isFinite(Number(data.memoryUpdatedAt)) ? Number(data.memoryUpdatedAt) : 0,
                     memoryActiveCount: Number.isFinite(Number(data.memoryActiveCount)) ? Number(data.memoryActiveCount) : 0,
+                    skillsDigest: typeof data.skillsDigest === "string" ? data.skillsDigest : "",
                 });
             }).catch(() => reject(new Error("中心返回的配对状态无效。")));
         });
@@ -442,30 +443,44 @@ class DevicePairing {
         //  2) Reconnected after offline / sleep / Center restart
         //  3) Center published a newer consolidation revision or timestamp
         //  4) Initial pull when Center already has memories and this Endpoint hasn't synced yet
-        if (next.status === "connected" && this.endpointOnline && this.memoryArchive) {
+        if (next.status === "connected" && this.endpointOnline) {
             const becameConnected = prevStatus !== "connected";
             const reconnected = !wasOnline;
-            const localCons = this.memoryArchive.getConsolidationStatus?.() || {};
-            const localSyncedRev = Number(localCons.syncedCenterRevision || 0);
-            const localSyncedAt = Number(localCons.syncedCenterAt || 0);
-            const localActive = Number(this.memoryArchive.snapshot?.()?.cognitive?.activeItems || 0);
+            if (this.memoryArchive) {
+                const localCons = this.memoryArchive.getConsolidationStatus?.() || {};
+                const localSyncedRev = Number(localCons.syncedCenterRevision || 0);
+                const localSyncedAt = Number(localCons.syncedCenterAt || 0);
+                const localActive = Number(this.memoryArchive.snapshot?.()?.cognitive?.activeItems || 0);
 
-            const hasNewRevision = next.memoryRevision > 0 && next.memoryRevision > localSyncedRev;
-            const hasNewConsolidationTime = next.memoryUpdatedAt > 0 && next.memoryUpdatedAt > localSyncedAt;
-            const needsInitialPull = !this.lastMemorySync && next.memoryActiveCount > 0 && localActive === 0;
+                const hasNewRevision = next.memoryRevision > 0 && next.memoryRevision > localSyncedRev;
+                const hasNewConsolidationTime = next.memoryUpdatedAt > 0 && next.memoryUpdatedAt > localSyncedAt;
+                const needsInitialPull = !this.lastMemorySync && next.memoryActiveCount > 0 && localActive === 0;
 
-            let triggerReason = "";
-            if (becameConnected) triggerReason = "approved";
-            else if (hasNewRevision) triggerReason = `center-rev-${next.memoryRevision}`;
-            else if (hasNewConsolidationTime) triggerReason = "center-updated";
-            else if (reconnected) triggerReason = "reconnected";
-            else if (needsInitialPull) triggerReason = "initial-pull";
+                let triggerReason = "";
+                if (becameConnected) triggerReason = "approved";
+                else if (hasNewRevision) triggerReason = `center-rev-${next.memoryRevision}`;
+                else if (hasNewConsolidationTime) triggerReason = "center-updated";
+                else if (reconnected) triggerReason = "reconnected";
+                else if (needsInitialPull) triggerReason = "initial-pull";
 
-            if (triggerReason) {
-                void this.syncMemory({ reason: triggerReason }).catch(err => console.warn("QLEX auto memory sync warning:", err?.message || err));
+                if (triggerReason) {
+                    void this.syncMemory({ reason: triggerReason }).catch(err => console.warn("QLEX auto memory sync warning:", err?.message || err));
+                }
             }
             if (becameConnected || reconnected) {
                 void this.syncProjects().catch(err => console.warn("QLEX auto project sync warning:", err?.message || err));
+            }
+            // Auto-sync Skills whenever Center's canonical skill catalog digest changes (or on approval/reconnect)
+            const localSnap = this.store.snapshot();
+            if (localSnap.skillSyncEnabled && this.skillSync) {
+                const centerDigest = typeof next.skillsDigest === "string" ? next.skillsDigest : "";
+                const digestChanged = Boolean(centerDigest) && centerDigest !== this.lastCenterSkillsDigest;
+                if (becameConnected || reconnected || digestChanged) {
+                    this.lastCenterSkillsDigest = centerDigest || this.lastCenterSkillsDigest;
+                    void this.skillSync.refresh(this, localSnap.localSkillNamespaces)
+                        .then(() => this.onChange?.("skills"))
+                        .catch(err => console.warn("QLEX auto skills sync warning:", err?.message || err));
+                }
             }
         }
     }
@@ -473,7 +488,13 @@ class DevicePairing {
         const { mode, endpoint } = this.config;
         const local = this.store.snapshot();
         if (!local.skillSyncEnabled || mode !== "endpoint" || endpoint?.status !== "connected") return;
-        return callCenter(endpoint, "skills", local.deviceId, selection);
+        let payload = selection;
+        if (selection && selection.action === "push" && selection.package && (selection.package.bytes || 0) > 512 * 1024) {
+            const gz = node_zlib_1.gzipSync(Buffer.from(JSON.stringify(selection.package), "utf8"), { level: 6 }).toString("base64");
+            const { package: _raw, ...rest } = selection;
+            payload = { ...rest, packageGzip: gz };
+        }
+        return callCenter(endpoint, "skills", local.deviceId, payload);
     }
     async syncMemory(opts = {}) {
         if (this.memorySyncing) return this.memorySyncing;
@@ -702,7 +723,7 @@ class DevicePairing {
                 reply(res, 404, {});
                 return;
             }
-            const maxBody = projectFiles ? 48 * 1024 * 1024 : memory ? 4 * 1024 * 1024 : projects ? 6 * 1024 * 1024 : 4096;
+            const maxBody = (projectFiles || skills) ? 64 * 1024 * 1024 : memory ? 4 * 1024 * 1024 : projects ? 6 * 1024 * 1024 : 4096;
             const { id, credential, token, name, skill, bundle, projects: incomingProjects, deleted: incomingDeleted, fileTransfer } = await readBody(req, maxBody);
             if (typeof id !== "string" || !idPattern.test(id) || typeof credential !== "string" || !secretPattern.test(credential)) {
                 reply(res, 400, {});
@@ -826,8 +847,33 @@ class DevicePairing {
                     reply(res, 403, {});
                     return;
                 }
+                this.peerSeenAt.set(id, Date.now());
+                const enabledNs = this.store.snapshot().localSkillNamespaces;
                 if (skill === undefined) {
-                    reply(res, 200, { items: this.skillSync.catalog() });
+                    reply(res, 200, {
+                        centerName: deviceName(),
+                        skillsDigest: this.skillSync.getCatalogDigest(enabledNs),
+                        canonical: this.skillSync.canonicalCatalog(enabledNs),
+                        items: this.skillSync.catalog(),
+                    });
+                } else if (skill && skill.action === "push") {
+                    let incomingPkg = skill.package || null;
+                    if (!incomingPkg && typeof skill.packageGzip === "string") {
+                        incomingPkg = JSON.parse(node_zlib_1.gunzipSync(Buffer.from(skill.packageGzip, "base64")).toString("utf8"));
+                    }
+                    const pushRes = this.skillSync.receiveRemoteSkill({
+                        name: skill.name,
+                        namespace: skill.namespace,
+                        hash: skill.hash,
+                        pkg: incomingPkg,
+                        force: Boolean(skill.force),
+                        peerName: existing.name,
+                        enabledNamespaces: enabledNs,
+                    });
+                    if (pushRes?.outcome === "installed") {
+                        this.onChange?.("skills");
+                    }
+                    reply(res, 200, pushRes);
                 } else {
                     const pkg = this.skillSync.read(skill?.namespace, skill?.name, { includeData: true });
                     if (!pkg) {
@@ -853,12 +899,16 @@ class DevicePairing {
                 }
                 const cons = this.memoryArchive?.getConsolidationStatus?.() || {};
                 const memSnap = this.memoryArchive?.snapshot?.() || {};
+                const skillsDigest = this.store.snapshot().skillSyncEnabled && this.skillSync?.getCatalogDigest
+                    ? this.skillSync.getCatalogDigest(this.store.snapshot().localSkillNamespaces)
+                    : "";
                 reply(res, 200, {
                     name: deviceName(),
                     status: existing.status,
                     memoryRevision: Number(cons.revision || 0),
                     memoryUpdatedAt: Number(cons.lastConsolidatedAt || 0),
                     memoryActiveCount: Number(memSnap.cognitive?.activeItems || 0),
+                    skillsDigest,
                 });
                 return;
             }

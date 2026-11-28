@@ -1629,9 +1629,16 @@ function renderXStage() {
                 <span>${policy.excludeHermesWebui ? "✓" : "○"} 跳过 WebUI 托管 (${oc.webuiManifestCount || oc.hermesWebui || 0})</span>
               </button>
             </div>
-            <div class="muted-note">参与同步 <strong>${oc.syncable ?? sk.uniqueSkills ?? 0}</strong> 项 · 已过滤 <strong>${oc.excluded || 0}</strong> 项${oc.manualExcluded ? `（含手动排除 ${oc.manualExcluded}）` : ""}${sk.localTime ? ` · 最近对齐 ${fmtShortTime(sk.localTime)}` : ""}</div>
+            <div class="muted-note">
+              参与同步 <strong>${oc.syncable ?? sk.uniqueSkills ?? 0}</strong> 项 · 已过滤 <strong>${oc.excluded || 0}</strong> 项${oc.manualExcluded ? `（含手动排除 ${oc.manualExcluded}）` : ""}${sk.localTime ? ` · 最近对齐 ${fmtShortTime(sk.localTime)}` : ""}
+              ${net.mode === "endpoint"
+                  ? `<br/>跨端双向对齐（中心 ${esc(sk.remotePeer || net.endpoint?.name || "中心端")}）：拉取 +${sk.remotePulled || 0} / 推送 +${sk.remotePushed || 0}${sk.remoteConflicts ? ` · 跨端差异 ${sk.remoteConflicts} 项` : " · 已对齐"}`
+                  : net.mode === "center"
+                      ? `<br/>中心托管模式：已向在线接入点双向开放 ${oc.syncable ?? sk.uniqueSkills ?? 0} 项规范化 Skills（自动接收接入点新技能并广播）`
+                      : ""}
+            </div>
             <div class="btn-row">
-              <button type="button" class="glass-btn sm primary" data-action="sync-local-skills">⟳ 同步本机 Skills</button>
+              <button type="button" class="glass-btn sm primary" data-action="sync-local-skills">${net.mode === "endpoint" ? "⟳ 双向对齐本机与中心" : "⟳ 对齐本机 Skills"}</button>
               <button type="button" class="glass-btn sm" data-action="open-skill-dir" data-ns="agents">打开目录 ↗</button>
               <button type="button" class="glass-btn sm" data-action="install-memory-skill">部署 qlex-memory</button>
             </div>
@@ -1678,12 +1685,17 @@ function renderXStage() {
             <div class="conflict-box">
               <div class="card-head">
                 <span class="card-title" style="color:var(--orange)">技能冲突仲裁 (${conflictDetails.length})</span>
-                <div class="btn-row" style="flex-wrap:nowrap">
-                  <button type="button" class="glass-btn sm" data-resolve-strategy="codex" title="所有冲突全部以 Codex 版本为准覆盖并备份旧版">Codex 基准</button>
-                  <button type="button" class="glass-btn sm primary" data-action="resolve-all-conflicts">⚡ 全部对齐</button>
+                <div class="btn-row" style="flex-wrap:wrap;justify-content:flex-end">
+                  ${net.mode === "endpoint" ? `
+                    <button type="button" class="glass-btn sm" data-resolve-strategy="center" title="所有跨端冲突以中心端为准拉取覆盖本机并备份旧版">↓ 以中心为准</button>
+                    <button type="button" class="glass-btn sm" data-resolve-strategy="local" title="所有跨端冲突以本机为准推送覆盖中心端并备份旧版">↑ 推送本机至中心</button>
+                  ` : `
+                    <button type="button" class="glass-btn sm" data-resolve-strategy="codex" title="所有冲突全部以 Codex 版本为准覆盖并备份旧版">Codex 基准</button>
+                  `}
+                  <button type="button" class="glass-btn sm primary" data-action="resolve-all-conflicts">⚡ 按最新双向对齐</button>
                 </div>
               </div>
-              <div class="muted-note">处理策略：选择基准目录覆盖其余目录，旧版本自动归档至 <code>~/.qlex-skill-backups</code>；若某技能不适合跨工具同步，可直接点右侧「排除同步」。</div>
+              <div class="muted-note">处理策略：支持本机多工具及<strong>中心 ↔ 接入点</strong>双向裁决，覆盖前旧版自动备份至 <code>~/.qlex-skill-backups</code>；不需要跨端同步的技能可点「排除同步」。</div>
               <div class="item-list" style="max-height:280px;overflow-y:auto">
                 ${conflictDetails.map(cf => `
                   <div class="conflict-item">
@@ -2317,7 +2329,16 @@ document.addEventListener("click", (event) => {
         } else if (act === "sync-now") {
             void runAction(actionBtn, () => window.qlex.syncNow(), { success: "双向同步与归档完成" });
         } else if (act === "sync-local-skills") {
-            void runAction(actionBtn, () => window.qlex.syncLocalSkills(), { success: "本机 Skills 已对齐" });
+            void runAction(actionBtn, async () => {
+                const next = await window.qlex.syncLocalSkills();
+                const sk = next?.skills || {};
+                if (next?.pairing?.mode === "endpoint") {
+                    notify(`本机与中心 Skills 双向对齐完成（拉取 +${sk.remotePulled || 0} / 推送 +${sk.remotePushed || 0}${sk.conflicts ? ` · 待仲裁冲突 ${sk.conflicts}` : ""}）`);
+                } else {
+                    notify("本机 9 工具 Skills 已完成对齐");
+                }
+                return next;
+            });
         } else if (act === "resolve-all-conflicts") {
             void runAction(actionBtn, async () => {
                 const res = await window.qlex.resolveAllSkillConflicts("latest");
@@ -2506,9 +2527,10 @@ document.addEventListener("click", (event) => {
     const strategyBtn = target.closest("[data-resolve-strategy]");
     if (strategyBtn && state) {
         const strat = strategyBtn.dataset.resolveStrategy;
+        const stratLabel = strat === "center" ? "中心端" : strat === "local" ? "本机推送至中心" : strat;
         void runAction(strategyBtn, async () => {
             const res = await window.qlex.resolveAllSkillConflicts(strat);
-            notify(`已按 ${strat} 基准解决 ${res.result?.resolvedCount || 0} 项冲突（旧版已备份）`);
+            notify(`已按「${stratLabel}」策略完成对齐（旧版已备份）`);
             return res.state;
         });
         return;
@@ -2517,9 +2539,12 @@ document.addEventListener("click", (event) => {
     const resolveBtn = target.closest("[data-resolve-skill]");
     if (resolveBtn && state) {
         const [name, sourceNs] = resolveBtn.dataset.resolveSkill.split(":");
+        const sourceLabel = sourceNs === "center" ? "中心端" : sourceNs;
         void runAction(resolveBtn, async () => {
             const res = await window.qlex.resolveSkillConflict(name, sourceNs);
-            notify(`已以 ${sourceNs} 为准对齐「${name}」（更新 ${res.result?.updated || 0} 目录）`);
+            notify(sourceNs === "center"
+                ? `已从中心端拉取并对齐「${name}」（更新 ${res.result?.updated || 0} 目录）`
+                : `已以 ${sourceLabel} 为准对齐「${name}」并同步至中心`);
             return res.state;
         });
         return;

@@ -389,6 +389,11 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
     let state = {
         phase: "idle",
         count: 0,
+        remotePulled: 0,
+        remotePushed: 0,
+        remotePeer: "",
+        remoteConflicts: 0,
+        remoteConflictDetails: [],
         localSynced: 0,
         conflicts: 0,
         conflictDetails: [],
@@ -457,10 +462,139 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
                 if (namespace === "hermes" && markers.categoryDirs.has(entry.name)) continue;
                 if (classifySkill(entry.name, markers, policy).excluded) continue;
                 const skill = read(namespace, entry.name, { includeData: false });
-                if (skill) items.push({ namespace, name: entry.name, hash: skill.hash, bytes: skill.bytes });
+                if (skill) {
+                    items.push({
+                        namespace,
+                        name: entry.name,
+                        hash: skill.hash,
+                        bytes: skill.bytes,
+                        mtimeMs: skill.mtimeMs,
+                        filesCount: skill.filesCount ?? skill.files.length,
+                    });
+                }
             }
         }
         return items;
+    }
+
+    function canonicalCatalog(enabledNamespaces = Object.keys(roots), policyOverride) {
+        const policy = resolvePolicy(policyOverride);
+        const markers = readHermesOriginMarkers(home);
+        const selected = enabledNamespaces.filter(ns => Object.hasOwn(roots, ns));
+        const targetList = selected.length ? selected : Object.keys(roots);
+        const grouped = new Map();
+        for (const namespace of targetList) {
+            const root = rootAt(home, namespace);
+            if (!root) continue;
+            for (const entry of subdirectories(root)) {
+                if (!entry.isDirectory() || !idPattern.test(entry.name)) continue;
+                if (namespace === "hermes" && markers.categoryDirs.has(entry.name)) continue;
+                const cls = classifySkill(entry.name, markers, policy);
+                if (cls.excluded) continue;
+                const skill = read(namespace, entry.name, { includeData: false });
+                if (!skill) continue;
+                if (!grouped.has(entry.name)) grouped.set(entry.name, []);
+                grouped.get(entry.name).push({
+                    ns: namespace,
+                    namespace,
+                    name: entry.name,
+                    hash: skill.hash,
+                    bytes: skill.bytes,
+                    mtimeMs: skill.mtimeMs,
+                    filesCount: skill.filesCount ?? skill.files.length,
+                    origin: cls.origin,
+                    originLabel: cls.originLabel,
+                });
+            }
+        }
+        const canonical = [];
+        for (const [name, variants] of grouped.entries()) {
+            const best = chooseRecommendedVariant(variants);
+            if (!best) continue;
+            canonical.push({
+                name,
+                namespace: best.ns,
+                hash: best.hash,
+                bytes: best.bytes,
+                mtimeMs: best.mtimeMs,
+                filesCount: best.filesCount,
+                origin: best.origin,
+                originLabel: best.originLabel,
+            });
+        }
+        canonical.sort((a, b) => a.name.localeCompare(b.name));
+        return canonical.slice(0, itemLimit);
+    }
+
+    function getCatalogDigest(enabledNamespaces, policyOverride) {
+        const list = canonicalCatalog(enabledNamespaces, policyOverride);
+        return createHash("sha256").update(JSON.stringify(list.map(x => [x.name, x.hash]))).digest("hex").slice(0, 16);
+    }
+
+    function fanOutSkillLocally(name, sourceNs, enabledNamespaces = Object.keys(roots), { force = false, backupSessionDir = "" } = {}) {
+        const selected = enabledNamespaces.filter(ns => Object.hasOwn(roots, ns));
+        const targets = selected.length ? selected : Object.keys(roots);
+        const pkg = read(sourceNs, name, { includeData: false });
+        if (!pkg) return { installed: 0, conflicts: 0 };
+        const srcKey = `local:${sourceNs}:${name}`;
+        if (records.get(srcKey) !== pkg.hash) {
+            try { saveRecord(srcKey, pkg.hash); } catch { /* ignore */ }
+        }
+        let installed = 0;
+        let conflicts = 0;
+        for (const targetNs of targets) {
+            if (targetNs === sourceNs) continue;
+            const current = read(targetNs, name, { includeData: false });
+            if (current?.hash === pkg.hash) {
+                const tgtKey = `local:${targetNs}:${name}`;
+                if (records.get(tgtKey) !== pkg.hash) {
+                    try { saveRecord(tgtKey, pkg.hash); } catch { /* ignore */ }
+                }
+                continue;
+            }
+            const outcome = install({ namespace: targetNs, name, hash: pkg.hash }, pkg, "local", { force, backupSessionDir });
+            if (outcome === "installed") installed++;
+            else if (outcome === "conflict") conflicts++;
+        }
+        return { installed, conflicts };
+    }
+
+    function receiveRemoteSkill({ name, namespace, hash, pkg, force = false, peerName = "endpoint", enabledNamespaces = Object.keys(roots), policyOverride } = {}) {
+        if (typeof name !== "string" || !idPattern.test(name) || !hashPattern.test(hash)) {
+            return { ok: false, outcome: "skipped", reason: "invalid-skill-id" };
+        }
+        const policy = resolvePolicy(policyOverride);
+        const markers = readHermesOriginMarkers(home);
+        if (classifySkill(name, markers, policy).excluded) {
+            return { ok: false, outcome: "skipped", reason: "excluded-by-center-policy" };
+        }
+        const selected = enabledNamespaces.filter(ns => Object.hasOwn(roots, ns));
+        const targets = selected.length ? selected : Object.keys(roots);
+        const targetNs = Object.hasOwn(roots, namespace) && targets.includes(namespace)
+            ? namespace
+            : (preferredOrder.find(ns => targets.includes(ns) && rootAt(home, ns)) || targets[0] || "codex");
+
+        const existingCanonical = canonicalCatalog(targets, policy).find(x => x.name === name);
+        if (existingCanonical?.hash === hash) {
+            try { saveRecord(`center:${name}`, hash); } catch { /* ignore */ }
+            return { ok: true, outcome: "same", hash, namespace: existingCanonical.namespace };
+        }
+        const baseline = records.get(`center:${name}`);
+        const allowOverwrite = Boolean(force) || !existingCanonical || existingCanonical.hash === baseline;
+        if (!allowOverwrite) {
+            return { ok: true, outcome: "conflict", hash: existingCanonical.hash, namespace: existingCanonical.namespace };
+        }
+
+        const backupSessionDir = existingCanonical ? path.join(backupRoot, backupStamp()) : "";
+        const outcome = install({ namespace: targetNs, name, hash }, pkg, `peer:${peerName}`, { force: true, backupSessionDir });
+        if (outcome === "installed" || outcome === "same") {
+            try { saveRecord(`center:${name}`, hash); } catch { /* ignore */ }
+            fanOutSkillLocally(name, targetNs, targets, { force: true, backupSessionDir });
+            scanLocal(targets, policy);
+            state = { ...state, time: Date.now(), localTime: Date.now() };
+            return { ok: true, outcome, hash, namespace: targetNs };
+        }
+        return { ok: false, outcome, hash };
     }
 
     function saveRecord(key, hash) {
@@ -819,16 +953,30 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
         conflictDetails.sort((a, b) => a.name.localeCompare(b.name));
         anomalies.sort((a, b) => Number(b.fixable) - Number(a.fixable) || a.name.localeCompare(b.name));
 
+        // Merge preserved cross-device conflicts (filtering out any excluded or resolved skills)
+        const localConflictNames = new Set(conflictDetails.map(c => c.name));
+        const activeRemoteConflicts = (state.remoteConflictDetails || []).filter(rc => {
+            if (classifySkill(rc.name, markers, policy).excluded) return false;
+            const localRec = bySkill.get(rc.name);
+            const localBest = localRec?.variants?.length ? chooseRecommendedVariant(localRec.variants) : null;
+            if (localBest && localBest.hash === rc.centerHash) return false;
+            return !localConflictNames.has(rc.name);
+        });
+        const mergedConflicts = [...conflictDetails, ...activeRemoteConflicts].sort((a, b) => a.name.localeCompare(b.name));
+        const mergedConflictCount = Math.max(mergedConflicts.length, activeRemoteConflicts.length);
+
         state = {
             ...state,
             namespaces,
             uniqueSkills: originCounts.syncable,
             totalDiscoveredSkills: bySkill.size,
             missingLinks,
-            conflicts: Math.max(conflictDetails.length, Number(state.remoteConflicts || 0)),
-            conflictDetails,
+            remoteConflicts: activeRemoteConflicts.length,
+            remoteConflictDetails: activeRemoteConflicts,
+            conflicts: mergedConflictCount,
+            conflictDetails: mergedConflicts,
             anomalies: anomalies.slice(0, 40),
-            phase: Math.max(conflictDetails.length, Number(state.remoteConflicts || 0)) > 0 ? "conflict" : (state.phase === "conflict" ? "ready" : state.phase),
+            phase: mergedConflictCount > 0 ? "conflict" : (state.phase === "conflict" ? "ready" : state.phase),
             skillsPreview: catalogList.filter(s => !s.excluded).slice(0, 60),
             skillsCatalog: catalogList.slice(0, 300),
             originCounts,
@@ -1022,61 +1170,286 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
         };
     }
 
-    function refresh(pairing, enabledNamespaces, policyOverride) {
-        if (running) return running;
-        running = (async () => {
+    async function pushSkillToCenter(pairing, name, sourceNs, { force = false } = {}) {
+        const pkg = read(sourceNs, name, { includeData: true });
+        if (!pkg) return { ok: false, outcome: "skipped" };
+        const wirePkg = { hash: pkg.hash, files: pkg.files, complete: pkg.complete, mtimeMs: pkg.mtimeMs, bytes: pkg.bytes };
+        const res = await pairing.requestSkills({
+            action: "push",
+            name,
+            namespace: sourceNs,
+            hash: pkg.hash,
+            force: Boolean(force),
+            package: wirePkg,
+        });
+        if (res?.outcome === "installed" || res?.outcome === "same") {
+            try { saveRecord(`center:${name}`, pkg.hash); } catch { /* ignore */ }
+        }
+        return res || { ok: false, outcome: "skipped" };
+    }
+
+    async function pullSkillFromCenter(pairing, centerItem, targetNamespaces, { force = false, backupSessionDir = "", endpointAddr = "center" } = {}) {
+        const result = await pairing.requestSkills({ namespace: centerItem.namespace, name: centerItem.name });
+        if (!result?.package) return { outcome: "skipped", installed: 0 };
+        const selected = targetNamespaces.filter(ns => Object.hasOwn(roots, ns));
+        const targets = selected.length ? selected : Object.keys(roots);
+        const primaryNs = targets.includes(centerItem.namespace)
+            ? centerItem.namespace
+            : (preferredOrder.find(ns => targets.includes(ns) && rootAt(home, ns)) || targets[0] || "codex");
+        const outcome = install(
+            { namespace: primaryNs, name: centerItem.name, hash: centerItem.hash },
+            result.package,
+            endpointAddr,
+            { force, backupSessionDir }
+        );
+        if (outcome === "installed" || outcome === "same") {
+            try { saveRecord(`center:${centerItem.name}`, centerItem.hash); } catch { /* ignore */ }
+            const fan = fanOutSkillLocally(centerItem.name, primaryNs, targets, { force: true, backupSessionDir });
+            return { outcome, installed: (outcome === "installed" ? 1 : 0) + fan.installed };
+        }
+        return { outcome, installed: 0 };
+    }
+
+    async function resolveConflictWithPairing(pairing, name, sourceNs, enabledNamespaces = Object.keys(roots), { backupSessionDir = "" } = {}) {
+        const selected = enabledNamespaces.filter(ns => Object.hasOwn(roots, ns));
+        const targets = selected.length ? selected : Object.keys(roots);
+        const remoteCf = (state.remoteConflictDetails || []).find(c => c.name === name);
+        const sessionDir = backupSessionDir || path.join(backupRoot, backupStamp());
+
+        if (sourceNs === "center" && remoteCf && pairing?.view?.()?.mode === "endpoint") {
+            const pulled = await pullSkillFromCenter(
+                pairing,
+                { name, namespace: remoteCf.centerNamespace, hash: remoteCf.centerHash },
+                targets,
+                { force: true, backupSessionDir: sessionDir, endpointAddr: pairing.view().endpoint?.address || "center" }
+            );
+            state = {
+                ...state,
+                remoteConflictDetails: (state.remoteConflictDetails || []).filter(c => c.name !== name),
+                lastBackupDir: sessionDir,
+            };
+            scanLocal(targets);
+            return { name, sourceNs: "center", updated: pulled.installed, backedUp: 1, backupDir: sessionDir, state: structuredClone(state) };
+        }
+
+        // Resolve local namespaces first
+        const localRes = resolveConflict(name, sourceNs, targets, { backupSessionDir: sessionDir });
+        // If this skill also had a cross-device conflict with Center (or Endpoint is connected), push resolved version to Center!
+        if (pairing?.view?.()?.mode === "endpoint" && pairing.view().endpoint?.status === "connected" && pairing.view().online) {
+            try {
+                await pushSkillToCenter(pairing, name, sourceNs, { force: true });
+                state = {
+                    ...state,
+                    remoteConflictDetails: (state.remoteConflictDetails || []).filter(c => c.name !== name),
+                };
+                scanLocal(targets);
+            } catch (err) {
+                console.warn("QLEX push resolved skill to center warning:", err?.message || err);
+            }
+        }
+        return { ...localRes, state: structuredClone(state) };
+    }
+
+    async function resolveAllConflictsWithPairing(pairing, strategy = "latest", enabledNamespaces = Object.keys(roots)) {
+        const selected = enabledNamespaces.filter(ns => Object.hasOwn(roots, ns));
+        const targets = selected.length ? selected : Object.keys(roots);
+        const localStrategy = (strategy === "center" || strategy === "local") ? "latest" : strategy;
+        const localRes = resolveAllConflicts(localStrategy, targets);
+
+        if (pairing?.view?.()?.mode === "endpoint" && pairing.view().endpoint?.status === "connected" && pairing.view().online) {
+            const forceStrategy = ["center", "local", "latest"].includes(strategy) ? strategy : "latest";
+            await refresh(pairing, targets, undefined, { forceStrategy });
+        }
+        return {
+            ...localRes,
+            resolvedCount: localRes.resolvedCount + (localRes.state?.remoteConflicts || 0),
+            state: structuredClone(state),
+        };
+    }
+
+    function refresh(pairing, enabledNamespaces, policyOverride, { forceStrategy = "" } = {}) {
+        if (running && !forceStrategy) return running;
+        const runPromise = (async () => {
             const policy = resolvePolicy(policyOverride);
             const markers = readHermesOriginMarkers(home);
-            scanLocal(enabledNamespaces, policy);
+            const selected = (enabledNamespaces || Object.keys(roots)).filter(ns => Object.hasOwn(roots, ns));
+            const targets = selected.length ? selected : Object.keys(roots);
+            scanLocal(targets, policy);
             const { mode, endpoint, online } = pairing.view();
             if (mode !== "endpoint") {
-                if (state.remoteConflicts) {
+                if (state.remoteConflicts || state.remoteConflictDetails?.length) {
                     state = {
                         ...state,
                         remoteConflicts: 0,
-                        conflicts: state.conflictDetails.length,
-                        phase: state.conflictDetails.length > 0 ? "conflict" : "ready",
+                        remoteConflictDetails: [],
                     };
+                    scanLocal(targets, policy);
                 }
                 return state;
             }
             if (endpoint?.status !== "connected" || !online) return state;
+
+            // Align local tool dirs first so Endpoint has clean canonical local versions
+            syncLocal(targets, policy);
             state = { ...state, phase: "syncing" };
-            let count = 0;
-            let conflicts = 0;
+
             const response = await pairing.requestSkills();
-            if (!Array.isArray(response?.items)) {
+            if (!response || (!Array.isArray(response.canonical) && !Array.isArray(response.items))) {
                 state = { ...state, phase: "center-disabled" };
                 return state;
             }
-            for (const item of response.items.slice(0, itemLimit)) {
-                if (!pairing.store.snapshot().skillSyncEnabled || pairing.view().endpoint?.address !== endpoint.address) break;
-                if (!item || !Object.hasOwn(roots, item.namespace) || typeof item.name !== "string" ||
-                    !idPattern.test(item.name) || !hashPattern.test(item.hash)) continue;
-                if (classifySkill(item.name, markers, policy).excluded) continue;
-                if (read(item.namespace, item.name, { includeData: false })?.hash === item.hash) continue;
-                const result = await pairing.requestSkills({ namespace: item.namespace, name: item.name });
-                if (!pairing.store.snapshot().skillSyncEnabled || pairing.view().endpoint?.address !== endpoint.address) break;
-                const outcome = install(item, result?.package, endpoint.address);
-                if (outcome === "installed") count++;
-                if (outcome === "conflict") conflicts++;
+
+            const centerName = response.centerName || endpoint.name || endpoint.address || "中心端";
+            const centerMap = new Map();
+            if (Array.isArray(response.canonical)) {
+                for (const item of response.canonical.slice(0, itemLimit)) {
+                    if (!item || !idPattern.test(item.name) || !hashPattern.test(item.hash)) continue;
+                    if (classifySkill(item.name, markers, policy).excluded) continue;
+                    centerMap.set(item.name, item);
+                }
+            } else {
+                // Backward compatibility with older Center returning per-namespace items[]
+                const grouped = new Map();
+                for (const item of (response.items || []).slice(0, itemLimit)) {
+                    if (!item || !Object.hasOwn(roots, item.namespace) || !idPattern.test(item.name) || !hashPattern.test(item.hash)) continue;
+                    if (classifySkill(item.name, markers, policy).excluded) continue;
+                    if (!grouped.has(item.name)) grouped.set(item.name, []);
+                    grouped.get(item.name).push({ ...item, ns: item.namespace });
+                }
+                for (const [name, vars] of grouped.entries()) {
+                    const best = chooseRecommendedVariant(vars);
+                    if (best) centerMap.set(name, best);
+                }
             }
-            scanLocal(enabledNamespaces);
-            const totalConflicts = Math.max(conflicts, state.conflictDetails.length);
+
+            const localCanonical = canonicalCatalog(targets, policy);
+            const localMap = new Map(localCanonical.map(x => [x.name, x]));
+            const allNames = [...new Set([...centerMap.keys(), ...localMap.keys()])].sort((a, b) => a.localeCompare(b));
+
+            let pulled = 0;
+            let pushed = 0;
+            const remoteConflictDetails = [];
+            const sessionDir = path.join(backupRoot, backupStamp());
+
+            for (const name of allNames) {
+                if (!pairing.store.snapshot().skillSyncEnabled || pairing.view().endpoint?.address !== endpoint.address) break;
+                const cItem = centerMap.get(name);
+                const lItem = localMap.get(name);
+                const baseKey = `center:${name}`;
+                const baseHash = records.get(baseKey);
+
+                if (cItem && !lItem) {
+                    // Case A: Only on Center -> Pull and fan out locally
+                    const res = await pullSkillFromCenter(pairing, cItem, targets, {
+                        force: false,
+                        backupSessionDir: sessionDir,
+                        endpointAddr: endpoint.address,
+                    });
+                    if (res.outcome === "installed") pulled++;
+                } else if (!cItem && lItem) {
+                    // Case B: Only on Endpoint -> Push to Center (Center fans out across its tools)
+                    try {
+                        const res = await pushSkillToCenter(pairing, name, lItem.namespace, { force: false });
+                        if (res?.outcome === "installed") pushed++;
+                    } catch (err) {
+                        // Older Center without push handler (HTTP 400/404): skip gracefully
+                        console.warn(`QLEX push skill ${name} skipped:`, err?.message || err);
+                    }
+                } else if (cItem && lItem) {
+                    if (cItem.hash === lItem.hash) {
+                        // Case C: Already converged! Record baseline so future single-side edits fast-forward cleanly
+                        if (baseHash !== cItem.hash) {
+                            try { saveRecord(baseKey, cItem.hash); } catch { /* ignore */ }
+                        }
+                        continue;
+                    }
+                    // Case D: Diverged between Center and Endpoint
+                    const cVariant = {
+                        ns: "center",
+                        label: `中心 (${centerName})`,
+                        hash: cItem.hash,
+                        shortHash: cItem.hash.slice(0, 8),
+                        mtimeMs: Number(cItem.mtimeMs || 0),
+                        filesCount: Number(cItem.filesCount || 0),
+                        bytes: Number(cItem.bytes || 0),
+                    };
+                    const lVariant = {
+                        ns: lItem.namespace,
+                        label: `本机 (${namespaceLabels[lItem.namespace] || lItem.namespace})`,
+                        hash: lItem.hash,
+                        shortHash: lItem.hash.slice(0, 8),
+                        mtimeMs: Number(lItem.mtimeMs || 0),
+                        filesCount: Number(lItem.filesCount || 0),
+                        bytes: Number(lItem.bytes || 0),
+                    };
+                    const recommended = chooseRecommendedVariant([cVariant, lVariant]);
+
+                    let action = "";
+                    if (forceStrategy === "center") action = "pull";
+                    else if (forceStrategy === "local") action = "push";
+                    else if (forceStrategy === "latest") action = recommended?.ns === "center" ? "pull" : "push";
+                    else if (baseHash && lItem.hash === baseHash) action = "pull"; // Center changed, Endpoint unchanged
+                    else if (baseHash && cItem.hash === baseHash) action = "push"; // Endpoint changed, Center unchanged
+
+                    if (action === "pull") {
+                        const res = await pullSkillFromCenter(pairing, cItem, targets, {
+                            force: true,
+                            backupSessionDir: sessionDir,
+                            endpointAddr: endpoint.address,
+                        });
+                        if (res.outcome === "installed" || res.outcome === "same") pulled++;
+                    } else if (action === "push") {
+                        try {
+                            const res = await pushSkillToCenter(pairing, name, lItem.namespace, { force: true });
+                            if (res?.outcome === "installed" || res?.outcome === "same") pushed++;
+                        } catch (err) {
+                            console.warn(`QLEX push skill ${name} failed:`, err?.message || err);
+                        }
+                    } else {
+                        const cls = classifySkill(name, markers, policy);
+                        const diffBytes = Math.abs(cVariant.bytes - lVariant.bytes);
+                        const diffHint = `跨端差异 · 中心 vs 本机${diffBytes > 0 ? ` · 体积差 ${(diffBytes / 1024).toFixed(1)} KB` : ""}`;
+                        const sortedVars = [cVariant, lVariant]
+                            .map(v => ({ ...v, recommended: v.ns === recommended?.ns }))
+                            .sort((a, b) => Number(b.recommended) - Number(a.recommended));
+                        remoteConflictDetails.push({
+                            name,
+                            scope: "cross-device",
+                            origin: cls.origin,
+                            originLabel: "跨端差异",
+                            recommendedNs: recommended?.ns || "center",
+                            centerNamespace: cItem.namespace,
+                            centerHash: cItem.hash,
+                            localNamespace: lItem.namespace,
+                            diffHint,
+                            variants: sortedVars,
+                        });
+                    }
+                }
+            }
+
+            if (pulled > 0) {
+                syncLocal(targets, policy);
+            }
+
             state = {
                 ...state,
-                phase: totalConflicts > 0 ? "conflict" : "ready",
-                count,
-                remoteConflicts: conflicts,
-                conflicts: totalConflicts,
+                remoteConflictDetails,
+                remoteConflicts: remoteConflictDetails.length,
+                remotePulled: pulled,
+                remotePushed: pushed,
+                remotePeer: centerName,
+                count: pulled + pushed,
                 time: Date.now(),
             };
+            scanLocal(targets, policy);
             return state;
         })().catch(() => {
             state = { ...state, phase: "error" };
             return state;
-        }).finally(() => { running = undefined; });
-        return running;
+        }).finally(() => { if (running === runPromise) running = undefined; });
+        running = runPromise;
+        return runPromise;
     }
 
     // Initial passive scan
@@ -1084,11 +1457,16 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
 
     return {
         catalog,
+        canonicalCatalog,
+        getCatalogDigest,
+        receiveRemoteSkill,
         read,
         scanLocal,
         syncLocal,
         resolveConflict,
         resolveAllConflicts,
+        resolveConflictWithPairing,
+        resolveAllConflictsWithPairing,
         repairAnomalies,
         refresh,
         snapshot: () => structuredClone(state),
