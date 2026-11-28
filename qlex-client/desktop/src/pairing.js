@@ -408,7 +408,15 @@ class DevicePairing {
         const current = this.config;
         if (current.endpoint?.credential !== endpoint.credential)
             return;
-        this.endpointOnline = reached && Boolean(result);
+        if (reached && result) {
+            this.endpointMisses = 0;
+            this.endpointOnline = true;
+        } else {
+            this.endpointMisses = (this.endpointMisses || 0) + 1;
+            if (!wasOnline || this.endpointMisses >= 2) {
+                this.endpointOnline = false;
+            }
+        }
         if (!reached)
             return;
         const next = result ?? { name: endpoint.name, status: "rejected", memoryRevision: 0, memoryUpdatedAt: 0, memoryActiveCount: 0 };

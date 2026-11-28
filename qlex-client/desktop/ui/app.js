@@ -551,165 +551,18 @@ function renderQStage() {
     const tipCore = `星轨中心核 · 健康分 ${health.score}（${health.label}）· 点击球核立即触发全量双向同步（记忆 + 项目 + Skills）`;
     const tipPeer = `拓扑通道：${topBeaconLabel} ⇄ ${cleanHost(state.deviceName)} · ${bottomBeaconText} · 点击进入互联详情 ›`;
 
-    patchHtml(overviewStage, `
-      <div class="hub-left-main">
-        <div class="hub-title-row">
-          <div class="hub-title-left">
-            <h1>中枢总览</h1>
-            <span class="hub-title-chip"><i class="hub-chip-dot ${syncStreamTone}"></i>星轨网络</span>
-          </div>
-          <p>项目同步 · 持久记忆 · 跨设备工作空间 · 多工具统一 Skills</p>
-        </div>
+    const satLinkSub = net.mode === "center" ? `${onlinePeers}/${connectedPeers} 在线` : ts.online ? `${(ts.discoveredCenters || []).length} 中心·穿透` : "单机就绪";
+    const satMemSub = `${fmtNum(cog.activeItems || 0)} 条活跃`;
+    const satWorkSub = `${boundProjects.length} 项·${sk.uniqueSkills ?? 0} 技`;
+    const satStatusSub = `${ms.installedCount}/${ms.totalCount} · ${issueCount > 0 ? `${issueCount} 待处理` : "已对齐"}`;
+    const coreTagText = `${health.phase === "ok" ? "✓ " : "⚠ "}${health.label}`;
+    const hudActionsHtml = issueCount > 0
+        ? `<button type="button" class="q-inline-link" style="color:var(--orange)" data-rail="workspace">处理 ${issueCount} 项冲突 ›</button>`
+        : net.mode === "center" && net.online
+            ? `<button type="button" class="q-inline-link" data-action="copy-invite">复制邀请码</button><span>·</span><button type="button" class="q-inline-link" data-action="invite">刷新链接</button>`
+            : `<button type="button" class="q-inline-link" data-action="tailscale-scan">扫描节点 ›</button>`;
 
-        <section id="hubOrbitalStage" class="hub-orbital-stage ${isSyncing ? "is-syncing" : ""} ${orbTone ? "is-warn" : ""}" data-default-hud="${esc(defaultHudText)}">
-          <div class="hub-orbital-bg" aria-hidden="true">
-            <div class="hub-orbital-grid"></div>
-            <div class="hub-radar-sweep"></div>
-          </div>
-
-          <div class="hub-orb-topbar">
-            <button type="button" class="hub-mesh-pill" data-rail="link" data-orb-node="peer" data-orb-tip="${esc(tipPeer)}">
-              <span class="hub-mesh-dot ${net.online || net.mode === "local" ? "live" : "warn"}"></span>
-              <span class="hub-mesh-self">${esc(cleanHost(state.deviceName))}</span>
-              <span class="hub-mesh-arrow" aria-hidden="true">⇄</span>
-              <span class="hub-mesh-peer">${esc(net.mode === "center" ? `${onlinePeers}/${connectedPeers} 接入点` : net.mode === "endpoint" ? cleanHost(net.endpoint?.name || net.endpoint?.address || "中心") : "本机单核")}</span>
-            </button>
-
-            <button type="button" class="hub-stream-pill ${syncStreamTone}" data-action="sync-now" data-orb-node="core" data-orb-tip="${esc(tipCore)}" title="点击立即执行全量双向同步">
-              <span class="hub-stream-eq" aria-hidden="true"><i></i><i></i><i></i></span>
-              <span>${esc(syncStreamLabel)}</span>
-            </button>
-          </div>
-
-          <div class="hub-constellation">
-            <svg class="hub-links-svg" viewBox="0 0 600 280" preserveAspectRatio="none" aria-hidden="true">
-              <!-- Top & Bottom Topology Conduits -->
-              <g class="hub-conduit" data-conduit="peer">
-                <path class="conduit-base" d="M 300 24 L 300 84" vector-effect="non-scaling-stroke"/>
-                <path class="conduit-flow flow-cyan" pathLength="100" d="M 300 24 L 300 84" vector-effect="non-scaling-stroke"/>
-                <path class="conduit-base" d="M 300 256 L 300 196" vector-effect="non-scaling-stroke"/>
-                <path class="conduit-flow flow-mint" pathLength="100" d="M 300 256 L 300 196" vector-effect="non-scaling-stroke"/>
-              </g>
-              <!-- NW: link -->
-              <g class="hub-conduit" data-conduit="link">
-                <path class="conduit-base" d="M 154 88 C 204 88, 214 118, 246 126" vector-effect="non-scaling-stroke"/>
-                <path class="conduit-flow flow-blue" pathLength="100" d="M 154 88 C 204 88, 214 118, 246 126" vector-effect="non-scaling-stroke"/>
-              </g>
-              <!-- SW: memory -->
-              <g class="hub-conduit" data-conduit="memory">
-                <path class="conduit-base" d="M 154 192 C 204 192, 214 162, 246 154" vector-effect="non-scaling-stroke"/>
-                <path class="conduit-flow flow-purple" pathLength="100" d="M 154 192 C 204 192, 214 162, 246 154" vector-effect="non-scaling-stroke"/>
-              </g>
-              <!-- NE: workspace -->
-              <g class="hub-conduit" data-conduit="workspace">
-                <path class="conduit-base" d="M 446 88 C 396 88, 386 118, 354 126" vector-effect="non-scaling-stroke"/>
-                <path class="conduit-flow flow-mint" pathLength="100" d="M 446 88 C 396 88, 386 118, 354 126" vector-effect="non-scaling-stroke"/>
-              </g>
-              <!-- SE: status -->
-              <g class="hub-conduit" data-conduit="status">
-                <path class="conduit-base" d="M 446 192 C 396 192, 386 162, 354 154" vector-effect="non-scaling-stroke"/>
-                <path class="conduit-flow ${issueCount > 0 ? "flow-warn" : "flow-cyan"}" pathLength="100" d="M 446 192 C 396 192, 386 162, 354 154" vector-effect="non-scaling-stroke"/>
-              </g>
-            </svg>
-
-            <!-- Top & Bottom Live Device / Transport Orbital Beacons -->
-            <button type="button" class="hub-orbit-beacon top" data-rail="link" data-orb-node="peer" data-orb-tip="${esc(tipPeer)}">
-              <span class="beacon-dot ${topBeaconOnline ? "live" : "warn"}"></span>
-              <span class="beacon-txt">${esc(topBeaconLabel)}</span>
-            </button>
-            <button type="button" class="hub-orbit-beacon bottom" data-rail="memory" data-orb-node="peer" data-orb-tip="${esc(tipPeer)}">
-              <span class="beacon-dot ${ts.online || net.online ? "cyan" : ""}"></span>
-              <span class="beacon-txt">${esc(bottomBeaconText)}</span>
-            </button>
-
-            <div class="hub-sat-col left">
-              <button type="button" class="hub-sat-card tone-blue" data-rail="link" data-orb-node="link" data-orb-tip="${esc(tipLink)}">
-                <span class="hub-sat-ico blue">⌘</span>
-                <div class="hub-sat-text">
-                  <div class="hub-sat-title">设备互联</div>
-                  <div class="hub-sat-sub"><span class="hub-sat-dot ${net.online || ts.online ? "" : "warn"}"></span>${net.mode === "center" ? `${onlinePeers}/${connectedPeers} 在线` : ts.online ? `${(ts.discoveredCenters || []).length} 中心·穿透` : "单机就绪"}</div>
-                </div>
-                <i class="sat-pin" aria-hidden="true"></i>
-              </button>
-              <button type="button" class="hub-sat-card tone-purple" data-rail="memory" data-orb-node="memory" data-orb-tip="${esc(tipMemory)}">
-                <span class="hub-sat-ico purple">✦</span>
-                <div class="hub-sat-text">
-                  <div class="hub-sat-title">持久记忆</div>
-                  <div class="hub-sat-sub"><span class="hub-sat-dot purple"></span>${fmtNum(cog.activeItems || 0)} 条活跃</div>
-                </div>
-                <i class="sat-pin" aria-hidden="true"></i>
-              </button>
-            </div>
-
-            <div class="hub-orb-wrap ${isSyncing ? "syncing" : ""} ${orbTone ? "warn-tone" : ""}">
-              <span class="solar-star" style="width:2.5px;height:2.5px;top:10%;left:14%;animation-delay:0s"></span>
-              <span class="solar-star" style="width:2px;height:2px;top:16%;right:12%;animation-delay:1.4s"></span>
-              <span class="solar-star" style="width:2.5px;height:2.5px;bottom:14%;left:18%;animation-delay:2.6s"></span>
-              <span class="solar-star" style="width:2px;height:2px;bottom:10%;right:16%;animation-delay:0.8s"></span>
-
-              <div class="orb-sonar-ring" aria-hidden="true"></div>
-              <div class="solar-orbit orbit-4" aria-hidden="true"></div>
-              <div class="solar-orbit orbit-3" aria-hidden="true">
-                <span class="orbit-body planet-purple"></span>
-                <span class="orbit-body moon-amber"></span>
-              </div>
-              <div class="solar-orbit orbit-2" aria-hidden="true">
-                <span class="orbit-body planet-blue"></span>
-              </div>
-              <div class="solar-orbit orbit-1" aria-hidden="true">
-                <span class="orbit-body moon-mint"></span>
-              </div>
-              <div class="planet-halo-ring" aria-hidden="true"></div>
-
-              <button type="button" class="q-core-orb ${orbTone}" data-action="sync-now" data-orb-node="core" data-orb-tip="${esc(tipCore)}" title="点击立即执行双向同步">
-                <svg class="orb-grid" viewBox="0 0 140 140" aria-hidden="true">
-                  <circle cx="70" cy="70" r="68" fill="none" stroke="white" stroke-width="0.7"/>
-                  <ellipse cx="70" cy="70" rx="34" ry="68" fill="none" stroke="white" stroke-width="0.7"/>
-                  <ellipse cx="70" cy="70" rx="68" ry="24" fill="none" stroke="white" stroke-width="0.7"/>
-                  <line x1="2" y1="70" x2="138" y2="70" stroke="white" stroke-width="0.6"/>
-                </svg>
-                <span class="q-core-score">${health.score}</span>
-                <span class="q-core-tag">${health.phase === "ok" ? "✓ " : "⚠ "}${esc(health.label)}</span>
-                <span class="q-core-cta">⟳ 触发同步</span>
-              </button>
-            </div>
-
-            <div class="hub-sat-col right">
-              <button type="button" class="hub-sat-card tone-mint" data-rail="workspace" data-orb-node="workspace" data-orb-tip="${esc(tipWorkspace)}">
-                <i class="sat-pin" aria-hidden="true"></i>
-                <span class="hub-sat-ico">❖</span>
-                <div class="hub-sat-text">
-                  <div class="hub-sat-title">工程同步</div>
-                  <div class="hub-sat-sub"><span class="hub-sat-dot ${issueCount > 0 ? "warn" : ""}"></span>${boundProjects.length} 项·${sk.uniqueSkills ?? 0} 技</div>
-                </div>
-              </button>
-              <button type="button" class="hub-sat-card ${issueCount > 0 ? "tone-warn" : "tone-cyan"}" data-rail="status" data-orb-node="status" data-orb-tip="${esc(tipStatus)}">
-                <i class="sat-pin" aria-hidden="true"></i>
-                <span class="hub-sat-ico ${issueCount > 0 ? "warn" : "blue"}">◎</span>
-                <div class="hub-sat-text">
-                  <div class="hub-sat-title">AI 工具</div>
-                  <div class="hub-sat-sub"><span class="hub-sat-dot ${issueCount > 0 ? "warn" : ""}"></span>${ms.installedCount}/${ms.totalCount} · ${issueCount > 0 ? `${issueCount} 待处理` : "已对齐"}</div>
-                </div>
-              </button>
-            </div>
-          </div>
-
-          <div class="hub-hud-bar">
-            <div class="hub-hud-left">
-              <span class="hub-hud-led ${syncStreamTone}"></span>
-              <span id="hubHudLiveText" class="hub-hud-text">${esc(defaultHudText)}</span>
-            </div>
-            <div class="hub-hud-actions">
-              ${issueCount > 0
-                  ? `<button type="button" class="q-inline-link" style="color:var(--orange)" data-rail="workspace">处理 ${issueCount} 项冲突 ›</button>`
-                  : net.mode === "center" && net.online
-                      ? `<button type="button" class="q-inline-link" data-action="copy-invite">复制邀请码</button><span>·</span><button type="button" class="q-inline-link" data-action="invite">刷新链接</button>`
-                      : `<button type="button" class="q-inline-link" data-action="tailscale-scan">扫描节点 ›</button>`}
-            </div>
-          </div>
-        </section>
-
-        <section class="hub-mini-grid">
+    const miniGridHtml = `
           <div class="hub-mini-card" data-rail="link">
             <div class="hub-mini-lbl">设备连接</div>
             <div class="hub-mini-val">${net.mode === "center" ? `${onlinePeers}<small>台在线</small>` : `${(ts.discoveredCenters || []).length}<small>台中心</small>`}</div>
@@ -732,10 +585,9 @@ function renderQStage() {
             <div class="hub-mini-val">${counts.daily}<small>日 / ${mem.compressionRatio ?? 0}%</small></div>
             <div class="hub-mini-bars">${[28, 42, 35, 62, 54, 78, 92].map(h => `<span class="hub-mini-bar" style="height:${h}%"></span>`).join("")}</div>
           </div>
-        </section>
-      </div>
+    `;
 
-      <aside class="hub-right-rail">
+    const rightRailHtml = `
         <div class="hub-right-card">
           <div class="card-head">
             <span class="card-title">系统状态</span>
@@ -799,19 +651,273 @@ function renderQStage() {
             </div>
           </div>
         </div>
-      </aside>
+    `;
+
+    // Mount Orbital Hub skeleton ONCE so spinning orbits, radar & flowing conduits NEVER reset on background state ticks!
+    const existingStage = overviewStage.querySelector("#hubOrbitalStage");
+    if (!existingStage) {
+        overviewStage.__qlexHtml = "";
+        overviewStage.innerHTML = `
+      <div class="hub-left-main">
+        <div class="hub-title-row">
+          <div class="hub-title-left">
+            <h1>中枢总览</h1>
+            <span class="hub-title-chip"><i id="hubTitleChipDot" class="hub-chip-dot"></i>星轨网络</span>
+          </div>
+          <p>项目同步 · 持久记忆 · 跨设备工作空间 · 多工具统一 Skills</p>
+        </div>
+
+        <section id="hubOrbitalStage" class="hub-orbital-stage">
+          <div class="hub-orbital-bg" aria-hidden="true">
+            <div class="hub-orbital-grid"></div>
+            <div class="hub-radar-sweep"></div>
+          </div>
+          <span class="hub-corner tl" aria-hidden="true"></span>
+          <span class="hub-corner tr" aria-hidden="true"></span>
+          <span class="hub-corner bl" aria-hidden="true"></span>
+          <span class="hub-corner br" aria-hidden="true"></span>
+
+          <div class="hub-orb-topbar">
+            <button id="hubMeshPill" type="button" class="hub-mesh-pill" data-rail="link" data-orb-node="peer">
+              <span id="hubMeshDot" class="hub-mesh-dot"></span>
+              <span id="hubMeshSelf" class="hub-mesh-self"></span>
+              <span class="hub-mesh-arrow" aria-hidden="true">⇄</span>
+              <span id="hubMeshPeer" class="hub-mesh-peer"></span>
+            </button>
+
+            <button id="hubStreamPill" type="button" class="hub-stream-pill" data-action="sync-now" data-orb-node="core" title="点击立即执行全量双向同步">
+              <span class="hub-stream-eq" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span id="hubStreamLabel"></span>
+            </button>
+          </div>
+
+          <div class="hub-constellation">
+            <svg class="hub-links-svg" viewBox="0 0 600 280" preserveAspectRatio="none" aria-hidden="true">
+              <g class="hub-conduit" data-conduit="peer">
+                <path class="conduit-base" d="M 300 24 L 300 84" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-glow flow-cyan" pathLength="100" d="M 300 24 L 300 84" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-flow flow-cyan" pathLength="100" d="M 300 24 L 300 84" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-base" d="M 300 256 L 300 196" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-glow flow-mint" pathLength="100" d="M 300 256 L 300 196" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-flow flow-mint" pathLength="100" d="M 300 256 L 300 196" vector-effect="non-scaling-stroke"/>
+              </g>
+              <g class="hub-conduit" data-conduit="link">
+                <path class="conduit-base" d="M 154 88 C 204 88, 214 118, 246 126" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-glow flow-blue" pathLength="100" d="M 154 88 C 204 88, 214 118, 246 126" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-flow flow-blue" pathLength="100" d="M 154 88 C 204 88, 214 118, 246 126" vector-effect="non-scaling-stroke"/>
+              </g>
+              <g class="hub-conduit" data-conduit="memory">
+                <path class="conduit-base" d="M 154 192 C 204 192, 214 162, 246 154" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-glow flow-purple" pathLength="100" d="M 154 192 C 204 192, 214 162, 246 154" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-flow flow-purple" pathLength="100" d="M 154 192 C 204 192, 214 162, 246 154" vector-effect="non-scaling-stroke"/>
+              </g>
+              <g class="hub-conduit" data-conduit="workspace">
+                <path class="conduit-base" d="M 446 88 C 396 88, 386 118, 354 126" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-glow flow-mint" pathLength="100" d="M 446 88 C 396 88, 386 118, 354 126" vector-effect="non-scaling-stroke"/>
+                <path class="conduit-flow flow-mint" pathLength="100" d="M 446 88 C 396 88, 386 118, 354 126" vector-effect="non-scaling-stroke"/>
+              </g>
+              <g class="hub-conduit" data-conduit="status">
+                <path class="conduit-base" d="M 446 192 C 396 192, 386 162, 354 154" vector-effect="non-scaling-stroke"/>
+                <path id="hubStatusGlow" class="conduit-glow flow-cyan" pathLength="100" d="M 446 192 C 396 192, 386 162, 354 154" vector-effect="non-scaling-stroke"/>
+                <path id="hubStatusFlow" class="conduit-flow flow-cyan" pathLength="100" d="M 446 192 C 396 192, 386 162, 354 154" vector-effect="non-scaling-stroke"/>
+              </g>
+            </svg>
+
+            <button id="hubBeaconTop" type="button" class="hub-orbit-beacon top" data-rail="link" data-orb-node="peer">
+              <span id="hubBeaconTopDot" class="beacon-dot"></span>
+              <span id="hubBeaconTopTxt" class="beacon-txt"></span>
+            </button>
+            <button id="hubBeaconBottom" type="button" class="hub-orbit-beacon bottom" data-rail="memory" data-orb-node="peer">
+              <span id="hubBeaconBottomDot" class="beacon-dot"></span>
+              <span id="hubBeaconBottomTxt" class="beacon-txt"></span>
+            </button>
+
+            <div class="hub-sat-col left">
+              <button id="hubSatLink" type="button" class="hub-sat-card tone-blue" data-rail="link" data-orb-node="link">
+                <span class="hub-sat-ico blue">⌘</span>
+                <div class="hub-sat-text">
+                  <div class="hub-sat-title">设备互联</div>
+                  <div class="hub-sat-sub"><span id="hubSatLinkDot" class="hub-sat-dot"></span><span id="hubSatLinkSub"></span></div>
+                </div>
+                <i class="sat-pin" aria-hidden="true"></i>
+              </button>
+              <button id="hubSatMemory" type="button" class="hub-sat-card tone-purple" data-rail="memory" data-orb-node="memory">
+                <span class="hub-sat-ico purple">✦</span>
+                <div class="hub-sat-text">
+                  <div class="hub-sat-title">持久记忆</div>
+                  <div class="hub-sat-sub"><span class="hub-sat-dot purple"></span><span id="hubSatMemSub"></span></div>
+                </div>
+                <i class="sat-pin" aria-hidden="true"></i>
+              </button>
+            </div>
+
+            <div id="hubOrbWrap" class="hub-orb-wrap">
+              <svg class="orb-dial-svg" viewBox="0 0 260 260" aria-hidden="true">
+                <circle cx="130" cy="130" r="120" fill="none" stroke="rgba(226,234,246,0.1)" stroke-width="1" stroke-dasharray="2 8"/>
+                <circle cx="130" cy="130" r="96" fill="none" stroke="rgba(115,189,245,0.14)" stroke-width="0.9"/>
+                <path d="M130 4v8M130 248v8M4 130h8M248 130h8" stroke="rgba(183,234,212,0.38)" stroke-width="1.2" stroke-linecap="round"/>
+              </svg>
+              <span class="solar-star" style="width:2px;height:2px;top:11%;left:14%;animation-delay:0s"></span>
+              <span class="solar-star" style="width:2px;height:2px;top:17%;right:12%;animation-delay:1.4s"></span>
+              <span class="solar-star" style="width:2px;height:2px;bottom:14%;left:18%;animation-delay:2.6s"></span>
+              <span class="solar-star" style="width:2px;height:2px;bottom:11%;right:16%;animation-delay:0.8s"></span>
+
+              <div class="orb-sonar-ring" aria-hidden="true"></div>
+              <div class="orb-sync-ring" aria-hidden="true"></div>
+              <div class="solar-orbit orbit-3" aria-hidden="true">
+                <span class="orbit-body planet-purple"></span>
+                <span class="orbit-body moon-amber"></span>
+              </div>
+              <div class="solar-orbit orbit-2" aria-hidden="true">
+                <span class="orbit-body planet-blue"></span>
+              </div>
+              <div class="solar-orbit orbit-1" aria-hidden="true">
+                <span class="orbit-body moon-mint"></span>
+              </div>
+              <div class="planet-halo-ring" aria-hidden="true"></div>
+
+              <button id="hubCoreOrb" type="button" class="q-core-orb" data-action="sync-now" data-orb-node="core" title="点击立即执行双向同步">
+                <svg class="orb-grid" viewBox="0 0 140 140" aria-hidden="true">
+                  <circle cx="70" cy="70" r="68" fill="none" stroke="white" stroke-width="0.7"/>
+                  <ellipse cx="70" cy="70" rx="34" ry="68" fill="none" stroke="white" stroke-width="0.7"/>
+                  <ellipse cx="70" cy="70" rx="68" ry="24" fill="none" stroke="white" stroke-width="0.7"/>
+                  <line x1="2" y1="70" x2="138" y2="70" stroke="white" stroke-width="0.6"/>
+                </svg>
+                <span id="hubCoreScore" class="q-core-score"></span>
+                <span class="q-core-sub-slot">
+                  <span id="hubCoreTag" class="q-core-tag"></span>
+                  <span class="q-core-cta">⟳ 立即同步</span>
+                </span>
+              </button>
+            </div>
+
+            <div class="hub-sat-col right">
+              <button id="hubSatWorkspace" type="button" class="hub-sat-card tone-mint" data-rail="workspace" data-orb-node="workspace">
+                <i class="sat-pin" aria-hidden="true"></i>
+                <span class="hub-sat-ico">❖</span>
+                <div class="hub-sat-text">
+                  <div class="hub-sat-title">工程同步</div>
+                  <div class="hub-sat-sub"><span id="hubSatWorkDot" class="hub-sat-dot"></span><span id="hubSatWorkSub"></span></div>
+                </div>
+              </button>
+              <button id="hubSatStatus" type="button" class="hub-sat-card tone-cyan" data-rail="status" data-orb-node="status">
+                <i class="sat-pin" aria-hidden="true"></i>
+                <span id="hubSatStatusIco" class="hub-sat-ico blue">◎</span>
+                <div class="hub-sat-text">
+                  <div class="hub-sat-title">AI 工具</div>
+                  <div class="hub-sat-sub"><span id="hubSatStatusDot" class="hub-sat-dot"></span><span id="hubSatStatusSub"></span></div>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          <div class="hub-hud-bar">
+            <div class="hub-hud-left">
+              <span id="hubHudLed" class="hub-hud-led"></span>
+              <span id="hubHudLiveText" class="hub-hud-text"></span>
+            </div>
+            <div id="hubHudActions" class="hub-hud-actions"></div>
+          </div>
+        </section>
+
+        <section id="hubMiniGrid" class="hub-mini-grid"></section>
+      </div>
+
+      <aside id="hubRightRail" class="hub-right-rail"></aside>
 
       <footer class="hub-quick-dock">
         <span class="hub-quick-label">⚡ 快速操作</span>
         <div class="hub-quick-btns">
-          <button type="button" class="hub-quick-btn primary" data-action="sync-now" ${isSyncing ? "disabled" : ""}>${isSyncing ? "⟳ 同步中…" : "⟳ 立即同步"}</button>
+          <button id="hubQuickSyncBtn" type="button" class="hub-quick-btn primary" data-action="sync-now">⟳ 立即同步</button>
           <button type="button" class="hub-quick-btn" data-action="add-project">+ 添加项目</button>
           <button type="button" class="hub-quick-btn" data-action="quick-write-memory">✎ 写入记忆</button>
           <button type="button" class="hub-quick-btn" data-action="sync-local-skills">⇄ 对齐 Skills</button>
           <button type="button" class="hub-quick-btn" data-rail="link">⊕ 连接新设备</button>
         </div>
       </footer>
-    `);
+        `;
+    }
+
+    // In-place reactive updates (keeps all animations running smoothly with zero resets!)
+    const stageEl = overviewStage.querySelector("#hubOrbitalStage");
+    stageEl.classList.toggle("is-syncing", isSyncing);
+    stageEl.classList.toggle("is-warn", Boolean(orbTone));
+    stageEl.dataset.defaultHud = defaultHudText;
+
+    const titleDot = overviewStage.querySelector("#hubTitleChipDot");
+    titleDot.className = `hub-chip-dot ${syncStreamTone}`;
+
+    const meshPill = overviewStage.querySelector("#hubMeshPill");
+    meshPill.dataset.orbTip = tipPeer;
+    overviewStage.querySelector("#hubMeshDot").className = `hub-mesh-dot ${net.online || net.mode === "local" ? "live" : "warn"}`;
+    overviewStage.querySelector("#hubMeshSelf").textContent = cleanHost(state.deviceName);
+    overviewStage.querySelector("#hubMeshPeer").textContent = net.mode === "center" ? `${onlinePeers}/${connectedPeers} 接入点` : net.mode === "endpoint" ? cleanHost(net.endpoint?.name || net.endpoint?.address || "中心") : "本机单核";
+
+    const streamPill = overviewStage.querySelector("#hubStreamPill");
+    streamPill.className = `hub-stream-pill ${syncStreamTone}`;
+    streamPill.dataset.orbTip = tipCore;
+    overviewStage.querySelector("#hubStreamLabel").textContent = syncStreamLabel;
+
+    const statusFlowCls = issueCount > 0 ? "flow-warn" : "flow-cyan";
+    overviewStage.querySelector("#hubStatusGlow").setAttribute("class", `conduit-glow ${statusFlowCls}`);
+    overviewStage.querySelector("#hubStatusFlow").setAttribute("class", `conduit-flow ${statusFlowCls}`);
+
+    const bTop = overviewStage.querySelector("#hubBeaconTop");
+    bTop.dataset.orbTip = tipPeer;
+    overviewStage.querySelector("#hubBeaconTopDot").className = `beacon-dot ${topBeaconOnline ? "live" : "warn"}`;
+    overviewStage.querySelector("#hubBeaconTopTxt").textContent = topBeaconLabel;
+
+    const bBot = overviewStage.querySelector("#hubBeaconBottom");
+    bBot.dataset.orbTip = tipPeer;
+    overviewStage.querySelector("#hubBeaconBottomDot").className = `beacon-dot ${ts.online || net.online ? "cyan" : ""}`;
+    overviewStage.querySelector("#hubBeaconBottomTxt").textContent = bottomBeaconText;
+
+    const satLink = overviewStage.querySelector("#hubSatLink");
+    satLink.dataset.orbTip = tipLink;
+    overviewStage.querySelector("#hubSatLinkDot").className = `hub-sat-dot ${net.online || ts.online ? "" : "warn"}`;
+    overviewStage.querySelector("#hubSatLinkSub").textContent = satLinkSub;
+
+    const satMem = overviewStage.querySelector("#hubSatMemory");
+    satMem.dataset.orbTip = tipMemory;
+    overviewStage.querySelector("#hubSatMemSub").textContent = satMemSub;
+
+    const satWork = overviewStage.querySelector("#hubSatWorkspace");
+    satWork.dataset.orbTip = tipWorkspace;
+    overviewStage.querySelector("#hubSatWorkDot").className = `hub-sat-dot ${issueCount > 0 ? "warn" : ""}`;
+    overviewStage.querySelector("#hubSatWorkSub").textContent = satWorkSub;
+
+    const satStatus = overviewStage.querySelector("#hubSatStatus");
+    satStatus.className = `hub-sat-card ${issueCount > 0 ? "tone-warn" : "tone-cyan"}`;
+    satStatus.dataset.orbTip = tipStatus;
+    overviewStage.querySelector("#hubSatStatusIco").className = `hub-sat-ico ${issueCount > 0 ? "warn" : "blue"}`;
+    overviewStage.querySelector("#hubSatStatusDot").className = `hub-sat-dot ${issueCount > 0 ? "warn" : ""}`;
+    overviewStage.querySelector("#hubSatStatusSub").textContent = satStatusSub;
+
+    const orbWrap = overviewStage.querySelector("#hubOrbWrap");
+    orbWrap.classList.toggle("syncing", isSyncing);
+    orbWrap.classList.toggle("warn-tone", Boolean(orbTone));
+
+    const coreOrb = overviewStage.querySelector("#hubCoreOrb");
+    coreOrb.classList.toggle("warn", Boolean(orbTone));
+    coreOrb.dataset.orbTip = tipCore;
+    const scoreEl = overviewStage.querySelector("#hubCoreScore");
+    const nextScore = String(health.score);
+    if (scoreEl.textContent !== nextScore) scoreEl.textContent = nextScore;
+    overviewStage.querySelector("#hubCoreTag").textContent = coreTagText;
+
+    overviewStage.querySelector("#hubHudLed").className = `hub-hud-led ${syncStreamTone}`;
+    if (!stageEl.dataset.focus) {
+        overviewStage.querySelector("#hubHudLiveText").textContent = defaultHudText;
+    }
+    patchHtml(overviewStage.querySelector("#hubHudActions"), hudActionsHtml);
+    patchHtml(overviewStage.querySelector("#hubMiniGrid"), miniGridHtml);
+    patchHtml(overviewStage.querySelector("#hubRightRail"), rightRailHtml);
+
+    const quickSyncBtn = overviewStage.querySelector("#hubQuickSyncBtn");
+    if (quickSyncBtn) {
+        quickSyncBtn.disabled = isSyncing;
+        quickSyncBtn.textContent = isSyncing ? "⟳ 同步中…" : "⟳ 立即同步";
+    }
 }
 
 /* ---- L Stage: Link (Center/Endpoint, Invite, Tailscale Mesh) ---- */

@@ -607,14 +607,29 @@ body.light-theme .hub-orbital-stage {
   margin-left: -170px;
   margin-top: -170px;
   border-radius: 50%;
-  background: conic-gradient(from 0deg, rgba(var(--accent-rgb), 0.14) 0deg, rgba(var(--blue-rgb), 0.04) 36deg, transparent 74deg, transparent 360deg);
-  animation: orbitSlow 16s linear infinite;
-  opacity: 0.7;
+  background: conic-gradient(from 0deg, rgba(var(--accent-rgb), 0.11) 0deg, rgba(var(--blue-rgb), 0.03) 34deg, transparent 70deg, transparent 360deg);
+  will-change: transform;
+  animation: orbitSlow 20s linear infinite;
+  opacity: 0.62;
+  transition: opacity 320ms var(--um-ease);
 }
 .hub-orbital-stage.is-syncing .hub-radar-sweep {
-  animation-duration: 3.2s;
-  opacity: 1;
+  opacity: 0.95;
 }
+.hub-corner {
+  position: absolute;
+  z-index: 4;
+  width: 9px;
+  height: 9px;
+  pointer-events: none;
+  border-color: rgba(var(--accent-rgb), 0.34);
+  border-style: solid;
+  border-width: 0;
+}
+.hub-corner.tl { top: 6px; left: 6px; border-top-width: 1.5px; border-left-width: 1.5px; border-top-left-radius: 4px; }
+.hub-corner.tr { top: 6px; right: 6px; border-top-width: 1.5px; border-right-width: 1.5px; border-top-right-radius: 4px; }
+.hub-corner.bl { bottom: 38px; left: 6px; border-bottom-width: 1.5px; border-left-width: 1.5px; border-bottom-left-radius: 4px; }
+.hub-corner.br { bottom: 38px; right: 6px; border-bottom-width: 1.5px; border-right-width: 1.5px; border-bottom-right-radius: 4px; }
 
 /* Top Mesh & Live Sync Stream Corner Pills */
 .hub-orb-topbar {
@@ -718,46 +733,59 @@ body.light-theme .hub-orbital-stage {
   z-index: 1;
 }
 .hub-conduit {
-  transition: opacity 240ms var(--um-ease), filter 240ms var(--um-ease);
+  transition: opacity 260ms var(--um-ease);
 }
 .hub-conduit .conduit-base {
   fill: none;
-  stroke: rgba(var(--line-rgb), 0.2);
-  stroke-width: 1.25;
+  stroke: rgba(var(--line-rgb), 0.18);
+  stroke-width: 1.2;
   stroke-dasharray: 3 4;
-  transition: stroke 200ms var(--um-ease), stroke-width 200ms var(--um-ease);
+  transition: stroke 240ms var(--um-ease), stroke-width 240ms var(--um-ease);
 }
+.hub-conduit .conduit-glow,
 .hub-conduit .conduit-flow {
   fill: none;
-  stroke-width: 1.9;
   stroke-linecap: round;
   stroke-dasharray: 18 112;
   stroke-dashoffset: 18;
-  animation: hubConduitFlow 3.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-  opacity: 0.82;
+  animation: hubConduitFlow 3.6s linear infinite;
 }
-.hub-conduit .conduit-flow.flow-blue { stroke: var(--blue); animation-delay: 0s; filter: drop-shadow(0 0 3px rgba(115, 189, 245, 0.6)); }
-.hub-conduit .conduit-flow.flow-purple { stroke: var(--purple); animation-delay: 0.75s; filter: drop-shadow(0 0 3px rgba(179, 148, 244, 0.6)); }
-.hub-conduit .conduit-flow.flow-mint { stroke: var(--accent); animation-delay: 1.4s; filter: drop-shadow(0 0 3px rgba(183, 234, 212, 0.65)); }
-.hub-conduit .conduit-flow.flow-cyan { stroke: #7fd4ff; animation-delay: 2.1s; filter: drop-shadow(0 0 3px rgba(127, 212, 255, 0.6)); }
-.hub-conduit .conduit-flow.flow-warn { stroke: var(--orange); animation-delay: 1.1s; filter: drop-shadow(0 0 3px rgba(244, 160, 115, 0.7)); }
+.hub-conduit .conduit-glow {
+  stroke-width: 4.5;
+  opacity: 0.22;
+  transition: opacity 240ms var(--um-ease), stroke-width 240ms var(--um-ease);
+}
+.hub-conduit .conduit-flow {
+  stroke-width: 1.8;
+  opacity: 0.85;
+  transition: opacity 240ms var(--um-ease), stroke-width 240ms var(--um-ease);
+}
+.hub-conduit .flow-blue { stroke: var(--blue); animation-delay: 0s; }
+.hub-conduit .flow-purple { stroke: var(--purple); animation-delay: -0.9s; }
+.hub-conduit .flow-mint { stroke: var(--accent); animation-delay: -1.8s; }
+.hub-conduit .flow-cyan { stroke: #7fd4ff; animation-delay: -2.7s; }
+.hub-conduit .flow-warn { stroke: var(--orange); animation-delay: -1.35s; }
 
 @keyframes hubConduitFlow {
   0% { stroke-dashoffset: 18; }
   100% { stroke-dashoffset: -102; }
 }
 
+.hub-orbital-stage.is-syncing .hub-conduit .conduit-glow,
+.hub-orbital-stage.sync-burst .hub-conduit .conduit-glow {
+  opacity: 0.45;
+  stroke-width: 6;
+}
 .hub-orbital-stage.is-syncing .hub-conduit .conduit-flow,
 .hub-orbital-stage.sync-burst .hub-conduit .conduit-flow {
-  animation-duration: 1.15s;
-  stroke-width: 2.4;
+  stroke-width: 2.3;
   opacity: 1;
 }
 
-/* Interactive Conduit Focus Illumination */
-.hub-orbital-stage[data-focus] .hub-conduit { opacity: 0.22; }
+/* Interactive Conduit Focus Illumination (pure opacity/stroke — zero animation-duration phase jumps!) */
+.hub-orbital-stage[data-focus] .hub-conduit { opacity: 0.25; }
 .hub-orbital-stage[data-focus="core"] .hub-conduit { opacity: 1; }
-.hub-orbital-stage[data-focus="core"] .hub-conduit .conduit-flow { animation-duration: 1.5s; opacity: 1; }
+.hub-orbital-stage[data-focus="core"] .hub-conduit .conduit-glow { opacity: 0.42; }
 .hub-orbital-stage[data-focus="link"] .hub-conduit[data-conduit="link"],
 .hub-orbital-stage[data-focus="memory"] .hub-conduit[data-conduit="memory"],
 .hub-orbital-stage[data-focus="workspace"] .hub-conduit[data-conduit="workspace"],
@@ -770,17 +798,23 @@ body.light-theme .hub-orbital-stage {
 .hub-orbital-stage[data-focus="workspace"] .hub-conduit[data-conduit="workspace"] .conduit-base,
 .hub-orbital-stage[data-focus="status"] .hub-conduit[data-conduit="status"] .conduit-base,
 .hub-orbital-stage[data-focus="peer"] .hub-conduit[data-conduit="peer"] .conduit-base {
-  stroke: rgba(var(--accent-rgb), 0.6);
-  stroke-width: 1.7;
-  stroke-dasharray: none;
+  stroke: rgba(var(--accent-rgb), 0.56);
+  stroke-width: 1.55;
+}
+.hub-orbital-stage[data-focus="link"] .hub-conduit[data-conduit="link"] .conduit-glow,
+.hub-orbital-stage[data-focus="memory"] .hub-conduit[data-conduit="memory"] .conduit-glow,
+.hub-orbital-stage[data-focus="workspace"] .hub-conduit[data-conduit="workspace"] .conduit-glow,
+.hub-orbital-stage[data-focus="status"] .hub-conduit[data-conduit="status"] .conduit-glow,
+.hub-orbital-stage[data-focus="peer"] .hub-conduit[data-conduit="peer"] .conduit-glow {
+  opacity: 0.46;
+  stroke-width: 6;
 }
 .hub-orbital-stage[data-focus="link"] .hub-conduit[data-conduit="link"] .conduit-flow,
 .hub-orbital-stage[data-focus="memory"] .hub-conduit[data-conduit="memory"] .conduit-flow,
 .hub-orbital-stage[data-focus="workspace"] .hub-conduit[data-conduit="workspace"] .conduit-flow,
 .hub-orbital-stage[data-focus="status"] .hub-conduit[data-conduit="status"] .conduit-flow,
 .hub-orbital-stage[data-focus="peer"] .hub-conduit[data-conduit="peer"] .conduit-flow {
-  animation-duration: 1.35s;
-  stroke-width: 2.5;
+  stroke-width: 2.3;
   opacity: 1;
 }
 
@@ -932,31 +966,52 @@ body.light-theme .hub-sat-card {
 .hub-orb-wrap {
   position: relative;
   z-index: 3;
-  width: 236px;
-  height: 236px;
+  width: 244px;
+  height: 244px;
   display: grid;
   place-items: center;
   justify-self: center;
+}
+.orb-dial-svg {
+  position: absolute;
+  inset: -6px;
+  width: calc(100% + 12px);
+  height: calc(100% + 12px);
+  pointer-events: none;
+  z-index: 0;
 }
 .orb-sonar-ring {
   position: absolute;
   width: 124px;
   height: 124px;
   border-radius: 50%;
-  border: 1.5px solid rgba(var(--accent-rgb), 0.45);
+  border: 1px solid rgba(var(--accent-rgb), 0.38);
   pointer-events: none;
-  animation: orbSonar 3.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  will-change: transform, opacity;
+  animation: orbSonar 4.2s cubic-bezier(0.16, 1, 0.3, 1) infinite;
 }
-.hub-orb-wrap.warn-tone .orb-sonar-ring { border-color: rgba(244, 160, 115, 0.48); }
-.hub-orb-wrap.syncing .orb-sonar-ring,
-.hub-orbital-stage.sync-burst .orb-sonar-ring {
-  animation-duration: 0.95s;
-  border-width: 2px;
-  border-color: rgba(var(--blue-rgb), 0.78);
+.hub-orb-wrap.warn-tone .orb-sonar-ring { border-color: rgba(244, 160, 115, 0.4); }
+.orb-sync-ring {
+  position: absolute;
+  width: 136px;
+  height: 136px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: rgba(var(--blue-rgb), 0.9);
+  border-right-color: rgba(var(--accent-rgb), 0.55);
+  pointer-events: none;
+  opacity: 0;
+  will-change: transform, opacity;
+  animation: orbitSlow 1.4s linear infinite;
+  transition: opacity 280ms var(--um-ease);
+}
+.hub-orb-wrap.syncing .orb-sync-ring,
+.hub-orbital-stage.sync-burst .orb-sync-ring {
+  opacity: 1;
 }
 @keyframes orbSonar {
-  0% { transform: scale(0.96); opacity: 0.72; }
-  100% { transform: scale(1.92); opacity: 0; }
+  0% { transform: scale(0.98); opacity: 0.48; }
+  100% { transform: scale(1.88); opacity: 0; }
 }
 
 .solar-star {
@@ -965,48 +1020,42 @@ body.light-theme .hub-sat-card {
   background: rgba(255, 255, 255, 0.8);
   box-shadow: 0 0 6px rgba(183, 234, 212, 0.7);
   pointer-events: none;
-  animation: starTwinkle 4.2s ease-in-out infinite;
+  animation: starTwinkle 4.6s ease-in-out infinite;
 }
-@keyframes starTwinkle { 0%, 100% { opacity: 0.25; transform: scale(0.85); } 50% { opacity: 0.95; transform: scale(1.3); } }
+@keyframes starTwinkle { 0%, 100% { opacity: 0.24; transform: scale(0.85); } 50% { opacity: 0.9; transform: scale(1.25); } }
 
 .solar-orbit {
   position: absolute;
   border-radius: 50%;
   border: 1px solid rgba(var(--line-rgb), 0.14);
   pointer-events: none;
+  will-change: transform;
   animation: orbitSlow linear infinite;
+  transition: border-color 300ms var(--um-ease);
 }
 .solar-orbit.orbit-1 {
-  width: 146px;
-  height: 146px;
-  border-color: rgba(var(--accent-rgb), 0.28);
-  animation-duration: 14s;
+  width: 148px;
+  height: 148px;
+  border-color: rgba(var(--accent-rgb), 0.26);
+  animation-duration: 18s;
 }
 .solar-orbit.orbit-2 {
-  width: 184px;
-  height: 184px;
+  width: 186px;
+  height: 186px;
   border-style: dashed;
-  border-color: rgba(var(--blue-rgb), 0.28);
-  animation-duration: 24s;
+  border-color: rgba(var(--blue-rgb), 0.26);
+  animation-duration: 28s;
   animation-direction: reverse;
 }
 .solar-orbit.orbit-3 {
-  width: 218px;
-  height: 218px;
-  border-color: rgba(179, 148, 244, 0.22);
-  animation-duration: 36s;
+  width: 222px;
+  height: 222px;
+  border-color: rgba(179, 148, 244, 0.2);
+  animation-duration: 42s;
 }
-.solar-orbit.orbit-4 {
-  width: 246px;
-  height: 246px;
-  border-style: dotted;
-  border-color: rgba(var(--line-rgb), 0.16);
-  animation-duration: 56s;
-  animation-direction: reverse;
-}
-.hub-orb-wrap.syncing .solar-orbit.orbit-1 { animation-duration: 2.6s; border-color: rgba(var(--accent-rgb), 0.72); }
-.hub-orb-wrap.syncing .solar-orbit.orbit-2 { animation-duration: 4.2s; border-color: rgba(var(--blue-rgb), 0.72); }
-.hub-orb-wrap.syncing .solar-orbit.orbit-3 { animation-duration: 6.2s; border-color: rgba(179, 148, 244, 0.62); }
+.hub-orb-wrap.syncing .solar-orbit.orbit-1 { border-color: rgba(var(--accent-rgb), 0.62); }
+.hub-orb-wrap.syncing .solar-orbit.orbit-2 { border-color: rgba(var(--blue-rgb), 0.62); }
+.hub-orb-wrap.syncing .solar-orbit.orbit-3 { border-color: rgba(179, 148, 244, 0.52); }
 
 .orbit-body {
   position: absolute;
@@ -1094,6 +1143,7 @@ body.light-theme .hub-sat-card {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 3px;
   background:
     radial-gradient(circle at 28% 24%, rgba(210, 248, 232, 0.68), rgba(115, 189, 245, 0.44) 38%, rgba(18, 46, 86, 0.94) 74%, rgba(7, 16, 32, 0.98) 100%);
   box-shadow:
@@ -1104,15 +1154,17 @@ body.light-theme .hub-sat-card {
   border: 1.2px solid rgba(var(--accent-rgb), 0.56);
   cursor: pointer;
   overflow: hidden;
-  transition: transform 300ms var(--um-spring), box-shadow 240ms var(--um-ease), border-color 200ms ease;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  transition: transform 240ms var(--um-ease), box-shadow 260ms var(--um-ease), border-color 220ms ease;
 }
 .q-core-orb:hover {
-  transform: scale(1.06);
-  border-color: rgba(var(--accent-rgb), 0.85);
+  transform: translateZ(0) scale(1.035);
+  border-color: rgba(var(--accent-rgb), 0.88);
   box-shadow:
     inset -12px -14px 26px rgba(3, 10, 22, 0.72),
     inset 7px 7px 18px rgba(255, 255, 255, 0.34),
-    0 0 54px rgba(var(--accent-rgb), 0.52),
+    0 0 54px rgba(var(--accent-rgb), 0.5),
     0 14px 36px rgba(0, 0, 0, 0.52);
 }
 .q-core-orb.warn {
@@ -1121,21 +1173,47 @@ body.light-theme .hub-sat-card {
   box-shadow: inset -12px -14px 26px rgba(14, 5, 10, 0.72), inset 6px 6px 16px rgba(255, 220, 190, 0.22), 0 0 40px rgba(244, 160, 115, 0.34), 0 12px 32px rgba(0, 0, 0, 0.48);
 }
 .q-core-orb svg.orb-grid { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.28; pointer-events: none; }
-.q-core-score { position: relative; z-index: 2; font-size: 37px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; color: #fff; font-variant-numeric: tabular-nums; text-shadow: 0 2px 14px rgba(0, 0, 0, 0.46); transition: transform 260ms var(--um-spring); }
-.q-core-tag { position: relative; z-index: 2; margin-top: 3px; font-size: 9.8px; font-weight: 600; color: rgba(244, 252, 248, 0.94); max-width: 98px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity 180ms ease, transform 240ms var(--um-spring); }
-.q-core-cta {
-  position: absolute;
-  bottom: 15px;
+.q-core-score {
+  position: relative;
   z-index: 2;
-  font-size: 9.5px;
+  font-size: 37px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.46);
+  pointer-events: none;
+}
+.q-core-sub-slot {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  height: 15px;
+  max-width: 102px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.q-core-tag,
+.q-core-cta {
+  grid-area: 1 / 1;
+  font-size: 9.8px;
+  font-weight: 600;
+  color: rgba(244, 252, 248, 0.94);
+  max-width: 100px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity 200ms var(--um-ease), transform 220ms var(--um-ease);
+}
+.q-core-cta {
   font-weight: 700;
   color: #ffffff;
   opacity: 0;
-  transform: translateY(6px);
-  transition: opacity 180ms var(--um-ease), transform 260ms var(--um-spring);
+  transform: translateY(10px);
 }
-.q-core-orb:hover .q-core-score { transform: translateY(-4px) scale(0.95); }
-.q-core-orb:hover .q-core-tag { opacity: 0; transform: translateY(-4px); }
+.q-core-orb:hover .q-core-tag { opacity: 0; transform: translateY(-10px); }
 .q-core-orb:hover .q-core-cta { opacity: 1; transform: translateY(0); }
 
 /* Integrated Bottom Interactive HUD Telemetry Strip */

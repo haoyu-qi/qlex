@@ -702,10 +702,10 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
             uniqueSkills: originCounts.syncable,
             totalDiscoveredSkills: bySkill.size,
             missingLinks,
-            conflicts: conflictDetails.length,
+            conflicts: Math.max(conflictDetails.length, Number(state.remoteConflicts || 0)),
             conflictDetails,
             anomalies: anomalies.slice(0, 40),
-            phase: conflictDetails.length > 0 ? "conflict" : (state.phase === "conflict" ? "ready" : state.phase),
+            phase: Math.max(conflictDetails.length, Number(state.remoteConflicts || 0)) > 0 ? "conflict" : (state.phase === "conflict" ? "ready" : state.phase),
             skillsPreview: catalogList.filter(s => !s.excluded).slice(0, 60),
             skillsCatalog: catalogList.slice(0, 300),
             originCounts,
@@ -879,9 +879,12 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
         }
 
         scanLocal(targets);
+        const totalLocalConflicts = state.conflictDetails.length;
         state = {
             ...state,
-            phase: state.conflictDetails.length > 0 ? "conflict" : "ready",
+            remoteConflicts: totalLocalConflicts > 0 ? Number(state.remoteConflicts || 0) : 0,
+            conflicts: totalLocalConflicts,
+            phase: totalLocalConflicts > 0 ? "conflict" : "ready",
             lastBackupDir: backedUpDirs > 0 ? sessionDir : state.lastBackupDir,
             localTime: Date.now(),
             time: Date.now(),
@@ -903,7 +906,18 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
             const markers = readHermesOriginMarkers(home);
             scanLocal(enabledNamespaces, policy);
             const { mode, endpoint, online } = pairing.view();
-            if (mode !== "endpoint" || endpoint?.status !== "connected" || !online) return state;
+            if (mode !== "endpoint") {
+                if (state.remoteConflicts) {
+                    state = {
+                        ...state,
+                        remoteConflicts: 0,
+                        conflicts: state.conflictDetails.length,
+                        phase: state.conflictDetails.length > 0 ? "conflict" : "ready",
+                    };
+                }
+                return state;
+            }
+            if (endpoint?.status !== "connected" || !online) return state;
             state = { ...state, phase: "syncing" };
             let count = 0;
             let conflicts = 0;
@@ -930,6 +944,7 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
                 ...state,
                 phase: totalConflicts > 0 ? "conflict" : "ready",
                 count,
+                remoteConflicts: conflicts,
                 conflicts: totalConflicts,
                 time: Date.now(),
             };
