@@ -384,6 +384,20 @@ try {
     skEngine.syncLocal(["hermes", "codex"]);
     assert.equal(fs.existsSync(path.join(codexSkills, "private-only/SKILL.md")), true, "Un-excluded skill must sync cleanly");
 
+    // Large skill (> 512KB) with ignored heavy dirs (node_modules/.venv) must scan & sync without oversize anomaly
+    fs.mkdirSync(path.join(hermesSkills, "rich-large-skill/assets"), { recursive: true });
+    fs.mkdirSync(path.join(hermesSkills, "rich-large-skill/node_modules/heavy"), { recursive: true });
+    fs.mkdirSync(path.join(hermesSkills, "rich-large-skill/.venv/lib"), { recursive: true });
+    fs.writeFileSync(path.join(hermesSkills, "rich-large-skill/SKILL.md"), "# Rich Large Skill\n");
+    fs.writeFileSync(path.join(hermesSkills, "rich-large-skill/assets/sample.png"), Buffer.alloc(1200 * 1024, 0x42));
+    fs.writeFileSync(path.join(hermesSkills, "rich-large-skill/node_modules/heavy/bundle.js"), Buffer.alloc(600 * 1024, 0x61));
+    fs.writeFileSync(path.join(hermesSkills, "rich-large-skill/.venv/lib/site.py"), Buffer.alloc(200 * 1024, 0x62));
+    const largeScan = skEngine.scanLocal(["hermes", "codex"]);
+    assert.equal(largeScan.anomalies.filter(a => a.name === "rich-large-skill").length, 0, "Large skill (>512KB) with node_modules/.venv must NOT trigger oversize or incomplete anomaly");
+    skEngine.syncLocal(["hermes", "codex"]);
+    assert.equal(fs.existsSync(path.join(codexSkills, "rich-large-skill/assets/sample.png")), true, "Large skill assets must sync across tools cleanly");
+    assert.equal(fs.existsSync(path.join(codexSkills, "rich-large-skill/node_modules")), false, "node_modules inside skill must be skipped cleanly");
+
     // ---- 6. Full Workspace File Sync (Source + Docs + Task Files + Center Mirror Materialization) ----
     const wsSrc = path.join(tmpHome, "ws-src");
     const wsEmptyDst = path.join(tmpHome, "ws-empty-dst");

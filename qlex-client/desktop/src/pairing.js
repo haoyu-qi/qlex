@@ -39,6 +39,7 @@ const node_https_1 = require("node:https");
 const node_net_1 = require("node:net");
 const node_os_1 = require("node:os");
 const node_path_1 = require("node:path");
+const node_zlib_1 = require("node:zlib");
 const {
     scanProjectFiles,
     diffFileManifests,
@@ -176,7 +177,14 @@ function callCenter(endpoint, route, id, payload) {
                 return;
             }
             if (route === "skills") {
-                void readBody(res, 768 * 1024).then(resolve, reject);
+                void readBody(res, 64 * 1024 * 1024).then((data) => {
+                    if (data && typeof data.packageGzip === "string") {
+                        const inflated = node_zlib_1.gunzipSync(Buffer.from(data.packageGzip, "base64")).toString("utf8");
+                        resolve({ package: JSON.parse(inflated) });
+                        return;
+                    }
+                    resolve(data);
+                }, reject);
                 return;
             }
             if (route === "memory") {
@@ -204,7 +212,7 @@ function callCenter(endpoint, route, id, payload) {
                 });
             }).catch(() => reject(new Error("中心返回的配对状态无效。")));
         });
-        const timeoutMs = route === "project-files" ? 60_000 : route === "memory" ? 12_000 : route === "projects" ? 15_000 : 4500;
+        const timeoutMs = route === "project-files" ? 60_000 : route === "skills" ? 45_000 : route === "memory" ? 12_000 : route === "projects" ? 15_000 : 4500;
         const timer = setTimeout(() => req.destroy(new Error("QLEX center timeout")), timeoutMs);
         req.once("error", () => reject(new Error("无法连接或验证中心。请检查中心是否在线、Tailscale 连接和防火墙设置。")));
         req.once("close", () => clearTimeout(timer));
@@ -821,7 +829,18 @@ class DevicePairing {
                 if (skill === undefined) {
                     reply(res, 200, { items: this.skillSync.catalog() });
                 } else {
-                    reply(res, 200, { package: this.skillSync.read(skill?.namespace, skill?.name) });
+                    const pkg = this.skillSync.read(skill?.namespace, skill?.name, { includeData: true });
+                    if (!pkg) {
+                        reply(res, 200, { package: null });
+                    } else {
+                        const wirePkg = { hash: pkg.hash, files: pkg.files, complete: pkg.complete, mtimeMs: pkg.mtimeMs, bytes: pkg.bytes };
+                        if (pkg.bytes > 512 * 1024) {
+                            const gz = node_zlib_1.gzipSync(Buffer.from(JSON.stringify(wirePkg), "utf8"), { level: 6 }).toString("base64");
+                            reply(res, 200, { packageGzip: gz });
+                        } else {
+                            reply(res, 200, { package: wirePkg });
+                        }
+                    }
                 }
                 return;
             }

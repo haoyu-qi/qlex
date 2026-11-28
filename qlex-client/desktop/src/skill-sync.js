@@ -30,13 +30,15 @@ const namespaceLabels = {
 const preferredOrder = ["codex", "claude", "agents", "antigravity", "hermes", "dsh", "workbuddy", "t3code", "zcode"];
 
 const itemLimit = 512;
-const fileLimit = 128;
-const sizeLimit = 512 * 1024;
+const fileLimit = 2048;
+const sizeLimit = 100 * 1024 * 1024; // 100 MB per skill (supports rich asset & template skills)
+const singleFileLimit = 32 * 1024 * 1024; // 32 MB single-file ceiling
 const idPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,100}$/;
 const hashPattern = /^[a-f0-9]{64}$/;
-const extension = /\.(?:md|txt|json|yaml|yml|toml|css|html|js|mjs|cjs|ts|py|sh|bash|zsh|ps1|rb|pl|svg|png|webp|gif|jpe?g|pdf|csv|xml)$/i;
-const extensionlessSafe = /^(?:LICENSE|README|CHANGELOG|NOTICE|AUTHORS|COPYING)$/i;
-const ignoredJunk = /^(?:\.DS_Store|Thumbs\.db|Desktop\.ini|__pycache__|\.pytest_cache|\.gitignore|\.gitkeep|\._.*|.*\.pyc|.*\.pyo)$/i;
+const extension = /\.(?:md|mdx|txt|json|jsonl|yaml|yml|toml|css|scss|less|html|htm|js|mjs|cjs|jsx|ts|tsx|py|sh|bash|zsh|ps1|rb|pl|go|rs|svg|png|webp|gif|jpe?g|ico|woff2?|ttf|otf|pdf|csv|tsv|xml|sql|template|lock|ini|cfg|conf|drawio|pptx|docx|xlsx)$/i;
+const extensionlessSafe = /^(?:LICENSE|README|CHANGELOG|NOTICE|AUTHORS|COPYING|Makefile|Dockerfile)$/i;
+const ignoredJunk = /^(?:\.DS_Store|Thumbs\.db|Desktop\.ini|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.gitignore|\.gitkeep|\._.*|.*\.pyc|.*\.pyo)$/i;
+const ignoredHeavyDirs = /^(?:node_modules|\.venv|venv|\.git|\.hg|\.svn|\.next|\.nuxt|\.cache|\.turbo|coverage|\.parcel-cache|\.vite|\.tox)$/i;
 const sensitive = /^(?:\.env|.*[._-](?:credential|credentials|secret|secrets|private-key|auth-token)|credential|credentials|secret|secrets|id_rsa|id_ed25519|auth|tokens?|keychain)(?:\..*)?$/i;
 
 function safeFile(relative) {
@@ -79,19 +81,34 @@ function rootAt(home, namespace, create = false) {
 
 function digest(files) {
     const ordered = [...files].sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)));
-    return createHash("sha256").update(JSON.stringify(ordered.map(f => [f.path, f.data]))).digest("hex");
+    const hasher = createHash("sha256");
+    hasher.update("[");
+    for (let i = 0; i < ordered.length; i++) {
+        if (i > 0) hasher.update(",");
+        hasher.update(`[${JSON.stringify(ordered[i].path)},"${ordered[i].data}"]`);
+    }
+    hasher.update("]");
+    return hasher.digest("hex");
 }
 
-function inspect(folder) {
-    const folderStat = fs.lstatSync(folder);
-    if (!folderStat.isDirectory()) return;
-    const files = [];
+function inspectDetailed(folder, { includeData = true } = {}) {
+    let folderStat;
+    try {
+        folderStat = fs.lstatSync(folder);
+    } catch (error) {
+        return { ok: false, errorCode: "unreadable", detail: error?.message || "无法读取目录" };
+    }
+    if (!folderStat.isDirectory()) return { ok: false, errorCode: "not-directory", detail: "不是有效目录" };
+    const entriesMeta = [];
     let bytes = 0;
     let complete = true;
     let latestMtime = folderStat.mtimeMs || 0;
+    let failReason = null;
+
     function scan(directory, prefix) {
         for (const entry of subdirectories(directory)) {
             if (ignoredJunk.test(entry.name)) continue;
+            if (entry.isDirectory() && ignoredHeavyDirs.test(entry.name)) continue;
             const relative = prefix + entry.name;
             const target = path.join(directory, entry.name);
             if (!idPattern.test(entry.name) || sensitive.test(entry.name)) {
@@ -101,21 +118,104 @@ function inspect(folder) {
             if (entry.isDirectory() && relative.split("/").length < 10) {
                 if (!scan(target, relative + "/")) return false;
             } else if (entry.isFile() && safeFile(relative)) {
-                const stat = fs.lstatSync(target);
-                if (!stat.isFile() || bytes + stat.size > sizeLimit || files.length >= fileLimit) return false;
+                let stat;
+                try {
+                    stat = fs.lstatSync(target);
+                } catch (error) {
+                    failReason = { errorCode: "unreadable", detail: `${relative}: ${error?.message || "无读取权限"}`, bytes, fileCount: entriesMeta.length };
+                    return false;
+                }
+                if (!stat.isFile()) continue;
+                if (stat.size > singleFileLimit) {
+                    failReason = {
+                        errorCode: "single-file-limit",
+                        detail: `单文件 ${relative} (${(stat.size / (1024 * 1024)).toFixed(1)} MB) 超过 ${(singleFileLimit / (1024 * 1024)).toFixed(0)} MB 上限`,
+                        bytes: bytes + stat.size,
+                        fileCount: entriesMeta.length + 1,
+                    };
+                    return false;
+                }
+                if (bytes + stat.size > sizeLimit) {
+                    failReason = {
+                        errorCode: "size-limit",
+                        detail: `总体积超过 ${(sizeLimit / (1024 * 1024)).toFixed(0)} MB 上限（扫描到 ${relative} 时已达 ${((bytes + stat.size) / (1024 * 1024)).toFixed(1)} MB）`,
+                        bytes: bytes + stat.size,
+                        fileCount: entriesMeta.length + 1,
+                    };
+                    return false;
+                }
+                if (entriesMeta.length >= fileLimit) {
+                    failReason = {
+                        errorCode: "file-limit",
+                        detail: `文件数量超过 ${fileLimit} 上限`,
+                        bytes,
+                        fileCount: entriesMeta.length + 1,
+                    };
+                    return false;
+                }
                 if (stat.mtimeMs > latestMtime) latestMtime = stat.mtimeMs;
-                const data = fs.readFileSync(target);
-                bytes += data.length;
-                if (bytes > sizeLimit) return false;
-                files.push({ path: relative, data: data.toString("base64"), executable: Boolean(stat.mode & 0o100) });
+                bytes += stat.size;
+                entriesMeta.push({ path: relative, fullPath: target, size: stat.size, executable: Boolean(stat.mode & 0o100) });
             } else {
                 complete = false;
             }
         }
         return true;
     }
-    if (!scan(folder, "") || !files.some(file => file.path === "SKILL.md")) return;
-    return { hash: digest(files), files, complete, mtimeMs: latestMtime, bytes };
+
+    if (!scan(folder, "")) {
+        return { ok: false, ...(failReason || { errorCode: "unreadable", detail: "扫描失败" }) };
+    }
+    if (!entriesMeta.some(file => file.path === "SKILL.md")) {
+        return { ok: false, errorCode: "missing-skill-md", detail: "缺少必需的 SKILL.md 描述文件", bytes, fileCount: entriesMeta.length };
+    }
+
+    entriesMeta.sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)));
+    const hasher = createHash("sha256");
+    hasher.update("[");
+    const files = includeData ? [] : null;
+    let actualBytes = 0;
+
+    for (let i = 0; i < entriesMeta.length; i++) {
+        const meta = entriesMeta[i];
+        let raw;
+        try {
+            raw = fs.readFileSync(meta.fullPath);
+        } catch (error) {
+            return { ok: false, errorCode: "unreadable", detail: `${meta.path}: ${error?.message || "读取失败"}`, bytes: actualBytes, fileCount: entriesMeta.length };
+        }
+        actualBytes += raw.length;
+        if (actualBytes > sizeLimit) {
+            return { ok: false, errorCode: "size-limit", detail: `总体积超过 ${(sizeLimit / (1024 * 1024)).toFixed(0)} MB 上限`, bytes: actualBytes, fileCount: entriesMeta.length };
+        }
+        const b64 = raw.toString("base64");
+        if (i > 0) hasher.update(",");
+        hasher.update(`[${JSON.stringify(meta.path)},"${b64}"]`);
+        if (files) {
+            files.push({ path: meta.path, data: b64, executable: meta.executable });
+        }
+    }
+    hasher.update("]");
+    const hash = hasher.digest("hex");
+
+    return {
+        ok: true,
+        pkg: {
+            hash,
+            files: files || [],
+            fileList: entriesMeta.map(m => ({ path: m.path, fullPath: m.fullPath, executable: m.executable, size: m.size })),
+            filesCount: entriesMeta.length,
+            complete,
+            mtimeMs: latestMtime,
+            bytes: actualBytes,
+            sourceFolder: folder,
+        },
+    };
+}
+
+function inspect(folder, options) {
+    const res = inspectDetailed(folder, options);
+    return res.ok ? res.pkg : undefined;
 }
 
 function packageFiles(pkg) {
@@ -125,7 +225,7 @@ function packageFiles(pkg) {
     let bytes = 0;
     for (const file of pkg.files) {
         if (!file || !safeFile(file.path) || typeof file.data !== "string" || typeof file.executable !== "boolean" ||
-            file.data.length > Math.ceil(sizeLimit / 3) * 4 || names.has(file.path.toLowerCase())) return;
+            file.data.length > Math.ceil(singleFileLimit / 3) * 4 || names.has(file.path.toLowerCase())) return;
         const data = Buffer.from(file.data, "base64");
         bytes += data.length;
         if (bytes > sizeLimit || data.toString("base64") !== file.data) return;
@@ -321,14 +421,25 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
     };
     let running;
 
-    function read(namespace, name) {
+    function read(namespace, name, options = {}) {
         if (typeof name !== "string" || !idPattern.test(name)) return;
         const root = rootAt(home, namespace);
         if (!root) return;
         try {
-            return inspect(path.join(root, name));
+            return inspect(path.join(root, name), options);
         } catch {
             return;
+        }
+    }
+
+    function readDetailed(namespace, name, options = {}) {
+        if (typeof name !== "string" || !idPattern.test(name)) return { ok: false, errorCode: "invalid-name", detail: "技能名称不合法" };
+        const root = rootAt(home, namespace);
+        if (!root) return { ok: false, errorCode: "missing-root", detail: "技能目录不存在" };
+        try {
+            return inspectDetailed(path.join(root, name), options);
+        } catch (error) {
+            return { ok: false, errorCode: "unreadable", detail: error?.message || "无法读取技能目录" };
         }
     }
 
@@ -345,8 +456,8 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
                 if (!entry.isDirectory()) continue;
                 if (namespace === "hermes" && markers.categoryDirs.has(entry.name)) continue;
                 if (classifySkill(entry.name, markers, policy).excluded) continue;
-                const skill = read(namespace, entry.name);
-                if (skill) items.push({ namespace, name: entry.name, hash: skill.hash });
+                const skill = read(namespace, entry.name, { includeData: false });
+                if (skill) items.push({ namespace, name: entry.name, hash: skill.hash, bytes: skill.bytes });
             }
         }
         return items;
@@ -367,8 +478,9 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
     }
 
     function install(item, pkg, peer, { force = false, backupSessionDir = "" } = {}) {
-        const files = packageFiles(pkg);
-        if (!files || pkg.hash !== item.hash) return "skipped";
+        const useDiskCopy = Boolean(pkg && !pkg.files?.length && Array.isArray(pkg.fileList) && pkg.fileList.length && pkg.hash === item.hash);
+        const files = useDiskCopy ? null : packageFiles(pkg);
+        if (!useDiskCopy && (!files || pkg.hash !== item.hash)) return "skipped";
         const root = rootAt(home, item.namespace, true);
         if (!root) return "conflict";
         const target = path.join(root, item.name);
@@ -381,7 +493,7 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
             if (error.code !== "ENOENT") throw error;
         }
         if (existed) {
-            const current = read(item.namespace, item.name);
+            const current = read(item.namespace, item.name, { includeData: false });
             if (current?.hash === item.hash) {
                 if (records.get(key) !== item.hash) {
                     try { saveRecord(key, item.hash); } catch { /* ignore */ }
@@ -400,13 +512,23 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
         const temporary = fs.mkdtempSync(path.join(root, ".qlex-skill-"));
         let backup;
         try {
-            for (const file of files) {
-                const destination = path.join(temporary, ...file.path.split("/"));
-                fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
-                fs.writeFileSync(destination, file.data, { flag: "wx", mode: file.executable ? 0o700 : 0o600 });
+            if (useDiskCopy) {
+                for (const file of pkg.fileList) {
+                    if (!safeFile(file.path)) continue;
+                    const destination = path.join(temporary, ...file.path.split("/"));
+                    fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+                    fs.copyFileSync(file.fullPath, destination);
+                    try { fs.chmodSync(destination, file.executable ? 0o700 : 0o600); } catch { /* ignore on Windows */ }
+                }
+            } else {
+                for (const file of files) {
+                    const destination = path.join(temporary, ...file.path.split("/"));
+                    fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+                    fs.writeFileSync(destination, file.data, { flag: "wx", mode: file.executable ? 0o700 : 0o600 });
+                }
             }
             if (existed) {
-                if (!force && read(item.namespace, item.name)?.hash !== records.get(key)) return "conflict";
+                if (!force && read(item.namespace, item.name, { includeData: false })?.hash !== records.get(key)) return "conflict";
                 backup = path.join(root, ".qlex-backup-" + randomUUID());
                 fs.renameSync(target, backup);
             }
@@ -526,7 +648,8 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
                             bySkill.set(entry.name, rec);
                         }
                         rec.namespaces.push(ns);
-                        const pkg = read(ns, entry.name);
+                        const inspected = readDetailed(ns, entry.name, { includeData: false });
+                        const pkg = inspected.ok ? inspected.pkg : null;
                         if (pkg) {
                             if (pkg.mtimeMs > rec.mtimeMs) rec.mtimeMs = pkg.mtimeMs;
                             if (!pkg.complete && !cls.excluded) {
@@ -538,7 +661,7 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
                                     label: namespaceLabels[ns],
                                     path: skillPath,
                                     reason: "包含非白名单后缀、敏感文件名或受限条目（已被安全跳过）",
-                                    suggestion: "点击「打开目录」检查非标准文件，或使用覆盖对齐",
+                                    suggestion: "点击「定位」检查非标准文件，或点击「排除」跳过同步",
                                     fixable: false,
                                 });
                             }
@@ -548,7 +671,7 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
                                 hash: pkg.hash,
                                 shortHash: pkg.hash.slice(0, 8),
                                 mtimeMs: pkg.mtimeMs,
-                                filesCount: pkg.files.length,
+                                filesCount: pkg.filesCount ?? pkg.files.length,
                                 bytes: pkg.bytes,
                                 complete: pkg.complete,
                                 path: skillPath,
@@ -561,8 +684,8 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
                                 ns,
                                 label: namespaceLabels[ns],
                                 path: skillPath,
-                                reason: "体积超过 512KB / 超过 128 文件上限，或无读取权限",
-                                suggestion: "精简技能包内大文件或二进制产物后重试",
+                                reason: inspected.detail || `体积超过 ${(sizeLimit / (1024 * 1024)).toFixed(0)}MB / 超过 ${fileLimit} 文件上限，或无读取权限`,
+                                suggestion: "可精简超大产物目录，或点击「排除」仅在本机保留",
                                 fixable: false,
                             });
                         }
@@ -758,7 +881,7 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
                 if (!entry.isDirectory() || !idPattern.test(entry.name)) continue;
                 if (ns === "hermes" && markers.categoryDirs.has(entry.name)) continue;
                 if (classifySkill(entry.name, markers, policy).excluded) continue;
-                const pkg = read(ns, entry.name);
+                const pkg = read(ns, entry.name, { includeData: false });
                 if (!pkg) continue;
                 const prev = master.get(entry.name);
                 if (!prev || pkg.mtimeMs > prev.pkg.mtimeMs) {
@@ -776,7 +899,7 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
             }
             for (const targetNs of selected) {
                 if (targetNs === sourceNs) continue;
-                const current = read(targetNs, name);
+                const current = read(targetNs, name, { includeData: false });
                 if (current?.hash === pkg.hash) {
                     const tgtKey = `local:${targetNs}:${name}`;
                     if (records.get(tgtKey) !== pkg.hash) {
@@ -808,7 +931,7 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
         if (!Object.hasOwn(roots, sourceNs)) throw new Error("无效的源技能目录。");
         const selected = enabledNamespaces.filter(ns => Object.hasOwn(roots, ns));
         const targets = selected.length ? selected : Object.keys(roots);
-        const pkg = read(sourceNs, name);
+        const pkg = read(sourceNs, name, { includeData: false });
         if (!pkg) throw new Error(`源目录 ${namespaceLabels[sourceNs]} 中不存在有效技能「${name}」。`);
 
         const sessionDir = backupSessionDir || path.join(backupRoot, backupStamp());
@@ -819,7 +942,7 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
         let backedUp = 0;
         for (const targetNs of targets) {
             if (targetNs === sourceNs) continue;
-            const current = read(targetNs, name);
+            const current = read(targetNs, name, { includeData: false });
             if (current?.hash === pkg.hash) {
                 const tgtKey = `local:${targetNs}:${name}`;
                 if (records.get(tgtKey) !== pkg.hash) {
@@ -931,7 +1054,7 @@ function createSkillSync(dataDir, home = homedir(), options = {}) {
                 if (!item || !Object.hasOwn(roots, item.namespace) || typeof item.name !== "string" ||
                     !idPattern.test(item.name) || !hashPattern.test(item.hash)) continue;
                 if (classifySkill(item.name, markers, policy).excluded) continue;
-                if (read(item.namespace, item.name)?.hash === item.hash) continue;
+                if (read(item.namespace, item.name, { includeData: false })?.hash === item.hash) continue;
                 const result = await pairing.requestSkills({ namespace: item.namespace, name: item.name });
                 if (!pairing.store.snapshot().skillSyncEnabled || pairing.view().endpoint?.address !== endpoint.address) break;
                 const outcome = install(item, result?.package, endpoint.address);

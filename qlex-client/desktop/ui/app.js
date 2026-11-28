@@ -1725,7 +1725,10 @@ function renderXStage() {
                       <div class="item-title" style="font-size:12px">${esc(a.label)} / ${esc(a.name)} <span class="tag ${a.severity === "error" ? "err" : "warn"}" style="margin-left:4px">${esc(a.type === "broken-symlink" ? "损坏软链" : a.type === "stale-temp" ? "残留临时" : a.type === "missing-skill-md" ? "缺 SKILL.md" : a.type === "incomplete-files" ? "受限文件" : "超限/不可读")}</span></div>
                       <div class="item-sub">${esc(a.reason)} · 建议：${esc(a.suggestion)}</div>
                     </div>
-                    <button type="button" class="glass-btn sm" data-action="open-skill-dir" data-ns="${esc(a.ns)}">定位 ↗</button>
+                    <div class="btn-row" style="gap:5px;flex-wrap:nowrap">
+                      ${(a.type === "oversized-or-unreadable" || a.type === "incomplete-files") ? `<button type="button" class="glass-btn sm" data-toggle-exclude-skill="${esc(a.name)}:1" title="将该技能排除同步，仅保留在本机">排除</button>` : ""}
+                      <button type="button" class="glass-btn sm" data-action="open-skill-dir" data-ns="${esc(a.ns)}">定位 ↗</button>
+                    </div>
                   </div>
                 `).join("")}
                 ${lastErrors.map(e => `<div class="muted-note" style="color:var(--red)">• ${esc(e)}</div>`).join("")}
